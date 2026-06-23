@@ -80,9 +80,9 @@ class StrategyArchive:
         *window*, the oldest in the window gets weight 1.
 
         v11: Laplace smoothing (add 1 to numerator and denominator) prevents
-        low-count strategies from getting extreme rates (e.g., CROSSOVER with
+        low-count strategies from getting extreme rates (e.g., PERTURBATION_CAPPED with
         20/20 → 0.954 instead of 1.0). This avoids archive always preferring
-        CROSSOVER just because it's been tried fewer times.
+        PERTURBATION_CAPPED just because it's been tried fewer times.
 
         Args:
             strategy: Strategy name.

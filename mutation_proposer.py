@@ -33,7 +33,7 @@ class MutationStrategy(str, Enum):
     RANDOM = "RANDOM"
     TASK_AWARE = "TASK_AWARE"
     DIRECTED = "DIRECTED"
-    CROSSOVER = "CROSSOVER"
+    PERTURBATION_CAPPED = "PERTURBATION_CAPPED"
     GROW = "GROW"
     HYBRID = "HYBRID"
     MODEL_GUIDED = "MODEL_GUIDED"
@@ -1092,7 +1092,7 @@ def propose_mutation(
       - RANDOM: stochastic perturbation only (no trace analysis)
       - TASK_AWARE: task-level injection only
       - DIRECTED: trace-analysis-driven mutation
-      - CROSSOVER: blend champion with a historical solution
+      - PERTURBATION_CAPPED: capped random instruction replacement
       - HYBRID: default blend (10% stochastic + 90% directed)
 
     Args:
@@ -1114,15 +1114,6 @@ def propose_mutation(
     if rng is None:
         rng = random.Random()
 
-    analysis = TraceAnalyzer.analyze(
-        trace=trace,
-        expected=expected,
-        inputs=inputs,
-        program=program,
-        error=error,
-        budget=budget,
-    )
-
     # ── Strategy-based routing ───────────────────────────────────────
     strat_val = getattr(strategy, "value", str(strategy)) if strategy is not None else "HYBRID"
 
@@ -1130,6 +1121,9 @@ def propose_mutation(
         # Pure stochastic: no trace analysis, maximise exploration
         mutated_prog, desc = DirectedMutator.stochastic_perturbation(
             program, rng)
+        analysis = TraceAnalysis(
+            divergence_point=None, divergence_type="random",
+            final_regs=[], trace_length=0, suggestion={})
         return mutated_prog, f"random_{desc}", analysis
 
     if strat_val == "TASK_AWARE":
@@ -1140,7 +1134,20 @@ def propose_mutation(
         else:
             mutated_prog, desc = DirectedMutator._fallback_mutation(
                 program, rng)
+        analysis = TraceAnalysis(
+            divergence_point=None, divergence_type="task_aware",
+            final_regs=[], trace_length=0, suggestion={})
         return mutated_prog, f"task_aware_{desc}", analysis
+
+    # Branches below need trace analysis
+    analysis = TraceAnalyzer.analyze(
+        trace=trace,
+        expected=expected,
+        inputs=inputs,
+        program=program,
+        error=error,
+        budget=budget,
+    )
 
     if strat_val == "DIRECTED":
         # Trace-analysis-driven (no stochastic component)
@@ -1148,14 +1155,13 @@ def propose_mutation(
             program, trace, analysis, rng, task_level=task_level)
         return mutated_prog, f"directed_{desc}", analysis
 
-    if strat_val == "CROSSOVER":
-        # Blend champion with a second program
-        # Try strategy archive for a historical solution; fall back to
-        # the trace-derived suggestion.
+    if strat_val == "PERTURBATION_CAPPED":
+        # Capped perturbation: replace up to 3 random instructions with
+        # valid RV32I encodings. The archive does not store programs, so
+        # true parent blending is not possible; this provides bounded
+        # exploration distinct from full stochastic perturbation.
         champion_prog = program
         if strategy_archive is not None and strategy_archive.total_records() > 10:
-            # Use archive's best strategy for this level to generate
-            # a second parent via task-aware mutation
             if task_level is not None:
                 _, hist_desc = DirectedMutator._task_aware_mutation(
                     list(champion_prog), rng, task_level)
@@ -1165,11 +1171,8 @@ def propose_mutation(
         else:
             desc = "crossover_directed"
 
-        # Apply a crossover-like mutation: blend two mutation strategies
-        # by alternating instructions from the original and a mutated copy
         if len(champion_prog) >= 2:
             mutated_prog = list(champion_prog)
-            # Apply 2-3 random instruction swaps (crossover behavior)
             n_swaps = min(3, max(1, len(champion_prog) // 4))
             for _ in range(n_swaps):
                 idx = rng.randint(0, len(mutated_prog) - 1)

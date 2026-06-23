@@ -3,7 +3,7 @@
 
 Implements the core evolutionary loop: maintain a champion program,
 generate challengers via 4 mutation strategies (RANDOM, TASK_AWARE,
-DIRECTED, CROSSOVER), evaluate on the VM farm, and replace the
+DIRECTED, PERTURBATION_CAPPED), evaluate on the VM farm, and replace the
 champion when a challenger achieves higher fitness.
 """
 
@@ -444,9 +444,9 @@ class EvolutionConfig:
     model_guided_ratio_mid: float = 0.3
     model_guided_ratio_high: float = 0.6
 
-    # CROSSOVER configuration
-    crossover_unsolved_levels: tuple[int, ...] = (9, 10, 11)
-    crossover_probability_unsolved: float = 0.20
+    # PERTURBATION_CAPPED configuration
+    perturbation_capped_unsolved_levels: tuple[int, ...] = (9, 10, 11)
+    perturbation_capped_probability_unsolved: float = 0.20
     use_strategy_archive: bool = True
 
     def __post_init__(self) -> None:
@@ -966,10 +966,10 @@ class EvolutionEngine:
             except ValueError:
                 pass
 
-        # Unsolved levels 9-11: use higher CROSSOVER probability
-        if self.champion_level in self.config.crossover_unsolved_levels and self.generations_stalled > 2:
-            if self.rng.random() < self.config.crossover_probability_unsolved:
-                return MutationStrategy.CROSSOVER
+        # Unsolved levels 9-11: use higher PERTURBATION_CAPPED probability
+        if self.champion_level in self.config.perturbation_capped_unsolved_levels and self.generations_stalled > 2:
+            if self.rng.random() < self.config.perturbation_capped_probability_unsolved:
+                return MutationStrategy.PERTURBATION_CAPPED
 
         # Default: HYBRID (mix of strategies)
         return MutationStrategy.HYBRID

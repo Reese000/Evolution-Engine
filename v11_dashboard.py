@@ -229,7 +229,7 @@ def _draw_live(log_path: str) -> None:
             # Strategy distribution
             counts = data.get("strategy_counts", {})
             total = sum(counts.values()) or 1
-            for s in ["GROW", "CROSSOVER", "HYBRID", "RANDOM"]:
+            for s in ["GROW", "PERTURBATION_CAPPED", "HYBRID", "RANDOM"]:
                 c = counts.get(s, 0)
                 pct = c / total * 100
                 bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
@@ -281,7 +281,7 @@ def oneshot(log_path: Optional[str] = None) -> None:
     print()
     counts = data.get("strategy_counts", {})
     total = sum(counts.values()) or 1
-    for s in ["GROW", "CROSSOVER", "HYBRID", "RANDOM"]:
+    for s in ["GROW", "PERTURBATION_CAPPED", "HYBRID", "RANDOM"]:
         c = counts.get(s, 0)
         pct = c / total * 100
         print(f"  {s:<12}: {c:>5} ({pct:5.1f}%)")

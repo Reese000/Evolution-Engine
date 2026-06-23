@@ -341,7 +341,7 @@ def test_v51_archive_records_all_challengers():
     mock = MockStrategyArchive()
     _record_strategy_outcomes(
         mock,
-        strategies=["RANDOM", "CROSSOVER", "TASK_AWARE", "GROW", "DIRECTED"],
+        strategies=["RANDOM", "PERTURBATION_CAPPED", "TASK_AWARE", "GROW", "DIRECTED"],
         results=[{"fitness": 10}, {"fitness": 50}, {"fitness": 30}, {"fitness": 40}, {"fitness": 20}],
         current_generation=50,
         level=5,

@@ -24,7 +24,7 @@ from evolution_engine import EvolutionConfig
 
 # Known mutation strategy labels — must match MutationStrategy enum values
 # in mutation_proposer.py.
-KNOWN_STRATEGIES: Tuple[str, ...] = ("RANDOM", "TASK_AWARE", "DIRECTED", "CROSSOVER")
+KNOWN_STRATEGIES: Tuple[str, ...] = ("RANDOM", "TASK_AWARE", "DIRECTED", "PERTURBATION_CAPPED")
 
 # Valid ranges for each scalar parameter
 _BOUNDS: Dict[str, Tuple[float, float]] = {
@@ -102,7 +102,7 @@ class MetaGenome:
     strategy_type_weights : Dict[str, float]
         Weight assigned to each mutation strategy (keys are the strategy
         labels, e.g. ``"RANDOM"``, ``"TASK_AWARE"``, ``"DIRECTED"``,
-        ``"CROSSOVER"``).  Weights are normalised to sum to 1.0 at
+        ``"PERTURBATION_CAPPED"``).  Weights are normalised to sum to 1.0 at
         construction time.
     elite_ratio : float
         Fraction of the population preserved as elite (clamped to
@@ -125,7 +125,7 @@ class MetaGenome:
         "RANDOM": 0.25,
         "TASK_AWARE": 0.25,
         "DIRECTED": 0.25,
-        "CROSSOVER": 0.25,
+        "PERTURBATION_CAPPED": 0.25,
     })
     elite_ratio: float = 0.1
     tournament_size: int = 3

@@ -106,7 +106,7 @@ _SEEDED_META_GENOMES: List[Dict[str, Any]] = [
         "population_size": 50,
         "stall_threshold": 3,
         "novelty_weight": 0.3,
-        "strategy_type_weights": {"RANDOM": 0.25, "TASK_AWARE": 0.25, "DIRECTED": 0.25, "CROSSOVER": 0.25},
+        "strategy_type_weights": {"RANDOM": 0.25, "TASK_AWARE": 0.25, "DIRECTED": 0.25, "PERTURBATION_CAPPED": 0.25},
     },
     # Config B: V3 evolved (pop=163, μ=0.509, elite=0.049) — exploration-heavy
     {
@@ -117,7 +117,7 @@ _SEEDED_META_GENOMES: List[Dict[str, Any]] = [
         "population_size": 163,
         "stall_threshold": 4,
         "novelty_weight": 0.0,
-        "strategy_type_weights": {"RANDOM": 0.07, "TASK_AWARE": 0.90, "DIRECTED": 0.03, "CROSSOVER": 0.0},
+        "strategy_type_weights": {"RANDOM": 0.07, "TASK_AWARE": 0.90, "DIRECTED": 0.03, "PERTURBATION_CAPPED": 0.0},
     },
     # Config C: Sustained best (pop=116, μ=0.709, elite=0.395) — preservation-heavy
     {
@@ -128,7 +128,7 @@ _SEEDED_META_GENOMES: List[Dict[str, Any]] = [
         "population_size": 116,
         "stall_threshold": 11,
         "novelty_weight": 0.0,
-        "strategy_type_weights": {"RANDOM": 0.07, "TASK_AWARE": 0.90, "DIRECTED": 0.03, "CROSSOVER": 0.0},
+        "strategy_type_weights": {"RANDOM": 0.07, "TASK_AWARE": 0.90, "DIRECTED": 0.03, "PERTURBATION_CAPPED": 0.0},
     },
     # Config D: Evolved best (pop=49, μ=0.584, cx=0.0, elite=0.097, tourney=6, stall=5, novelty=0.17)
     # Achieved F=0.922 (2× improvement over default) in head-to-head validation (50 gen, 3 seeds).
@@ -141,7 +141,7 @@ _SEEDED_META_GENOMES: List[Dict[str, Any]] = [
         "population_size": 49,
         "stall_threshold": 5,
         "novelty_weight": 0.17,
-        "strategy_type_weights": {"RANDOM": 0.023, "TASK_AWARE": 0.348, "DIRECTED": 0.083, "CROSSOVER": 0.546},
+        "strategy_type_weights": {"RANDOM": 0.023, "TASK_AWARE": 0.348, "DIRECTED": 0.083, "PERTURBATION_CAPPED": 0.546},
     },
 ]
 

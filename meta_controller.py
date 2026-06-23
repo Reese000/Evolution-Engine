@@ -633,7 +633,7 @@ class MetaController:
             Path to the rolled-back checkpoint, or None if rollback failed.
         """
         # Determine the source for rollback
-        if use_snapshot and hasattr(self, '_last_snapshot_path'):
+        if use_snapshot and self._last_snapshot_path:
             source = self._last_snapshot_path
             if not os.path.isfile(source):
                 self._log(f"Rollback snapshot not found at {source}, falling back to best")
