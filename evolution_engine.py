@@ -1582,18 +1582,16 @@ class EvolutionEngine:
         # Low-fitness champions produce training signal that teaches the model
         # to generate failing programs. Only bypass the gate when the system
         # has been stalled long enough that any champion data is better than none.
-        champion_fitness = getattr(self, 'champion_fitness', None)
-        if champion_fitness is not None and champion_fitness <= 0 and self.generations_stalled < self.config.circuit_breaker_stall_limit:
-            self._log(f"Fitness gate blocked trace: fitness={champion_fitness:.2f}, stalled={self.generations_stalled} < limit={self.config.circuit_breaker_stall_limit}")
+        if self.champion_fitness <= 0 and self.generations_stalled < self.config.circuit_breaker_stall_limit:
+            self._log(f"Fitness gate blocked trace: fitness={self.champion_fitness:.2f}, stalled={self.generations_stalled} < limit={self.config.circuit_breaker_stall_limit}")
             return False
 
         # Raw task score gate: block traces where champion barely scored
         # (positive fitness may come from novelty/QD blending, not task performance).
         # Only apply when fitness > 0 (crashing programs with negative fitness
         # still provide useful training signal about what NOT to do).
-        raw = getattr(self, '_raw_task_score', 0.0)
-        if champion_fitness is not None and champion_fitness > 0 and raw < 10.0:
-            self._log(f"Task score gate blocked trace: champion_fitness={champion_fitness:.2f}, raw_task_score={raw:.2f} < 10.0")
+        if self.champion_fitness > 0 and self._raw_task_score < 10.0:
+            self._log(f"Task score gate blocked trace: champion_fitness={self.champion_fitness:.2f}, raw_task_score={self._raw_task_score:.2f} < 10.0")
             return False
 
         # Determine recurrent data directory
