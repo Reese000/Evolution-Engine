@@ -710,7 +710,6 @@ class DirectedMutator:
           L10: x13 = max(mem[x1..])      (loop + compare)
           L11: x14 = fibonacci(x1)       (loop)
         """
-        out_reg = 3 + task_level
         roll = rng.random()
 
         if task_level == 0:
