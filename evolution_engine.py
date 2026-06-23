@@ -909,7 +909,9 @@ class EvolutionEngine:
             task_inst = self.task_instance or {}
             expected = task_inst.get("expected_output", {})
             inputs = task_inst.get("inputs", {})
-            trace_input = self.champion_trace if isinstance(self.champion_trace, list) else [self.champion_trace]
+            # champion_trace is always a dict from _eval_result_to_trace.
+            # Wrap in a list because TraceAnalyzer.analyze expects a list.
+            trace_input = [self.champion_trace] if self.champion_trace is not None else []
             mutated, _desc, _analysis = propose_mutation(
                 program=self.champion,
                 trace=trace_input,
@@ -1156,6 +1158,7 @@ class EvolutionEngine:
                 # CUDA error recovery: catch RuntimeError (SIGSEGV), sync+retry,
                 # then skip this prefix count if still failing.
                 _completions = None
+                _cuda_failed = False
                 for attempt in range(1, 3):  # max 2 attempts
                     try:
                         _completions = self._prefix_generator.complete(
@@ -1179,8 +1182,10 @@ class EvolutionEngine:
                             pass
                         if attempt == 2:
                             self._log("[ModelGuided] CUDA fallback: skipping this prefix count")
-                            completions = []
-                            raise StopIteration  # skip cleanly
+                            _cuda_failed = True
+
+                if _cuda_failed:
+                    continue
 
                 completions = _completions or []
                 if not completions:

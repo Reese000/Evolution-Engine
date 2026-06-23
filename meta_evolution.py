@@ -20,7 +20,6 @@ import random
 import subprocess
 import sys
 import math
-import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -706,8 +705,19 @@ class MetaEvolutionEngine:
         if final_fitness < 0:
             curriculum_depth = 0.0
 
-        # solution_diversity: program length capped at 100 words.
-        diversity = min(1.0, min(champion_words, 100) / 100.0)
+        # solution_diversity: penalise both too-short and too-long programs.
+        # Peak reward at ~25 words (typical correct RV32I solution length).
+        # Programs < 5 words are likely trivial/stub, > 80 words suffer bloat.
+        if champion_words < 5:
+            diversity = 0.1  # stub penalty
+        elif champion_words <= 25:
+            diversity = 0.1 + 0.9 * (champion_words - 5) / 20.0  # ramp up
+        elif champion_words <= 50:
+            diversity = 1.0  # sweet spot
+        elif champion_words <= 80:
+            diversity = 1.0 - 0.4 * (champion_words - 50) / 30.0  # gentle decay
+        else:
+            diversity = max(0.2, 0.6 - 0.005 * (champion_words - 80))  # bloat penalty
 
         meta_fitness = (
             champion_improvement * w_improvement

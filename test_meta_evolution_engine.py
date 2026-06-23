@@ -99,12 +99,12 @@ def test_meta_fitness_positive_fitness() -> None:
     """Positive fitness yields non-zero meta-fitness with curriculum contribution."""
     summary = sample_summary({"final_fitness": 0.8, "final_level": 8})
     mf = MetaEvolutionEngine._compute_meta_fitness(summary)
-    # champion_improvement = 0.8/1.5 * 0.3 ≈ 0.16
-    # curriculum_depth = 8/13 * 0.5 ≈ 0.308
-    # diversity = 45/100 * 0.2 = 0.09
-    # total ≈ 0.558
-    assert 0.3 < mf < 0.9, f"Unexpected meta-fitness: {mf}"
-    print(f"  ✓ Positive fitness MF={mf:.4f}")
+    # champion_improvement = 0.8/1.5 * 0.3 ~ 0.16
+    # curriculum_depth = 8/13 * 0.5 ~ 0.308
+    # diversity (45 words, sweet spot 25-50): 1.0 -> * 0.2 = 0.2
+    # total ~ 0.668
+    assert 0.4 < mf < 0.9, f"Unexpected meta-fitness: {mf}"
+    print(f"  Positive fitness MF={mf:.4f}")
 
 
 def test_meta_fitness_negative_fitness_zeroes_curriculum() -> None:
@@ -113,10 +113,11 @@ def test_meta_fitness_negative_fitness_zeroes_curriculum() -> None:
     mf = MetaEvolutionEngine._compute_meta_fitness(summary)
     # champion_improvement = max(0, -0.5)/1.5 * 0.3 = 0.0
     # curriculum_depth = 0 (negative fitness)
-    # diversity = 45/100 * 0.2 = 0.09
-    # total ≈ 0.09
-    assert mf < 0.2, f"Expected low meta-fitness for negative fitness, got {mf}"
-    print(f"  ✓ Negative fitness MF={mf:.4f} (curriculum zeroed)")
+    # diversity (45 words, sweet spot 25-50): 1.0 -> * 0.2 = 0.2
+    # total = 0.2
+    # The improvement and depth are zeroed; only diversity contributes.
+    assert 0.0 < mf <= 0.25, f"Expected low meta-fitness for negative fitness, got {mf}"
+    print(f"  Negative fitness MF={mf:.4f} (curriculum zeroed)")
 
 
 def test_meta_fitness_max_fitness_caps_improvement() -> None:
@@ -142,12 +143,12 @@ def test_meta_fitness_weighted_combination() -> None:
         "meta_weight_diversity": 0.2,
     }
     mf = MetaEvolutionEngine._compute_meta_fitness(summary, meta_params=params)
-    # champion_improvement = 0.5/1.0 = 0.5 → * 0.5 = 0.25
-    # curriculum_depth = 5/10 = 0.5 → * 0.3 = 0.15
-    # diversity = 20/100 = 0.2 → * 0.2 = 0.04
-    # total = 0.44
-    assert abs(mf - 0.44) < 0.01, f"Expected MF=0.44, got {mf}"
-    print(f"  ✓ Custom weights MF={mf:.4f} (expected 0.44)")
+    # champion_improvement = 0.5/1.0 = 0.5 -> * 0.5 = 0.25
+    # curriculum_depth = 5/10 = 0.5 -> * 0.3 = 0.15
+    # diversity (20 words, ramp zone 5-25): 0.1 + 0.9*(15/20) = 0.775 -> * 0.2 = 0.155
+    # total = 0.555
+    assert abs(mf - 0.555) < 0.02, f"Expected MF=0.555, got {mf}"
+    print(f"  Custom weights MF={mf:.4f} (expected 0.555)")
 
 
 # ── Test 4: Seeded config validation ────────────────────────────────

@@ -1238,6 +1238,9 @@ def main() -> None:
             log(f"  Cycle {cycle} already completed -- skipping")
             continue
 
+        # Reset skip flag each cycle (set by RESET-AND-RELEARN from previous cycle)
+        skip_evolution = False
+
         # -- v13: GPU memory defragmentation at cycle boundaries ---
         # Prevents CUDA segfault from accumulated memory fragmentation
         try:
@@ -1371,12 +1374,32 @@ def main() -> None:
         # Phase 1: Run evolution (with dynamic gen count and archive params)
         # Merge archive params into evolution params
         # Take pre-cycle checkpoint snapshot (for LEVEL_REGRESSION rollback)
-        if meta_controller is not None:
-            if hasattr(meta_controller, 'snapshot_before_cycle'):
-                meta_controller.snapshot_before_cycle(cycle, checkpoint)
-        evo_with_archive = dict(evo_meta_params)
-        evo_with_archive.update(archive_params)
-        evo_result = run_evolution(cycle, gen_count_override, checkpoint, meta_evolution_params=evo_with_archive)
+        if skip_evolution:
+            log(f"  Cycle {cycle}: SKIPPING evolution (RESET-AND-RELEARN from previous cycle)")
+            evo_result = {
+                "cycle": cycle,
+                "generations_completed": 0,
+                "final_fitness": 0.0,
+                "final_level": 0,
+                "champion_words": 0,
+                "elapsed_seconds": 0.0,
+                "champion_traces": 0,
+                "novelty_archive_size": 0,
+                "qd_occupied_cells": 0,
+                "qd_total_cells": 0,
+                "checkpoint": checkpoint,
+                "mutation_rate": 0.5,
+                "diversity_threshold": 0.3,
+                "diversity": 0.3,
+            }
+            skip_evolution = False  # consumed
+        else:
+            if meta_controller is not None:
+                if hasattr(meta_controller, 'snapshot_before_cycle'):
+                    meta_controller.snapshot_before_cycle(cycle, checkpoint)
+            evo_with_archive = dict(evo_meta_params)
+            evo_with_archive.update(archive_params)
+            evo_result = run_evolution(cycle, gen_count_override, checkpoint, meta_evolution_params=evo_with_archive)
 
         # Save self-calibrate state for next cycle
         prev_cycle_metrics = evo_result

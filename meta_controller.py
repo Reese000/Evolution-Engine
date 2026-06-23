@@ -185,6 +185,7 @@ class MetaController:
         self._tuning_log: List[TuningAction] = []
         self._gated_count: int = 0
         self._rollback_count: int = 0
+        self._last_snapshot_path: str = ""
 
         # Logging
         self.log_file = log_file
@@ -313,10 +314,14 @@ class MetaController:
 
         # Classify
         if len(indications) >= 2:
-            return StagnationResult.COMPOUND_STALL
+            result = StagnationResult.COMPOUND_STALL
         elif len(indications) == 1:
-            return indications[0]
-        return StagnationResult.NORMAL
+            result = indications[0]
+        else:
+            result = StagnationResult.NORMAL
+
+        self._last_stagnation = result
+        return result
 
     def tune_retrain_params(self, cycle: int) -> Dict[str, Any]:
         """Return dynamically tuned retrain hyperparameters.
@@ -595,27 +600,60 @@ class MetaController:
             return self.best_checkpoint_path
         return None
 
-    def execute_rollback(self, current_checkpoint: str) -> Optional[str]:
-        """Perform rollback: copy best checkpoint over current.
+    def snapshot_before_cycle(self, cycle: int, checkpoint_path: str) -> None:
+        """Save a pre-cycle checkpoint snapshot for potential rollback.
+
+        Called before evolution+retrain to preserve the current checkpoint.
+        If retrain produces a worse model, we can restore from this snapshot.
+        """
+        if not os.path.isfile(checkpoint_path):
+            return
+        snapshot_dir = os.path.join(os.path.dirname(self.best_checkpoint_path),
+                                    "pre_cycle_snapshots")
+        os.makedirs(snapshot_dir, exist_ok=True)
+        snapshot_path = os.path.join(snapshot_dir, f"snapshot_cycle_{cycle}.pt")
+        try:
+            shutil.copy2(checkpoint_path, snapshot_path)
+            self._log(f"Snapshot: saved pre-cycle {cycle} checkpoint to {snapshot_path}")
+            self._last_snapshot_path = snapshot_path
+        except (OSError, shutil.Error) as e:
+            self._log(f"Snapshot: failed to save pre-cycle checkpoint: {e}")
+
+    def execute_rollback(self, current_checkpoint: str,
+                         use_snapshot: bool = False) -> Optional[str]:
+        """Perform rollback: copy best checkpoint (or pre-cycle snapshot) over current.
 
         Args:
             current_checkpoint: Path to the current (regressed) checkpoint.
+            use_snapshot: If True, use the most recent pre-cycle snapshot
+                instead of best_checkpoint.  Useful when checkpoint_best.pt
+                was overwritten by a rejected retrain.
 
         Returns:
             Path to the rolled-back checkpoint, or None if rollback failed.
         """
-        best = self.get_best_checkpoint()
-        if best is None or not os.path.isfile(best):
-            self._log(f"Rollback failed: best checkpoint not found at "
-                      f"{self.best_checkpoint_path}")
-            return None
+        # Determine the source for rollback
+        if use_snapshot and hasattr(self, '_last_snapshot_path'):
+            source = self._last_snapshot_path
+            if not os.path.isfile(source):
+                self._log(f"Rollback snapshot not found at {source}, falling back to best")
+                source = None
+        else:
+            source = None
 
-        # Guard against same-file copy (best == current_checkpoint)
-        abs_best = os.path.abspath(best)
+        if source is None:
+            source = self.get_best_checkpoint()
+            if source is None or not os.path.isfile(source):
+                self._log(f"Rollback failed: best checkpoint not found at "
+                          f"{self.best_checkpoint_path}")
+                return None
+
+        # Guard against same-file copy (source == current_checkpoint)
+        abs_source = os.path.abspath(source)
         abs_current = os.path.abspath(current_checkpoint)
-        if abs_best == abs_current:
-            self._log(f"Rollback skipped: best and current are the same file "
-                      f"({best}). Retrain output path must differ from best.")
+        if abs_source == abs_current:
+            self._log(f"Rollback skipped: source and current are the same file "
+                      f"({source}). Retrain output path must differ from best.")
             # Don't treat this as a failure — the file itself is fine
             self.recovery_mode = True
             self.recovery_cycles_remaining = 2
@@ -629,9 +667,10 @@ class MetaController:
                 shutil.copy2(current_checkpoint, backup_path)
                 self._log(f"Backed up regressed checkpoint to {backup_path}")
 
-            # Copy best checkpoint to current location
-            shutil.copy2(best, current_checkpoint)
-            self._log(f"Rollback: copied {best} -> {current_checkpoint}")
+            # Copy source checkpoint to current location
+            shutil.copy2(source, current_checkpoint)
+            label = "snapshot" if use_snapshot else "best"
+            self._log(f"Rollback ({label}): copied {source} -> {current_checkpoint}")
 
             # Reset stagnation counters after rollback
             self.recovery_mode = True

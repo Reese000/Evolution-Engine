@@ -189,7 +189,11 @@ class StrategyArchive:
         for s in strategies_used:
             rate = self.success_rate(s, window=50, level=level)
             bonus = self.exploration_bonus(s, level=level)
-            exploration_weight = 0.1  # 10% exploration bonus
+            # Dynamic exploration weight: increase when strategies are
+            # converging (fewer than 3 strategies in use).  Prevents
+            # the archive from locking onto one strategy too early.
+            n_strategies = len(strategies_used)
+            exploration_weight = 0.15 if n_strategies >= 3 else 0.25
             score = rate + (bonus * exploration_weight)
             if score > best_score:
                 best_score = score

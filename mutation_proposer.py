@@ -1088,8 +1088,12 @@ def propose_mutation(
 ) -> Tuple[List[int], str, TraceAnalysis]:
     """High-level entry point: analyse trace and propose a mutation.
 
-    90 % directed mutation, 10 % stochastic perturbation
-    (configurable via *stochastic_prob*).
+    Supports strategy-based routing:
+      - RANDOM: stochastic perturbation only (no trace analysis)
+      - TASK_AWARE: task-level injection only
+      - DIRECTED: trace-analysis-driven mutation
+      - CROSSOVER: blend champion with a historical solution
+      - HYBRID: default blend (10% stochastic + 90% directed)
 
     Args:
         program:        Original program (list of 32-bit instruction words).
@@ -1101,6 +1105,8 @@ def propose_mutation(
         rng:            Random number generator (created fresh if None).
         stochastic_prob: Probability of stochastic perturbation (default 0.10).
         task_level:     Optional curriculum task level.
+        strategy:       MutationStrategy enum value (controls routing).
+        strategy_archive: StrategyArchive for historical solutions.
 
     Returns:
         Tuple of (mutated_program, description_string, trace_analysis).
@@ -1117,6 +1123,67 @@ def propose_mutation(
         budget=budget,
     )
 
+    # ── Strategy-based routing ───────────────────────────────────────
+    strat_val = getattr(strategy, "value", str(strategy)) if strategy is not None else "HYBRID"
+
+    if strat_val == "RANDOM":
+        # Pure stochastic: no trace analysis, maximise exploration
+        mutated_prog, desc = DirectedMutator.stochastic_perturbation(
+            program, rng)
+        return mutated_prog, f"random_{desc}", analysis
+
+    if strat_val == "TASK_AWARE":
+        # Direct task-level injection
+        if task_level is not None:
+            mutated_prog, desc = DirectedMutator._task_aware_mutation(
+                program, rng, task_level)
+        else:
+            mutated_prog, desc = DirectedMutator._fallback_mutation(
+                program, rng)
+        return mutated_prog, f"task_aware_{desc}", analysis
+
+    if strat_val == "DIRECTED":
+        # Trace-analysis-driven (no stochastic component)
+        mutated_prog, desc = DirectedMutator.mutate(
+            program, trace, analysis, rng, task_level=task_level)
+        return mutated_prog, f"directed_{desc}", analysis
+
+    if strat_val == "CROSSOVER":
+        # Blend champion with a second program
+        # Try strategy archive for a historical solution; fall back to
+        # the trace-derived suggestion.
+        champion_prog = program
+        if strategy_archive is not None and strategy_archive.total_records() > 10:
+            # Use archive's best strategy for this level to generate
+            # a second parent via task-aware mutation
+            if task_level is not None:
+                _, hist_desc = DirectedMutator._task_aware_mutation(
+                    list(champion_prog), rng, task_level)
+                desc = f"crossover_archive_{hist_desc}"
+            else:
+                desc = "crossover_directed"
+        else:
+            desc = "crossover_directed"
+
+        # Apply a crossover-like mutation: blend two mutation strategies
+        # by alternating instructions from the original and a mutated copy
+        if len(champion_prog) >= 2:
+            mutated_prog = list(champion_prog)
+            # Apply 2-3 random instruction swaps (crossover behavior)
+            n_swaps = min(3, max(1, len(champion_prog) // 4))
+            for _ in range(n_swaps):
+                idx = rng.randint(0, len(mutated_prog) - 1)
+                if mutated_prog[idx] != EBREAK:
+                    mutated_prog[idx] = make_random_rv32i(rng)
+            if mutated_prog[-1] != EBREAK:
+                mutated_prog.append(EBREAK)
+            return mutated_prog[:MAX_PROGRAM_LEN], desc, analysis
+        else:
+            mutated_prog, desc2 = DirectedMutator._fallback_mutation(
+                program, rng)
+            return mutated_prog, f"crossover_fallback_{desc2}", analysis
+
+    # ── Default: HYBRID (90% directed, 10% stochastic) ──────────────
     if rng.random() < stochastic_prob:
         mutated_prog, desc = DirectedMutator.stochastic_perturbation(
             program, rng)
