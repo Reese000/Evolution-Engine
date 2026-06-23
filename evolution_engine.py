@@ -567,6 +567,8 @@ class EvolutionEngine:
         # Strategy tracking for archive recording
         self._last_challenger_strategies: list[str] = []
         self._last_challenger_programs: list[list[int]] = []
+        # Cached stage-1 fitness values (avoids recomputation in _record_strategy_outcomes)
+        self._last_challenger_fitnesses: list[float] = []
 
         # Logging
         if self.config.log_dir:
@@ -1436,10 +1438,13 @@ class EvolutionEngine:
         results: list[dict[str, Any]],
     ) -> list[list[int]]:
         """Select elite challengers for detailed evaluation."""
-        # Compute fitness for stage 1 results
-        scored = [
-            (self._compute_fitness(prog, trace), prog, trace) for prog, trace in zip(challengers, results, strict=False)
-        ]
+        # Compute fitness for stage 1 results and cache for archive recording
+        scored = []
+        self._last_challenger_fitnesses = []
+        for prog, trace in zip(challengers, results, strict=False):
+            fit = self._compute_fitness(prog, trace)
+            scored.append((fit, prog, trace))
+            self._last_challenger_fitnesses.append(fit)
         scored.sort(key=lambda x: x[0], reverse=True)
 
         elite_size = max(1, int(self.config.population_size * self.config.elite_ratio))
@@ -1634,25 +1639,17 @@ class EvolutionEngine:
         against its evaluation result. Top 10% by fitness are recorded as
         successes, the rest as failures. This gives the archive fine-grained
         signal even when no challenger beats the champion.
+
+        Uses cached stage-1 fitnesses from _select_elite to avoid recomputing
+        fitness on every challenger a second time.
         """
         if self.strategy_archive is None:
             return
         strategies = self._last_challenger_strategies
-        # Need the challenger programs to compute actual fitness
-        # (results dicts from _evaluate_batch don't carry fitness values)
         if not strategies:
             return
 
-        # Compute fitness from trace results and stored challenger programs
-        fitnesses = []
-        for i, r in enumerate(results):
-            if hasattr(self, '_last_challenger_programs') and i < len(self._last_challenger_programs):
-                prog = self._last_challenger_programs[i]
-                fit = self._compute_fitness(prog, r)
-                fitnesses.append(fit)
-            else:
-                fitnesses.append(0.0)
-
+        fitnesses = self._last_challenger_fitnesses
         if not fitnesses:
             return
 
