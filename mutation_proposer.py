@@ -1045,11 +1045,14 @@ class DirectedMutator:
 
         if mutation_type == 'replace':
             idx = rng.randint(0, len(prog) - 1)
-            # Avoid replacing EBREAK unless it's the sole instruction
+            # Avoid replacing EBREAK unless it's the sole instruction.
+            # Only search forward up to len(prog) steps to prevent infinite
+            # loop when all instructions are EBREAK.
             if prog[idx] == EBREAK and len(prog) > 1:
-                idx = (idx + 1) % len(prog)
-                while idx < len(prog) and prog[idx] == EBREAK:
+                for _ in range(len(prog)):
                     idx = (idx + 1) % len(prog)
+                    if prog[idx] != EBREAK:
+                        break
             new_instr = make_random_rv32i(rng)
             prog[idx] = new_instr
             return prog, f'stochastic_replace_{idx}'
