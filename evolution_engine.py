@@ -646,6 +646,7 @@ class EvolutionEngine:
             # 7. Curriculum check
             if improved:
                 self.generations_stalled = 0
+                self._qd_champion_reset_tried = False
             else:
                 self.generations_stalled += 1
 
@@ -939,7 +940,7 @@ class EvolutionEngine:
                     self._last_challenger_strategies[idx] = "MODEL_GUIDED"
 
         # v12.5: QD-Archive Crossover -- inject a QD-bred hybrid as one
-        # challenger when stalled >= 30 gens. This brings dormant archive
+        # challenger when stalled >= 15 gens. This brings dormant archive
         # diversity back into the active population.
         qd_hybrid = self._try_qd_crossover()
         if qd_hybrid is not None:
