@@ -1082,7 +1082,6 @@ def propose_mutation(
     rng: Optional[random.Random] = None,
     stochastic_prob: float = 0.10,
     task_level: Optional[int] = None,
-    analysis: Any = None,
     strategy: Any = None,
     strategy_archive: Any = None,
 ) -> Tuple[List[int], str, TraceAnalysis]:
@@ -1195,6 +1194,53 @@ def propose_mutation(
             program, trace, analysis, rng, task_level=task_level)
 
     return mutated_prog, desc, analysis
+
+
+def _crossover_mutation(
+    program: List[int],
+    task_level: Optional[int],
+    rng: random.Random,
+    champion: List[int],
+    champion_crossover_prob: float = 0.7,
+) -> List[int]:
+    """True crossover: blend instructions from two parent programs.
+
+    For each instruction slot, picks from the *program* parent with
+    probability (1 - champion_crossover_prob) and from the *champion*
+    parent with probability champion_crossover_prob.  When the parents
+    differ in length, the shorter one is padded with EBREAK.
+
+    Args:
+        program:                  Primary parent (e.g., best QD solution).
+        task_level:               Curriculum level (unused, kept for API compat).
+        rng:                      Random number generator.
+        champion:                 Second parent (e.g., runner-up QD solution).
+        champion_crossover_prob:  Probability of choosing from *champion* parent.
+
+    Returns:
+        Hybrid instruction list (capped to MAX_PROGRAM_LEN, guaranteed EBREAK).
+    """
+    max_len = max(len(program), len(champion))
+    hybrid: List[int] = []
+
+    for i in range(max_len):
+        src_word_program = program[i] if i < len(program) else EBREAK
+        src_word_champion = champion[i] if i < len(champion) else EBREAK
+
+        if src_word_program == EBREAK and src_word_champion == EBREAK:
+            hybrid.append(EBREAK)
+            break
+
+        if rng.random() < champion_crossover_prob:
+            hybrid.append(src_word_champion)
+        else:
+            hybrid.append(src_word_program)
+
+    # Ensure EBREAK terminator
+    if not hybrid or hybrid[-1] != EBREAK:
+        hybrid.append(EBREAK)
+
+    return hybrid[:MAX_PROGRAM_LEN]
 
 
 def generate_seed_program(length: int = 5,
