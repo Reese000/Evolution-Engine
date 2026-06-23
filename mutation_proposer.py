@@ -880,12 +880,17 @@ class DirectedMutator:
         if len(prog) <= 1:
             return [make_random_rv32i(rng), EBREAK], 'fallback_new'
 
-        mutation_type = rng.choice([
-            'swap_op', 'insert_nop', 'delete_instr',
-            'reorder_block', 'swap_reg',
-        ])
+        # Only consider mutation types whose preconditions are satisfied
+        # to avoid wasting the mutation budget on no-ops.
+        candidates = ['swap_op', 'insert_nop', 'swap_reg']
+        if len(prog) > 2:
+            candidates.append('delete_instr')
+        if len(prog) >= 4:
+            candidates.append('reorder_block')
 
-        if mutation_type == 'swap_op' and len(prog) > 0:
+        mutation_type = rng.choice(candidates)
+
+        if mutation_type == 'swap_op':
             return DirectedMutator._swap_operation(prog, rng)
 
         if mutation_type == 'insert_nop':
@@ -893,20 +898,20 @@ class DirectedMutator:
             prog.insert(idx, NOP)
             return prog[:MAX_PROGRAM_LEN], f'insert_nop_at_{idx}'
 
-        if mutation_type == 'delete_instr' and len(prog) > 2:
-            candidates = [i for i in range(len(prog)) if prog[i] != EBREAK]
-            if candidates:
-                idx = rng.choice(candidates)
+        if mutation_type == 'delete_instr':
+            ebreak_candidates = [i for i in range(len(prog)) if prog[i] != EBREAK]
+            if ebreak_candidates:
+                idx = rng.choice(ebreak_candidates)
                 decoded = rv32i_decode(prog[idx], validate=False)
                 deleted = decoded.get('name', '?')
                 prog.pop(idx)
                 return prog, f'delete_{deleted}_at_{idx}'
             return prog, 'no_change_no_deletable'
 
-        if mutation_type == 'reorder_block' and len(prog) >= 4:
+        if mutation_type == 'reorder_block':
             return DirectedMutator._reorder_block(prog, rng)
 
-        if mutation_type == 'swap_reg' and len(prog) > 0:
+        if mutation_type == 'swap_reg':
             return DirectedMutator._swap_register(prog, rng)
 
         return prog, 'no_change_fallback'
