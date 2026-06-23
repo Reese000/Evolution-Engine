@@ -600,10 +600,9 @@ class DirectedMutator:
             return DirectedMutator._handle_halted_early(
                 prog, analysis, rng)
 
-        # ── Task-aware or fallback mutation ─────────────────
-        if task_level is not None:
-            return DirectedMutator._task_aware_mutation(prog, rng, task_level)
-
+        # ── Fallback mutation ───────────────────────────────
+        # Note: task_level is handled above (early return at top of method),
+        # so if we reach here, task_level is always None.
         return DirectedMutator._fallback_mutation(prog, rng)
 
     # ── Specific handlers ──────────────────────────────────
@@ -1145,27 +1144,9 @@ def propose_mutation(
             final_regs=[], trace_length=0, suggestion={})
         return mutated_prog, f"task_aware_{desc}", analysis
 
-    # Branches below need trace analysis
-    analysis = TraceAnalyzer.analyze(
-        trace=trace,
-        expected=expected,
-        inputs=inputs,
-        program=program,
-        error=error,
-        budget=budget,
-    )
-
-    if strat_val == "DIRECTED":
-        # Trace-analysis-driven (no stochastic component)
-        mutated_prog, desc = DirectedMutator.mutate(
-            program, trace, analysis, rng, task_level=task_level)
-        return mutated_prog, f"directed_{desc}", analysis
-
     if strat_val == "PERTURBATION_CAPPED":
         # Capped perturbation: replace up to 3 random instructions with
-        # valid RV32I encodings. The archive does not store programs, so
-        # true parent blending is not possible; this provides bounded
-        # exploration distinct from full stochastic perturbation.
+        # valid RV32I encodings. No trace analysis needed for mutation logic.
         champion_prog = program
         if strategy_archive is not None and strategy_archive.total_records() > 10:
             if task_level is not None:
@@ -1186,11 +1167,33 @@ def propose_mutation(
                     mutated_prog[idx] = make_random_rv32i(rng)
             if mutated_prog[-1] != EBREAK:
                 mutated_prog.append(EBREAK)
+            analysis = TraceAnalysis(
+                divergence_point=None, divergence_type="perturbation_capped",
+                final_regs=[], trace_length=0, suggestion={})
             return mutated_prog[:MAX_PROGRAM_LEN], desc, analysis
         else:
             mutated_prog, desc2 = DirectedMutator._fallback_mutation(
                 program, rng)
+            analysis = TraceAnalysis(
+                divergence_point=None, divergence_type="perturbation_capped",
+                final_regs=[], trace_length=0, suggestion={})
             return mutated_prog, f"crossover_fallback_{desc2}", analysis
+
+    # Branches below need trace analysis for mutation logic
+    analysis = TraceAnalyzer.analyze(
+        trace=trace,
+        expected=expected,
+        inputs=inputs,
+        program=program,
+        error=error,
+        budget=budget,
+    )
+
+    if strat_val == "DIRECTED":
+        # Trace-analysis-driven (no stochastic component)
+        mutated_prog, desc = DirectedMutator.mutate(
+            program, trace, analysis, rng, task_level=task_level)
+        return mutated_prog, f"directed_{desc}", analysis
 
     # ── Default: HYBRID (90% directed, 10% stochastic) ──────────────
     if rng.random() < stochastic_prob:

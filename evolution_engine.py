@@ -1544,6 +1544,7 @@ class EvolutionEngine:
         old_level = self.champion_level
         self.champion_level += 1
         self.generations_stalled = 0
+        self._qd_champion_reset_tried = False
 
         # Save champion for the old level
         self._save_champion(old_level)
