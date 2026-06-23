@@ -902,18 +902,19 @@ class EvolutionEngine:
         self._last_challenger_strategies = []
         self._last_challenger_programs = []
 
+        # Hoist loop-invariant lookups
+        task_inst = self.task_instance or {}
+        expected = task_inst.get("expected_output", {})
+        inputs = task_inst.get("inputs", {})
+        trace_input = [self.champion_trace] if self.champion_trace is not None else []
+        sa = self.strategy_archive if self.config.use_strategy_archive else None
+
         for i in range(self.config.population_size):
             # Choose strategy
             strategy = self._choose_mutation_strategy(i)
             self._last_challenger_strategies.append(strategy.value)
 
             # Apply mutation to champion
-            task_inst = self.task_instance or {}
-            expected = task_inst.get("expected_output", {})
-            inputs = task_inst.get("inputs", {})
-            # champion_trace is always a dict from _eval_result_to_trace.
-            # Wrap in a list because TraceAnalyzer.analyze expects a list.
-            trace_input = [self.champion_trace] if self.champion_trace is not None else []
             mutated, _desc, _analysis = propose_mutation(
                 program=self.champion,
                 trace=trace_input,
@@ -922,7 +923,7 @@ class EvolutionEngine:
                 rng=self.rng,
                 task_level=self.champion_level,
                 strategy=strategy,
-                strategy_archive=self.strategy_archive if self.config.use_strategy_archive else None,
+                strategy_archive=sa,
             )
             challengers.append(mutated)
             self._last_challenger_programs.append(mutated)
@@ -1222,7 +1223,7 @@ class EvolutionEngine:
     def _try_qd_crossover(self) -> list[int] | None:
         """Attempt to breed a hybrid program from the QD archive.
 
-        When stalled >= 30 gens and the QD archive has 2+ distinct solutions,
+        When stalled >= 15 gens and the QD archive has 2+ distinct solutions,
         perform a crossover between the top two fitness-ranked programs.
         Returns the hybrid program (with EBREAK) or None.
 
