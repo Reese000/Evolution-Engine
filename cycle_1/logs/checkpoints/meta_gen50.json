@@ -1,7 +1,7 @@
 {
   "generation": 50,
-  "level": 11,
-  "fitness": 150.0,
-  "program_words": 7,
-  "generations_stalled": 10
+  "level": 10,
+  "fitness": 150.01999999999998,
+  "program_words": 11,
+  "generations_stalled": 1
 }
