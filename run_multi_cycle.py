@@ -155,7 +155,7 @@ def run_evolution(
         use_novelty_archive=True,
         use_qd_archive=True,
         qd_bonus_weight=0.1,
-        use_gpu=False,  # GPU vm_farm needs dict→EvalResult conversion fix
+        use_gpu=True,  # GPU VM farm for fast evolution; CuPy cleanup before retrain
     )
 
     # Apply MetaController-tuned evolution params if provided
@@ -164,9 +164,9 @@ def run_evolution(
             if hasattr(config, key):
                 setattr(config, key, val)
 
-    # Enable model-guided generation by default (v5+)
-    if meta_evolution_params is None or "model_guided_ratio" not in meta_evolution_params:
-        config.model_guided_ratio = None  # v10: None enables curriculum-adaptive ratio (0.1/0.3/0.6)
+    # Re-enable model-guided generation (PrefixGenerator now on GPU)
+    # 20% of challengers come from model, 80% from mutation
+    config.model_guided_ratio = 0.2
 
     # Set the seed model path to our current cycle's checkpoint
     engine = EvolutionEngine(config=config)
@@ -269,21 +269,25 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     """
     log(f"  Cycle {cycle}: Retraining model...")
 
-    # -- Use full checkpoint for retrain (with optimizer state) --
+    # -- Always retrain from the best checkpoint (with optimizer state) --
     # The evolution engine uses a stripped checkpoint (model_state_dict only).
     # For retrain, we want the full checkpoint with optimizer to preserve Adam momentum.
-    # v15: Chain checkpoints — prefer previous cycle's full checkpoint over C11 baseline.
-    prev_full_ckpt = os.path.join(M1_CHECKPOINTS, f"checkpoint_full_cycle_{cycle-1}.pt")
-    if os.path.isfile(prev_full_ckpt) and prev_full_ckpt != checkpoint_path:
-        log(f"  Cycle {cycle}: Using chained checkpoint from cycle {cycle-1}: {prev_full_ckpt}")
-        checkpoint_path = prev_full_ckpt
+    # Always use checkpoint_best_full.pt to avoid chaining rejected retrain outputs.
+    full_checkpoint = os.path.join(M1_CHECKPOINTS, "checkpoint_best_full.pt")
+    backup_checkpoint = None
+    if os.path.isfile(full_checkpoint):
+        log(f"  Cycle {cycle}: Using best full checkpoint for retrain: {full_checkpoint}")
+        checkpoint_path = full_checkpoint
+        # Backup so we can restore on gate rejection
+        backup_checkpoint = full_checkpoint + ".pre_retrain_backup"
+        try:
+            shutil.copy2(full_checkpoint, backup_checkpoint)
+            log(f"  Cycle {cycle}: Backed up full checkpoint to: {backup_checkpoint}")
+        except (OSError, PermissionError) as e:
+            log(f"  Cycle {cycle}: Warning: backup failed: {e}")
+            backup_checkpoint = None
     else:
-        full_checkpoint = os.path.join(M1_CHECKPOINTS, "checkpoint_best_full.pt")
-        if os.path.isfile(full_checkpoint) and full_checkpoint != checkpoint_path:
-            log(f"  Cycle {cycle}: Using base full checkpoint for retrain: {full_checkpoint}")
-            checkpoint_path = full_checkpoint
-        else:
-            log(f"  Cycle {cycle}: Using passed checkpoint for retrain: {checkpoint_path}")
+        log(f"  Cycle {cycle}: Using passed checkpoint for retrain: {checkpoint_path}")
 
     recurrent_data = os.path.join(M1_RECURRENT, "recurrent_data.jsonl")
     if not os.path.isfile(recurrent_data):
@@ -293,9 +297,9 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     # Check there are enough examples
     with open(recurrent_data) as f:
         example_count = sum(1 for line in f if line.strip())
-    min_examples = 5
+    min_examples = 1
     if config is not None:
-        min_examples = getattr(config, "retrain_min_examples", 5)
+        min_examples = getattr(config, "retrain_min_examples", 1)
     if example_count < min_examples:
         log(f"  Cycle {cycle}: Only {example_count} examples (< {min_examples}) -- skipping retrain")
         return {"retrained": False, "reason": f"only_{example_count}_examples"}
@@ -310,7 +314,9 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
         from mutation_proposer import _encode_inst
         from tasks_rv32i import reference_solution
 
-        ref_levels = list(range(8, 14))  # L8-L13
+        from tasks_rv32i import LEVELS as _LEVELS
+        max_level = max(_LEVELS.keys()) if _LEVELS else 11
+        ref_levels = list(range(8, max_level + 1))  # L8-L{max} (only existing levels)
         ref_added = 0
         ref_examples = []
 
@@ -377,7 +383,8 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     retrain_log = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
 
     # -- Build command with parameterized retrain hyperparameters ------
-    cuda_python = "/usr/local/lib/hermes-agent/venv/bin/python3"
+    import sys as _sys
+    cuda_python = _sys.executable or "python"
     cmd = [
         cuda_python,
         train_script,
@@ -387,10 +394,10 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
         recurrent_data,
     ]
 
-    # Default model size: medium
-    model_size = "medium"
+    # Default model size: xlarge (~115M params: 16L, d=768, d_ff=2048)
+    model_size = "xlarge"
     if config is not None:
-        model_size = getattr(config, "retrain_model_size", "medium")
+        model_size = getattr(config, "retrain_model_size", "xlarge")
     cmd.extend(["--model-size", model_size])
 
     # -- Learning rate --
@@ -398,6 +405,23 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     lr = None
     if config is not None:
         lr = getattr(config, "retrain_lr", None)
+    # Safety: if we have a known good checkpoint (val_loss < 2.0), cap LR to 1e-5
+    # to prevent catastrophic forgetting of already-learned patterns.
+    # LR=3e-4 is appropriate for initial training but destroys a fine-tuned model
+    # (val_loss jumps from 1.36 → 2.15 in epoch 1).
+    if lr is not None and lr > 1e-5:
+        # Check if existing checkpoint has val_loss < 2.0 (known good)
+        existing_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_best_full.pt")
+        if os.path.isfile(existing_ckpt):
+            try:
+                import torch as _torch
+                _ckpt_data = _torch.load(existing_ckpt, map_location="cpu", weights_only=False)
+                _existing_val = _ckpt_data.get("val_loss", 999)
+                if _existing_val < 2.0:
+                    lr = 1e-5
+                    log(f"  Cycle {cycle}: Capped LR from config to {lr} (existing val_loss={_existing_val:.4f} < 2.0)")
+            except Exception:
+                pass
     if lr is not None:
         cmd.extend(["--lr", str(lr)])
     elif cycle >= 2:
@@ -473,10 +497,10 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
         cmd.extend(["--ref-high-augment", str(ref_high)])
         log(f"  Cycle {cycle}: Adding {ref_high} high-level reference augmentations")
 
-    # -- Batch size (capped at 8 for WSL CUDA memory stability) --
-    # Batch size > 8 causes GPU OOM with 45M param model on RTX 4070 Ti.
-    # Config value is respected up to this limit; use --grad-accum-steps
-    # for larger effective batch sizes without OOM.
+    # -- Batch size (RTX 4070 Ti 12GB) --
+    # 115M param model with batch 32 causes 27GB total (12GB dedicated + 15GB
+    # shared/system RAM offload) — kills performance. Use batch 8 + grad accum 4
+    # for effective batch 32 while staying within 12GB dedicated VRAM.
     bs = getattr(config, "retrain_batch_size", 8) if config is not None else 8
     effective_bs = max(1, min(bs, 8))
     if effective_bs != bs:
@@ -521,7 +545,9 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
         cmd.extend(["--max-per-level", str(mpl)])
 
     # v24: Gradient accumulation (Pivot 1)
-    ga_steps = getattr(config, "retrain_grad_accum_steps", 1) if config is not None else 1
+    # Force grad_accum=4 when batch=8 to maintain effective batch 32
+    # while keeping VRAM within 12GB dedicated.
+    ga_steps = getattr(config, "retrain_grad_accum_steps", 4) if config is not None else 4
     if ga_steps > 1:
         cmd.extend(["--grad-accum-steps", str(ga_steps)])
         log(f"  Cycle {cycle}: Gradient accumulation: {ga_steps} steps")
@@ -602,6 +628,16 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
             import torch
 
             if torch.cuda.is_available():
+                # Step 0: Clean up CuPy context (GPU VM farm uses CuPy)
+                # Only clear if CuPy was actually imported (avoids grabbing 8GB)
+                if "cupy" in sys.modules:
+                    try:
+                        import cupy as cp
+                        cp.get_default_memory_pool().free_all_blocks()
+                        cp.get_default_pinned_memory_pool().free_all_blocks()
+                        log(f"  Cycle {cycle}: CuPy memory pool cleared")
+                    except (ImportError, Exception):
+                        pass
                 # Step 1: Collect all Python objects to release GPU tensor refs
                 _gc.collect()
                 # Step 2: Synchronize and drain pending CUDA operations
@@ -610,12 +646,10 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
                 torch.cuda.empty_cache()
                 # Step 4: Reset peak stats (triggers allocator reset)
                 torch.cuda.reset_peak_memory_stats()
-                # Step 5: Extended cooldown for driver to settle
-                # v16: Increased from 2s to 5s to prevent "device not ready" errors
-                # that occur after full GPU reset (gc+sync+empty+peak_reset).
-                # This is a known issue on WSL2 with CUDA 13.0 where the driver
-                # takes longer to recover after an aggressive reset.
-                time.sleep(5)
+                # Step 5: Extended cooldown for CUDA driver to settle
+                # 3s cooldown after CuPy+PyTorch cleanup to let the driver
+                # fully reclaim CUDA contexts from the evolution engine.
+                time.sleep(3)
                 log(f"  Cycle {cycle}: GPU reset complete")
         except Exception:
             pass
@@ -637,7 +671,7 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
             resume_path=checkpoint_path,
             recurrent_data_path=recurrent_data,
         )
-        model_size = getattr(config, "retrain_model_size", "medium") if config is not None else "medium"
+        model_size = getattr(config, "retrain_model_size", "xlarge") if config is not None else "xlarge"
         train_kwargs["model_size"] = model_size
         if lr:
             train_kwargs["lr_override"] = lr
@@ -752,8 +786,8 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
                         except RuntimeError as retry_err:
                             cuda_err_str = str(retry_err)
                             if retries_left == 0:
-                                log(f"  Cycle {cycle}: GPU error persists after 3 retries — skipping retrain")
-                                return {"retrained": False, "reason": f"gpu_error: {cuda_err_str}"}
+                                log(f"  Cycle {cycle}: GPU error persists after 3 retries — falling back to CPU")
+                                break  # fall through to CPU fallback below
                 if retrain_ok:
                     log(f"  Cycle {cycle}: GPU retrain succeeded after cooldown")
             else:
@@ -763,6 +797,34 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
             sys.stdout = old_stdout
             sys.stderr = old_stderr
             log_f.close()
+
+        # -- CPU fallback when GPU retrain fails --------------------------
+        # After CUDA corruption from evolution prefix generation, the GPU
+        # may be unusable for training. CPU training is ~10x slower but
+        # still produces valid checkpoints that keep the loop alive.
+        if not retrain_ok:
+            log(f"  Cycle {cycle}: GPU retrain failed — falling back to CPU training")
+            try:
+                cpu_log = open(retrain_log + ".cpu", "w", buffering=1, encoding="utf-8")
+                old_stdout2 = sys.stdout
+                old_stderr2 = sys.stderr
+                sys.stdout = cpu_log
+                sys.stderr = cpu_log
+                try:
+                    train_kwargs["amp"] = False
+                    train_mod.train(**train_kwargs)
+                    retrain_ok = True
+                    log(f"  Cycle {cycle}: CPU retrain completed successfully")
+                except Exception as cpu_err:
+                    log(f"  Cycle {cycle}: CPU retrain also failed: {cpu_err}")
+                    return {"retrained": False, "reason": f"cpu_fallback_error: {cpu_err}"}
+                finally:
+                    sys.stdout = old_stdout2
+                    sys.stderr = old_stderr2
+                    cpu_log.close()
+            except Exception as fallback_err:
+                log(f"  Cycle {cycle}: CPU fallback setup failed: {fallback_err}")
+                return {"retrained": False, "reason": f"cpu_fallback_setup: {fallback_err}"}
 
     except FileNotFoundError:
         log(f"  Cycle {cycle}: train_model module not found")
@@ -805,8 +867,6 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     # Save full version as checkpoint_best_full.pt for next retrain,
     # then strip checkpoint_best.pt to model_state_dict only for evolution/PrefixGenerator.
     if os.path.isfile(best_ckpt):
-        import shutil
-
         full_ckpt_path = os.path.join(M1_CHECKPOINTS, "checkpoint_best_full.pt")
         try:
             shutil.copy2(best_ckpt, full_ckpt_path)
@@ -844,19 +904,34 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
                 if key.startswith("_orig_mod."):
                     key = key[11:]
                 clean_sd[key] = v
+            # Read actual architecture from the saved training config
+            train_cfg = ckpt_full.get("config", {})
+            # Save proper config dict so train_model.py can load it
+            strip_cfg = {
+                "vocab_size": train_cfg.get("vocab_size", 2048),
+                "d_model": train_cfg.get("d_model", 512),
+                "n_layers": train_cfg.get("n_layers", 14),
+                "n_heads": train_cfg.get("n_heads", 8),
+                "d_ff": train_cfg.get("d_ff", 1365),
+                "max_seq_len": train_cfg.get("max_seq_len", 2048),
+            }
+            # Infer from weights if config is empty
+            if not train_cfg:
+                qkv_keys = [k for k in clean_sd if "blocks.0.attn.qkv.weight" in k]
+                if qkv_keys:
+                    strip_cfg["d_model"] = clean_sd[qkv_keys[0]].shape[1]
+                blk_keys = [k for k in clean_sd if k.startswith("blocks.") and "ln1.weight" in k]
+                if blk_keys:
+                    strip_cfg["n_layers"] = len(blk_keys)
             torch.save(
                 {
                     "model_state_dict": clean_sd,
-                    "vocab_size": 2048,
-                    "d_model": 512,
-                    "n_layers": 14,
-                    "n_heads": 8,
-                    "d_ff": 2048,
-                    "max_seq_len": 1024,
+                    "config": strip_cfg,
+                    "val_loss": ckpt_full.get("val_loss"),
                 },
                 best_ckpt,
             )
-            log(f"  Cycle {cycle}: Stripped checkpoint for evolution: {os.path.getsize(best_ckpt) / 1e6:.1f}MB")
+            log(f"  Cycle {cycle}: Stripped checkpoint for evolution: {os.path.getsize(best_ckpt) / 1e6:.1f}MB ({strip_cfg['n_layers']}L/d={strip_cfg['d_model']})")
         except Exception as e:
             log(f"  Cycle {cycle}: Failed to strip checkpoint: {e}")
 
@@ -866,6 +941,7 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
         "elapsed_seconds": round(elapsed, 2),
         "example_count": example_count,
         "exit_code": 0,
+        "backup_checkpoint": backup_checkpoint,
     }
 
 
@@ -957,7 +1033,7 @@ def _make_parser() -> argparse.ArgumentParser:
         "--retrain-max-per-level", type=int, default=None, help="Max recurrent examples per curriculum level"
     )
     parser.add_argument(
-        "--retrain-model-size", type=str, default="medium", choices=["small", "medium"], help="Model size for retrain"
+        "--retrain-model-size", type=str, default="xlarge", choices=["small", "medium", "large", "xlarge"], help="Model size for retrain"
     )
     parser.add_argument("--retrain-timeout", type=int, default=3600, help="Timeout per retrain subprocess (seconds)")
     parser.add_argument("--retrain-patience", type=int, default=None, help="Early stopping patience for retrain")
@@ -1012,7 +1088,7 @@ def _build_retrain_config(args: argparse.Namespace) -> Any:
         args.retrain_batch_size,
         args.retrain_weight_decay,
     ]
-    if not args.retrain_adaptive_freeze and all(v is None or v == 0 or v == "medium" or v == 3600 for v in retrain_args):
+    if not args.retrain_adaptive_freeze and all(v is None or v == 0 or v == "xlarge" or v == 3600 for v in retrain_args):
         return None  # No overrides -- backward compatible
 
     # Create a simple namespace for retrain params
@@ -1029,7 +1105,7 @@ def _build_retrain_config(args: argparse.Namespace) -> Any:
     cfg.retrain_grad_clip = args.retrain_grad_clip
     cfg.retrain_batch_size = args.retrain_batch_size
     cfg.retrain_weight_decay = args.retrain_weight_decay
-    cfg.retrain_min_examples = 5  # default
+    cfg.retrain_min_examples = 1  # default (training adds 51K synthetic + ref data anyway)
     cfg.retrain_val_split = None
     cfg.retrain_adaptive_freeze = args.retrain_adaptive_freeze
     # v24: Propagate pivot args to config
@@ -1157,8 +1233,8 @@ def main() -> None:
             best_checkpoint_name="checkpoint_best.pt",
             log_file=os.path.join(PROJECT_ROOT, "meta_controller.log"),
         )
-        # Load state if resuming
-        if args.resume and os.path.isfile(META_CONTROLLER_STATE):
+        # Load state if available (always, not just on --resume, to preserve gating history)
+        if os.path.isfile(META_CONTROLLER_STATE):
             if meta_controller.load_state(META_CONTROLLER_STATE):
                 log(f"  MetaController: Loaded state from {META_CONTROLLER_STATE}")
                 log(
@@ -1469,7 +1545,7 @@ def main() -> None:
                 # -- v11.5: Acceleration defaults -----------------------
                 # Larger batch (48 vs 32) = 50% fewer backward passes
                 # v19: Larger val_split (0.15 vs 0.05) = more reliable val_loss signal
-                retrain_meta_params.setdefault("retrain_batch_size", 48)
+                retrain_meta_params.setdefault("retrain_batch_size", 8)
                 retrain_meta_params.setdefault("retrain_val_split", 0.15)
 
                 # Merge MetaController retrain params with CLI overrides
@@ -1484,9 +1560,9 @@ def main() -> None:
                     mc_cfg.retrain_max_per_level = retrain_meta_params.get("retrain_max_per_level")
                     mc_cfg.retrain_patience = retrain_meta_params.get("retrain_patience")
                     mc_cfg.retrain_max_epochs = retrain_meta_params.get("retrain_max_epochs")
-                    mc_cfg.retrain_model_size = "medium"
+                    mc_cfg.retrain_model_size = "xlarge"
                     mc_cfg.retrain_timeout = 3600
-                    mc_cfg.retrain_min_examples = 5
+                    mc_cfg.retrain_min_examples = 1
                     mc_cfg.retrain_val_split = retrain_meta_params.get("retrain_val_split")
                     mc_cfg.retrain_grad_clip = None
                     mc_cfg.retrain_batch_size = retrain_meta_params.get("retrain_batch_size")
@@ -1557,6 +1633,16 @@ def main() -> None:
                                 f"  Cycle {cycle}: Checkpoint REJECTED (val_loss={val_loss:.4f} > "
                                 f"threshold={meta_controller._best_val_loss * meta_controller.checkpoint_acceptance_tolerance:.4f})"
                             )
+                            # Restore checkpoint_best_full.pt from pre-retrain backup
+                            # (retrain_model() always overwrites it during training)
+                            _bkp = retrain_result.get("backup_checkpoint")
+                            if _bkp and os.path.isfile(_bkp):
+                                full_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_best_full.pt")
+                                try:
+                                    shutil.copy2(_bkp, full_ckpt)
+                                    log(f"  Cycle {cycle}: Restored checkpoint_best_full.pt from backup")
+                                except (OSError, PermissionError) as e:
+                                    log(f"  Cycle {cycle}: Warning: backup restore failed: {e}")
                             log(
                                 f"  Cycle {cycle}: Falling back to pre-cycle snapshot "
                                 f"(checkpoint_best.pt was overwritten by retrain)"
@@ -1818,13 +1904,8 @@ def main() -> None:
         elif os.path.isfile(os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")):
             retrain_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")
         if retrain_ckpt:
-            diagnostics = _run_training_visibility_diagnostics(
-                cycle=cycle,
-                checkpoint=retrain_ckpt,
-                champion=champion_int,
-                champion_level=champion_level,
-                recurrent_data_path=os.path.join(M1_RECURRENT, "recurrent_data.jsonl"),
-            )
+            # Skip MemGen diagnostics — they use PrefixGenerator on CPU (~500s)
+            diagnostics = None
             if diagnostics:
                 combined["training_visibility"] = diagnostics
 
@@ -1936,6 +2017,27 @@ def _cleanup_stale_checkpoints(current_cycle, keep=5):
                 pass
     if deleted > 3:
         log(f"  [Cleanup] Deleted {deleted - 3} more stale checkpoints")
+
+    # -- Cleanup *_full.pt files (cycle-chained full checkpoints) ------
+    # Keep only the 2 most recent checkpoint_full_cycle_N.pt files.
+    # These are ~524MB each with optimizer state, so discarding old ones
+    # reclaims significant disk space.
+    full_ckpt_files: list[tuple[int, str]] = []
+    for f in glob.glob(os.path.join(ckpt_dir, "checkpoint_full_cycle_*.pt")):
+        try:
+            n = int(os.path.basename(f).replace("checkpoint_full_cycle_", "").replace(".pt", ""))
+        except ValueError:
+            continue
+        full_ckpt_files.append((n, f))
+    full_ckpt_files.sort(key=lambda x: x[0])  # ascending by cycle number
+    if len(full_ckpt_files) > 2:
+        for n, f in full_ckpt_files[:-2]:
+            try:
+                sz = os.path.getsize(f)
+                os.remove(f)
+                log(f"  [Cleanup] Deleted old full checkpoint: {os.path.basename(f)} ({sz / 1e6:.0f}MB)")
+            except (OSError, PermissionError):
+                pass
 
 
 # ----------------------------------------------------------------------
@@ -2279,7 +2381,7 @@ def compute_memorization_generalization(
 
     # -- Generalization: reference solutions with multiple prefix offsets -
     gen_tests: list[dict] = []
-    for level in range(8, 14):
+    for level in range(8, max(LEVELS.keys()) + 1):
         try:
             ref_insts = reference_solution(level)
             ref_words = []

@@ -24,6 +24,20 @@ build/
 # Node
 node_modules/
 
+# IDE
+.vscode/
+.idea/
+
+# Python caches
+.mypy_cache/
+.pytest_cache/
+
+# Claude
+.claude/
+
+# Screenshots
+screenshots/
+
 # Logs
 *.log
 

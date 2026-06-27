@@ -187,6 +187,9 @@ class MetaController:
         self._rollback_count: int = 0
         self._last_snapshot_path: str = ""
 
+        # Consecutive cycles with None val_loss (for degenerate-loop detection)
+        self._consecutive_none_val_loss: int = 0
+
         # Logging
         self.log_file = log_file
         if self.log_file:
@@ -230,6 +233,9 @@ class MetaController:
         if snapshot.val_loss is not None and snapshot.val_loss > 0:
             if snapshot.val_loss < self._best_val_loss:
                 self._best_val_loss = snapshot.val_loss
+            self._consecutive_none_val_loss = 0
+        else:
+            self._consecutive_none_val_loss += 1
 
         # Append to history
         self.telemetry.append(snapshot)
@@ -422,6 +428,30 @@ class MetaController:
             self._record_tuning("retrain", "retrain_freeze_layers",
                                 None, base_freeze,
                                 "stagnation: compound_stall")
+
+        # ── Fitness-based fallback when val_loss is unavailable ──────
+        # When val_loss has been None for 3+ consecutive cycles (e.g. retrain
+        # skipped or val loss not captured), the controller can oscillate
+        # between two LR values because it has no signal to guide tuning.
+        # Use fitness improvement rate as a proxy: if fitness is improving,
+        # keep the current LR; if stagnant, halve it to encourage exploration.
+        if self._consecutive_none_val_loss >= 3:
+            if self.cycles_since_fitness_improvement <= 1:
+                # Fitness is improving — keep current LR (don't change base_lr)
+                self._log(f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
+                          f"fitness improving, keeping LR={base_lr:.2e}")
+            elif self.cycles_since_fitness_improvement >= 3:
+                # Fitness is stagnant — halve LR to escape local minimum
+                base_lr = max(self.lr_min, base_lr * 0.5)
+                self._log(f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}, "
+                          f"fitness stagnant ({self.cycles_since_fitness_improvement} cycles): "
+                          f"halving LR to {base_lr:.2e}")
+                self._record_tuning("retrain", "retrain_lr", None, base_lr,
+                                    f"fallback: val_loss_none_fitness_stagnant")
+            else:
+                self._log(f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
+                          f"fitness slightly stale ({self.cycles_since_fitness_improvement}), "
+                          f"keeping LR={base_lr:.2e}")
 
         # ── Per-level data diversity ─────────────────────────────────
         if cycle >= 3:
@@ -696,6 +726,7 @@ class MetaController:
             "total_gated": self._gated_count,
             "total_rollbacks": self._rollback_count,
             "total_cycles_observed": len(self.telemetry),
+            "_consecutive_none_val_loss": self._consecutive_none_val_loss,
             "last_5_cycles": [
                 {
                     "cycle": t.cycle,
@@ -740,6 +771,7 @@ class MetaController:
             self._rollback_count = data.get("_rollback_count", 0)
             self.recovery_mode = data.get("recovery_mode", False)
             self.recovery_cycles_remaining = data.get("recovery_cycles_remaining", 0)
+            self._consecutive_none_val_loss = data.get("_consecutive_none_val_loss", 0)
             return True
         except (json.JSONDecodeError, KeyError, OSError) as e:
             self._log(f"Failed to load state: {e}")
@@ -787,8 +819,11 @@ class MetaController:
 def parse_val_loss_from_retrain_log(log_path: str) -> Optional[float]:
     """Extract final validation loss from a retrain log file.
 
-    Looks for the last occurrence of "Val Loss: X.XXXX" in the log.
-    Returns None if not found or file doesn't exist.
+    Matches multiple output formats from train_model.py:
+      - "val=X.XXXX" (epoch line)
+      - "val_loss=X.XXXX" (saved checkpoint line)
+      - "Val Loss: X.XXXX" (legacy format)
+    Returns the minimum (best) val_loss found, or None if not found.
     """
     if not os.path.isfile(log_path):
         return None
@@ -797,11 +832,17 @@ def parse_val_loss_from_retrain_log(log_path: str) -> Optional[float]:
         best_val = None
         with open(log_path) as f:
             for line in f:
-                m = re.search(r"Val Loss:\s*([0-9]+\.[0-9]+)", line)
-                if m:
-                    val = float(m.group(1))
-                    if best_val is None or val < best_val:
-                        best_val = val
+                for pattern in (
+                    r"val=([0-9]+\.[0-9]+)",
+                    r"val_loss=([0-9]+\.[0-9]+)",
+                    r"Val Loss:\s*([0-9]+\.[0-9]+)",
+                ):
+                    m = re.search(pattern, line)
+                    if m:
+                        val = float(m.group(1))
+                        if best_val is None or val < best_val:
+                            best_val = val
+                        break  # first matching pattern per line
         return best_val
     except (OSError, PermissionError, ValueError):
         return None
