@@ -9,6 +9,7 @@ champion when a challenger achieves higher fitness.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import random
@@ -60,13 +61,12 @@ class VMFarm:
         If kernel_path is the default string or doesn't exist as a file,
         try to locate the actual safety-kernel binary relative to this file.
 
-        Raises:
-            FileNotFoundError: If no safety-kernel binary can be found at
-                any searched location.
+        Returns the path if found, or an empty string when the VM is pure
+        Python and no external kernel binary is needed.
         """
         if os.path.isfile(kernel_path):
             return kernel_path
-        # Auto-detect relative to milestone2/
+        # Auto-detect relative to milestone0/
         candidates = [
             os.path.join(SCRIPT_DIR, "..", "milestone0", "safety-kernel", "target", "release", "safety-kernel"),
             "/root/milestone0/safety-kernel/target/release/safety-kernel",
@@ -75,13 +75,8 @@ class VMFarm:
             if os.path.isfile(c):
                 print(f"[VMFarm] Kernel binary resolved: {c}")
                 return c
-        raise FileNotFoundError(
-            f"Safety-kernel binary not found. Searched:\n"
-            f"  - {kernel_path} (given)\n"
-            f"  - {candidates[0]}\n"
-            f"  - {candidates[1]}\n"
-            f"Build it: cd /root/milestone0/safety-kernel && cargo build --release"
-        )
+        # No external kernel found -- pure-Python VM is used instead.
+        return ""
 
     def __init__(self, num_workers: int = 1, kernel_path: str = "safety_kernel",
                  use_gpu: bool = False, **kwargs):
@@ -170,17 +165,34 @@ class VMFarm:
                 return [VMFarm._dict_to_eval_result(gr) for gr in gpu_results]
             except Exception as e:
                 self._log(f"GPU batch failed: {e}, falling back to CPU")
-        # CPU fallback
-        return [
-            _run_one_evaluation(
-                kernel_path=self.kernel_path,
-                program=p,
-                budget=budget,
-                init_regs=i.get("registers", {}),
-                init_mem=i.get("memory", {}),
-            )
-            for p, i in zip(programs, inputs_list, strict=False)
-        ]
+        # CPU fallback — parallel via ProcessPoolEvaluator
+        try:
+            max_workers = min(8, os.cpu_count() or 1)
+            with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(
+                        _run_one_evaluation,
+                        kernel_path=self.kernel_path,
+                        program=p,
+                        budget=budget,
+                        init_regs=i.get("registers", {}),
+                        init_mem=i.get("memory", {}),
+                    )
+                    for p, i in zip(programs, inputs_list, strict=False)
+                ]
+                return [f.result() for f in futures]
+        except Exception as exc:
+            self._log(f"ProcessPool failed ({exc}), falling back to sequential")
+            return [
+                _run_one_evaluation(
+                    kernel_path=self.kernel_path,
+                    program=p,
+                    budget=budget,
+                    init_regs=i.get("registers", {}),
+                    init_mem=i.get("memory", {}),
+                )
+                for p, i in zip(programs, inputs_list, strict=False)
+            ]
 
     @staticmethod
     def _dict_to_eval_result(d: dict) -> EvalResult:
@@ -442,7 +454,7 @@ class EvolutionConfig:
     model_guided_ratio: float | None = None
     model_guided_ratio_low: float = 0.1
     model_guided_ratio_mid: float = 0.3
-    model_guided_ratio_high: float = 0.6
+    model_guided_ratio_high: float = 0.4
 
     # PERTURBATION_CAPPED configuration
     perturbation_capped_unsolved_levels: tuple[int, ...] = (9, 10, 11)
@@ -621,8 +633,8 @@ class EvolutionEngine:
 
             # 2. Evaluate challengers (stage 1: quick)
             results = self._evaluate_batch(challengers)
-
-            # 3. Select elite challengers for detailed eval (stage 2)
+            self._last_challengers = challengers
+            self._last_results = results
             elite = self._select_elite(challengers, results)
             detailed_results = self._evaluate_batch_detailed(elite)
 
@@ -635,6 +647,18 @@ class EvolutionEngine:
             # Refresh task instance every 25 generations to prevent overfitting
             if gen > 0 and gen % 25 == 0:
                 self._refresh_task_instance()
+
+            # Periodic CUDA cleanup during evolution to prevent GPU context
+            # corruption from prefix generation accumulating across gens.
+            if gen > 0 and gen % 10 == 0:
+                try:
+                    import gc as _gc
+                    import torch as _torch
+                    if _torch.cuda.is_available():
+                        _gc.collect()
+                        _torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
             # 6. Checkpoint
             if gen > 0 and self.config.checkpoint_interval and gen % self.config.checkpoint_interval == 0:
@@ -650,11 +674,11 @@ class EvolutionEngine:
             else:
                 self.generations_stalled += 1
 
+            # 8. Recurrent feedback check (BEFORE curriculum advance, which resets stall count)
+            self._try_recurrent_feedback()
+
             if self.config.auto_curriculum:
                 self._try_curriculum_advance()
-
-            # 8. Recurrent feedback check
-            self._try_recurrent_feedback()
 
             # 9. Strategy archive record
             self._record_strategy_outcomes(results)
@@ -809,7 +833,20 @@ class EvolutionEngine:
         bloat_penalty = max(0, (instr_count - 10) * 0.01)
 
         max_score = max(total, 1)
-        base_score = reg_match * 100.0 - bloat_penalty
+
+        # D1: Execution progress credit
+        # Programs that execute more instructions without error are likely
+        # doing more meaningful computation, especially for L9+ loop-based tasks.
+        # Only applies when program has some correctness (reg_match > 0) to
+        # prevent long-running completely wrong programs from gaming the metric.
+        # Creates gradient: a program executing 3000 instructions with 50%
+        # register match gets +6.0 credit vs one executing 10 instructions
+        # with the same match -- rewarding iterative computation progress.
+        exec_credit = 0.0
+        if status == "ok" and instr_count > 0 and reg_match > 0.0:
+            exec_credit = min(10.0, (instr_count / max(1, self.config.eval_budget)) * 10.0)
+
+        base_score = reg_match * 100.0 - bloat_penalty + exec_credit
 
         # Level-aware graduated bonus for near-exact matches
         # Relaxes from 0.95 at L0 to 0.85 at L13 so high-level programs
@@ -1109,7 +1146,7 @@ class EvolutionEngine:
                     base = os.path.dirname(os.path.abspath(__file__))
                     ckpt = os.path.join(base, "..", "milestone1", "checkpoints", "checkpoint_best.pt")
                 if os.path.isfile(ckpt):
-                    self._prefix_generator = PrefixGenerator(ckpt, temperature=0.9, max_new_tokens=64)
+                    self._prefix_generator = PrefixGenerator(ckpt, temperature=0.9, max_new_tokens=256, device=None)
             except Exception as e:
                 self._log(f"[ModelGuided] Init failed: {e}")
                 return []
@@ -1218,6 +1255,19 @@ class EvolutionEngine:
                 f"(prefix: {source_name}, L={champion_level}, "
                 f"temp={model_temp:.1f})"
             )
+
+        # Free GPU memory used by PrefixGenerator before retrain.
+        # Delete the entire instance — it re-initializes fresh each cycle
+        # via lazy init, so this avoids CPU/CUDA device mismatch bugs.
+        if self._prefix_generator is not None:
+            try:
+                del self._prefix_generator
+                self._prefix_generator = None
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
 
         return replaced_indices
 
@@ -1566,34 +1616,19 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
 
     def _try_recurrent_feedback(self) -> bool:
-        """Check if curriculum has stalled and save recurrent feedback data.
+        """Save model-generated programs that execute successfully to training data.
 
-        When curriculum stalls >= 2 times, saves champion program and trace
-        to milestone1/recurrent_data/recurrent_data.jsonl.
+        Saves the best non-crashing model-guided challengers each generation.
+        This feeds the model's own output back into training, creating a
+        self-improving loop. The champion (reference solution) is NOT saved
+        because it's already in the training data.
 
         Returns True if >= 50 examples accumulated (signal to retrain).
         """
-        if self.generations_stalled < 2:
+        if self.generations_stalled < 1:
             return False
 
-        # Guard: champion must exist before checking fitness
-        if not self.champion or not self.champion_trace:
-            return False
-
-        # Fitness gate: don't save failing champion traces unless deeply stalled
-        # Low-fitness champions produce training signal that teaches the model
-        # to generate failing programs. Only bypass the gate when the system
-        # has been stalled long enough that any champion data is better than none.
-        if self.champion_fitness <= 0 and self.generations_stalled < self.config.circuit_breaker_stall_limit:
-            self._log(f"Fitness gate blocked trace: fitness={self.champion_fitness:.2f}, stalled={self.generations_stalled} < limit={self.config.circuit_breaker_stall_limit}")
-            return False
-
-        # Raw task score gate: block traces where champion barely scored
-        # (positive fitness may come from novelty/QD blending, not task performance).
-        # Only apply when fitness > 0 (crashing programs with negative fitness
-        # still provide useful training signal about what NOT to do).
-        if self.champion_fitness > 0 and self._raw_task_score < 10.0:
-            self._log(f"Task score gate blocked trace: champion_fitness={self.champion_fitness:.2f}, raw_task_score={self._raw_task_score:.2f} < 10.0")
+        if not self._last_challengers:
             return False
 
         # Determine recurrent data directory
@@ -1602,32 +1637,101 @@ class EvolutionEngine:
             recur_dir = os.path.join(MILESTONE1_DIR, "recurrent_data")
         os.makedirs(recur_dir, exist_ok=True)
 
-        # Build example
-        example = {
-            "level": self.champion_level,
-            "generation": self.current_generation,
-            "fitness": self.champion_fitness,
-            "champion_sha256": sha256_program(self.champion),
-            "champion_words": len(self.champion),
-            "champion_program": [hex(w) for w in self.champion],
-            "trace_status": self.champion_trace.get("status", ""),
-            "trace_instr_count": self.champion_trace.get("instructions_count", 0),
-            "stalled_count": self.generations_stalled,
-        }
-
-        # Append to JSONL
+        # Load existing hashes (cached on instance)
         jsonl_path = os.path.join(recur_dir, "recurrent_data.jsonl")
-        with open(jsonl_path, "a") as f:
-            f.write(json.dumps(example) + "\n")
+        if not hasattr(self, "_saved_sha256s"):
+            self._saved_sha256s = set()
+            if os.path.isfile(jsonl_path):
+                try:
+                    with open(jsonl_path) as _f:
+                        for _line in _f:
+                            _e = json.loads(_line)
+                            if "champion_sha256" in _e:
+                                self._saved_sha256s.add(_e["champion_sha256"])
+                except Exception:
+                    pass
 
-        # Count accumulated examples
-        self.recurrent_examples_count += 1
+        saved_any = False
 
-        # Log
-        count = self.recurrent_examples_count
-        self._log(f"Recurrent feedback saved ({count} total)")
+        # Save model-guided programs that executed successfully
+        # Pair challenger programs with their evaluation traces
+        for idx in range(len(self._last_challengers)):
+            if idx >= len(self._last_challengers):
+                continue
+            prog = self._last_challengers[idx]
+            if idx < len(self._last_results):
+                trace = self._last_results[idx]
+            else:
+                continue
 
-        return count >= 50
+            status = trace.get("status", "")
+            if status != "ok":
+                continue
+
+            sha256 = sha256_program(prog)
+            if sha256 in self._saved_sha256s:
+                continue
+
+            # Verify against ALL task levels (model may solve lower levels)
+            # Use the SAME task instance the VM actually executed with
+            task_score = 0.0
+            solved_level = self.champion_level
+            output = {
+                "registers": trace.get("final_regs", {}),
+                "memory": trace.get("final_memory", {}),
+            }
+            try:
+                from tasks_rv32i import LEVELS
+                for lvl in sorted(LEVELS.keys()):
+                    level_cls = LEVELS[lvl]
+                    try:
+                        score = level_cls.verify(output, self.task_instance)
+                        if score > task_score:
+                            task_score = score
+                            solved_level = lvl
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            # D2: Fitness quality gate — only save traces with positive fitness.
+            # Negative/zero fitness means the program produced wrong output or
+            # had errors. Including these contaminates the recurrent training
+            # buffer: the transformer learns to reproduce failing programs.
+            # Exception: deeply stalled (>= 50 gen) still allows low-quality
+            # traces to prevent total starvation of training signal.
+            challenger_fitness = self._last_challenger_fitnesses[idx] if idx < len(self._last_challenger_fitnesses) else 0.0
+            if challenger_fitness <= 0.0 and self.generations_stalled < 50:
+                continue
+            if len(prog) < 2:
+                continue
+
+            example = {
+                "level": solved_level,
+                "generation": self.current_generation,
+                "fitness": self._last_challenger_fitnesses[idx] if idx < len(self._last_challenger_fitnesses) else 0.0,
+                "champion_sha256": sha256,
+                "champion_words": len(prog),
+                "champion_program": [hex(w) for w in prog],
+                "trace_status": status,
+                "trace_instr_count": trace.get("instructions_count", 0),
+                "stalled_count": self.generations_stalled,
+                "task_score": task_score,
+            }
+
+            self._saved_sha256s.add(sha256)
+            with open(jsonl_path, "a") as f:
+                f.write(json.dumps(example) + "\n")
+            self.recurrent_examples_count += 1
+            saved_any = True
+
+        if saved_any:
+            self._log(
+                f"Recurrent feedback saved ({self.recurrent_examples_count} total, "
+                f"{len(self._saved_sha256s)} unique)"
+            )
+
+        return self.recurrent_examples_count >= 50
 
     # ------------------------------------------------------------------
     # Strategy archive

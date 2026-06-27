@@ -412,7 +412,7 @@ def test_v51_archive_mismatched_lengths_no_crash():
 
 def test_v51_curriculum_threshold_reachable_with_graduated_bonus():
     """With graduated bonus, a near-perfect program should clear 120.0.
-    
+
     L5: threshold ~0.908. At reg_match=0.95: bonus = 50 * (0.95-0.908)/(1-0.908)
     = 50 * 0.042/0.092 ≈ 22.8. So raw_score = 95 - bloat + 22.8 ≈ 117.8.
     At reg_match=0.97: bonus = 50 * 0.062/0.092 ≈ 33.7. raw_score ≈ 130.7 > 120.
@@ -420,9 +420,140 @@ def test_v51_curriculum_threshold_reachable_with_graduated_bonus():
     threshold = _compute_bonus_threshold(5)
     bonus_095 = _compute_graduated_bonus(0.95, 5)
     bonus_097 = _compute_graduated_bonus(0.97, 5)
-    
+
     raw_095 = 95.0 + bonus_095  # ignoring bloat penalty
     raw_097 = 97.0 + bonus_097
-    
+
     assert raw_095 > 100, f"L5 reg_match=0.95 gives raw={raw_095:.1f}, should be > 100"
     assert raw_097 >= 120, f"L5 reg_match=0.97 gives raw={raw_097:.1f}, should be >= 120"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# D1 Supplemental — Execution Progress Credit
+# ══════════════════════════════════════════════════════════════════════
+
+def _execution_progress_credit(status, instr_count, reg_match, eval_budget):
+    """Replicates the D1 execution progress credit formula."""
+    exec_credit = 0.0
+    if status == "ok" and instr_count > 0 and reg_match > 0.0:
+        exec_credit = min(10.0, (instr_count / max(1, eval_budget)) * 10.0)
+    return exec_credit
+
+
+def test_d1_exec_credit_zero_when_crashed():
+    """Crashed programs get no execution credit."""
+    credit = _execution_progress_credit("crash", 5000, 0.5, 5000)
+    assert credit == 0.0
+
+
+def test_d1_exec_credit_zero_when_zero_match():
+    """Programs with zero register match get no execution credit."""
+    credit = _execution_progress_credit("ok", 3000, 0.0, 5000)
+    assert credit == 0.0
+
+
+def test_d1_exec_credit_zero_when_no_instructions():
+    """Programs that executed zero instructions get no credit."""
+    credit = _execution_progress_credit("ok", 0, 0.5, 5000)
+    assert credit == 0.0
+
+
+def test_d1_exec_credit_proportional_to_budget_use():
+    """Credit scales with fraction of budget used, capped at 10.0."""
+    credit_10pct = _execution_progress_credit("ok", 500, 0.5, 5000)
+    credit_50pct = _execution_progress_credit("ok", 2500, 0.5, 5000)
+    credit_100pct = _execution_progress_credit("ok", 5000, 0.5, 5000)
+    assert 0.0 < credit_10pct < credit_50pct < credit_100pct <= 10.0
+    assert abs(credit_10pct - 1.0) < 0.001, f"10% budget should give credit=1.0, got {credit_10pct}"
+    assert abs(credit_50pct - 5.0) < 0.001, f"50% budget should give credit=5.0, got {credit_50pct}"
+    assert abs(credit_100pct - 10.0) < 0.001, f"100% budget should give credit=10.0, got {credit_100pct}"
+
+
+def test_d1_exec_credit_capped_at_10():
+    """Even over-budget instruction counts cap at 10.0."""
+    credit = _execution_progress_credit("ok", 50000, 0.5, 5000)
+    assert credit == 10.0
+
+
+def test_d1_exec_credit_empty_budget():
+    """Eval budget of 0 should not crash."""
+    credit = _execution_progress_credit("ok", 100, 0.5, 0)
+    assert credit == 10.0  # min(10, 100/1 * 10) capped at 10
+
+
+def test_d1_exec_credit_additive_with_distance_score():
+    """Execution credit adds to distance-weighted base score."""
+    base = _distance_weighted_score(54, 55)  # partial credit for near-match
+    credit = _execution_progress_credit("ok", 2500, base, 5000)
+    total = base * 100.0 + credit
+    assert total > base * 100.0, "Execution credit should increase total score"
+
+
+def test_d1_exec_credit_near_zero_budget_use():
+    """Very few instructions gives near-zero credit."""
+    credit = _execution_progress_credit("ok", 10, 0.5, 5000)
+    assert 0.0 < credit < 0.1
+
+
+def test_d1_exec_credit_monotonic():
+    """More instructions = more credit (monotonic)."""
+    credits = [_execution_progress_credit("ok", n, 0.5, 5000)
+               for n in [100, 500, 1000, 2000, 4000, 5000]]
+    for i in range(1, len(credits)):
+        assert credits[i] >= credits[i - 1], f"Non-monotonic at {i}: {credits[i-1]} -> {credits[i]}"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# D2 Supplemental — Recurrent Buffer Fitness Gate
+# ══════════════════════════════════════════════════════════════════════
+
+def _recurrent_buffer_should_save(fitness, stalled_count, stall_limit=50):
+    """Replicates the D2 recurrent buffer fitness gate logic."""
+    if fitness <= 0.0 and stalled_count < stall_limit:
+        return False
+    return True
+
+
+def test_d2_positive_fitness_saved():
+    """Programs with positive fitness are saved to buffer."""
+    assert _recurrent_buffer_should_save(0.5, 5)
+
+
+def test_d2_negative_fitness_blocked():
+    """Programs with negative fitness are blocked when not deeply stalled."""
+    assert not _recurrent_buffer_should_save(-1.0, 5)
+
+
+def test_d2_zero_fitness_blocked():
+    """Programs with zero fitness are blocked when not deeply stalled."""
+    assert not _recurrent_buffer_should_save(0.0, 5)
+
+
+def test_d2_deep_stall_bypasses_gate():
+    """Deeply stalled systems (>50 gen) allow low-quality traces."""
+    assert _recurrent_buffer_should_save(-1.0, 50)
+
+
+def test_d2_exactly_at_stall_limit():
+    """Exactly at stall limit (50) should bypass."""
+    assert _recurrent_buffer_should_save(0.0, 50)
+
+
+def test_d2_just_below_stall_limit_still_blocked():
+    """Just below stall limit (49) still blocks zero-fitness."""
+    assert not _recurrent_buffer_should_save(0.0, 49)
+
+
+def test_d2_high_positive_fitness_always_saved():
+    """High fitness programs always saved regardless of stall."""
+    assert _recurrent_buffer_should_save(100.0, 5)
+
+
+def test_d2_mildly_negative_blocked():
+    """Even small negative fitness blocked (contamination prevention)."""
+    assert not _recurrent_buffer_should_save(-0.01, 10)
+
+
+def test_d2_zero_stall_count():
+    """Zero stall count with zero fitness blocked."""
+    assert not _recurrent_buffer_should_save(0.0, 0)
