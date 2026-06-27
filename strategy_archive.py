@@ -306,6 +306,32 @@ class StrategyArchive:
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return False
 
+    def decay_level_records(self, level: int, factor: float = 0.5) -> int:
+        """Decay records at a given level by flipping `success` toward False.
+
+        Called on curriculum level advance (D3 fix) to prevent lower-level
+        strategy biases from polluting higher-level decisions.
+
+        For each record at `level`: success is set to False with probability
+        (1 - factor). This reduces the effective success count without
+        deleting records (preserving recency information for UCB exploration).
+
+        Args:
+            level: Curriculum level whose records to decay.
+            factor: Retention probability — 0.5 means ~50% of successes survive.
+
+        Returns:
+            Number of records modified.
+        """
+        modified = 0
+        import random
+        for r in self._records:
+            if r["level"] == level and r["success"]:
+                if random.random() > factor:
+                    r["success"] = False
+                    modified += 1
+        return modified
+
     def clear(self) -> None:
         """Clear all records."""
         self._records.clear()

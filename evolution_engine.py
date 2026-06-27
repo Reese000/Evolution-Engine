@@ -89,12 +89,13 @@ class VMFarm:
         self._gpu_farm = None
         if self.use_gpu:
             try:
-                from gpu_vm_farm import GpuVMFarm, HAS_CUDA
-                if not HAS_CUDA:
+                import gpu_vm_farm as _gvm
+                _gvm._ensure_cupy()  # triggers lazy CuPy import
+                if not _gvm.HAS_CUDA:
                     self._log("CUDA not available -- GPU acceleration disabled")
                     self.use_gpu = False
                 else:
-                    self._gpu_farm = GpuVMFarm(batch_size=128, budget=5000)
+                    self._gpu_farm = _gvm.GpuVMFarm(batch_size=128, budget=5000)
                     self._log("GPU VM farm initialized (batch_size=128, budget=5000)")
                     self._run_bit_exact_check()
             except ImportError:
@@ -534,6 +535,11 @@ class EvolutionEngine:
         self.best_fitness_history: list[float] = []
         self.population_history: list[dict[str, Any]] = []
         self.task_instance: dict[str, Any] | None = None
+
+        # D3: Strategy monoculture counter — tracks how many consecutive
+        # generations a single non-GROW strategy has been recommended.
+        self._consecutive_same_strategy: int = 0
+        self._last_strategy_used: str = ""
 
         # Current diversity metric (set during run)
         self._current_diversity: float = 0.5
@@ -994,26 +1000,60 @@ class EvolutionEngine:
         return challengers
 
     def _choose_mutation_strategy(self, idx: int) -> MutationStrategy:
-        """Choose a mutation strategy for challenger *idx*."""
+        """Choose a mutation strategy for challenger *idx*.
+
+        D3 fix: Enforces a tighter consecutive-strategy cap for non-GROW
+        strategies at L5+ to prevent archive lock-in. At L5+ the cap is
+        halved (15 instead of 30) because lower-level biases (CROSSOVER
+        dominance) carry over and crowd out exploration.
+        """
+        # Determine the effective consecutive cap
+        if self.champion_level >= 5:
+            effective_cap = max(self.config.max_consecutive_same_strategy // 2, 10)
+        else:
+            effective_cap = self.config.max_consecutive_same_strategy
+
+        # D3: If we've hit the consecutive cap for a non-GROW strategy,
+        # skip it so the archive's UCB exploration bonus can surface alternatives.
+        skip_strat: str | None = None
+        if (
+            self._consecutive_same_strategy >= effective_cap
+            and self._last_strategy_used != "GROW"
+            and self._last_strategy_used != "MODEL_GUIDED"
+        ):
+            skip_strat = self._last_strategy_used
+            self._consecutive_same_strategy = 0  # reset counter after skip
+
         # Use strategy archive if available and configured
         if (
             self.config.use_strategy_archive
             and self.strategy_archive is not None
             and self.strategy_archive.total_records() > 10
         ):
-            rec = self.strategy_archive.recommend_strategy(self.champion_level)
+            rec = self.strategy_archive.recommend_strategy(
+                self.champion_level, skip_strategy=skip_strat
+            )
             try:
-                return MutationStrategy(rec)
+                chosen = MutationStrategy(rec)
             except ValueError:
-                pass
+                chosen = MutationStrategy.HYBRID
+        else:
+            chosen = MutationStrategy.HYBRID
 
         # Unsolved levels 9-11: use higher PERTURBATION_CAPPED probability
         if self.champion_level in self.config.perturbation_capped_unsolved_levels and self.generations_stalled > 2:
             if self.rng.random() < self.config.perturbation_capped_probability_unsolved:
-                return MutationStrategy.PERTURBATION_CAPPED
+                chosen = MutationStrategy.PERTURBATION_CAPPED
 
-        # Default: HYBRID (mix of strategies)
-        return MutationStrategy.HYBRID
+        # D3: Track consecutive usage
+        strat_val = chosen.value
+        if strat_val == self._last_strategy_used:
+            self._consecutive_same_strategy += 1
+        else:
+            self._last_strategy_used = strat_val
+            self._consecutive_same_strategy = 1
+
+        return chosen
 
     # --------------------------------------------------------------
     # Model-guided generation (v12.5)
@@ -1595,6 +1635,22 @@ class EvolutionEngine:
         self.champion_level += 1
         self.generations_stalled = 0
         self._qd_champion_reset_tried = False
+
+        # D3: Reset consecutive strategy counter on level advance
+        self._consecutive_same_strategy = 0
+        self._last_strategy_used = ""
+
+        # D3: Decay archive weights for the old level so lower-level
+        # strategy biases don't pollute the new level.  ~50% of success
+        # records at the old level are flipped to False, giving the archive
+        # a soft reset while preserving recency information for UCB.
+        if self.strategy_archive is not None:
+            n_records = self.strategy_archive.total_records()
+            decayed = self.strategy_archive.decay_level_records(old_level, factor=0.5)
+            self._log(
+                f"[D3] Archive decay: {decayed} success records decayed at L{old_level} "
+                f"(total records: {n_records})"
+            )
 
         # Save champion for the old level
         self._save_champion(old_level)
