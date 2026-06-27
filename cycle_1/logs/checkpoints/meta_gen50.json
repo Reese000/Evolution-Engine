@@ -2,6 +2,6 @@
   "generation": 50,
   "level": 11,
   "fitness": 150.0,
-  "program_words": 16,
-  "generations_stalled": 8
+  "program_words": 7,
+  "generations_stalled": 10
 }
