@@ -22,21 +22,15 @@ from typing import Any
 # Path setup -- import from sibling modules and milestone0
 # ----------------------------------------------------------------------
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MILESTONE0_DIR = os.path.join(SCRIPT_DIR, "..", "milestone0")
-MILESTONE3_DIR = os.path.join(SCRIPT_DIR, "..", "milestone3")
-MILESTONE1_DIR = os.path.join(SCRIPT_DIR, "..", "milestone1")
-
-for _p in [
-    os.path.join(MILESTONE0_DIR, "logit-masking"),
-    os.path.join(MILESTONE0_DIR, "vm-farm"),
-    os.path.join(MILESTONE0_DIR, "gpu-vm"),  # GPU acceleration (CuPy RV32I kernel)
-    MILESTONE3_DIR,
-    SCRIPT_DIR,
+from paths import (
+    PROJECT_ROOT as SCRIPT_DIR,
+    MILESTONE0_DIR,
     MILESTONE1_DIR,
-]:
-    if os.path.isdir(_p):
-        sys.path.insert(0, _p)
+    MILESTONE3_DIR,
+    ensure_project_on_path,
+)
+
+ensure_project_on_path()
 
 # ----------------------------------------------------------------------
 # Imports from the real vm_farm module

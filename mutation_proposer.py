@@ -40,12 +40,9 @@ class MutationStrategy(str, Enum):
 
 
 # ── Import RV32I encoding from milestone0 ──────────────────────────────
-_project_root = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..')
-)
-_rv32i_mask_dir = os.path.join(_project_root, 'milestone0', 'logit-masking')
-if _rv32i_mask_dir not in sys.path:
-    sys.path.insert(0, _rv32i_mask_dir)
+from paths import MILESTONE0_LOGIT_MASKING, ensure_project_on_path
+
+ensure_project_on_path()
 
 from rv32i_mask import (                             # type: ignore[import]
     encode as rv32i_encode,
