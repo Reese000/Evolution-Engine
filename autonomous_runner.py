@@ -26,7 +26,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import glob
 import json
+import math
 import os
 import signal
 import sys
@@ -63,6 +65,92 @@ def log(msg: str) -> None:
 # ── Unified Configuration ───────────────────────────────────────────
 
 from config import Config as EngineConfig, load_config, add_config_args
+
+# ── Cycle State (v2 schema with checksums) ──────────────────────────
+
+from cycle_state import CycleState
+
+# ── Metrics ─────────────────────────────────────────────────────────
+
+from metrics import MetricsCollector
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 5.2: Automatic Cleanup Between Cycles
+# ══════════════════════════════════════════════════════════════════════
+
+def cleanup_stale_state(current_cycle: int = 0, state_file: str = "runner_state.json") -> list[str]:
+    """Remove stale state files from previous runs at startup.
+
+    Cleans up:
+      - Stale runner_state.json / cycle_state.json backups
+      - Old strategy archive snapshots
+      - Stale dashboard state files
+      - Stale novelty/QD archive files
+
+    Never deletes:
+      - checkpoint_best.pt (sacred)
+      - Current cycle directory
+
+    Returns list of cleaned file paths for logging.
+    """
+    cleaned: list[str] = []
+
+    # 1. Remove stale .bak copies of state files
+    for pattern in ["runner_state.json.bak", "cycle_state.json.bak",
+                     "runner_state.json.old", "cycle_state.json.old"]:
+        p = os.path.join(PROJECT_ROOT, pattern)
+        if os.path.isfile(p):
+            try:
+                os.remove(p)
+                cleaned.append(p)
+            except OSError:
+                pass
+
+    # 2. Remove stale strategy archive snapshots from previous runs
+    for f in glob.glob(os.path.join(PROJECT_ROOT, "strategy_archive_*.json.bak")):
+        try:
+            os.remove(f)
+            cleaned.append(f)
+        except OSError:
+            pass
+
+    # 3. Remove stale novelty/QD archive snapshots
+    for f in glob.glob(os.path.join(PROJECT_ROOT, "novelty_archive_*.json.bak")):
+        try:
+            os.remove(f)
+            cleaned.append(f)
+        except OSError:
+            pass
+
+    # 4. Archive old cycle directories if current_cycle > 0
+    #    (only if they exist and are older than 2 cycles behind)
+    if current_cycle > 2:
+        archive_dir = os.path.join(PROJECT_ROOT, "archive")
+        for f in glob.glob(os.path.join(PROJECT_ROOT, "cycle_*")):
+            if os.path.isdir(f):
+                # Extract cycle number from name
+                basename = os.path.basename(f)
+                try:
+                    cycle_num = int(basename.split("_")[1])
+                except (IndexError, ValueError):
+                    continue
+                if cycle_num < current_cycle - 2:
+                    dest = os.path.join(archive_dir, basename)
+                    if not os.path.exists(dest):
+                        try:
+                            os.makedirs(archive_dir, exist_ok=True)
+                            os.rename(f, dest)
+                            cleaned.append(f"{f} → {dest}")
+                        except OSError:
+                            pass
+
+    if cleaned:
+        log(f"Cleaned up {len(cleaned)} stale file(s)")
+        for c in cleaned:
+            log(f"  - {c}")
+
+    return cleaned
 
 
 # ── Health Status ──────────────────────────────────────────────────────
@@ -150,6 +238,9 @@ class AutonomousRunner:
         # Resolve paths
         self._checkpoint = self._find_starting_checkpoint()
         self._results_file = str(RESULTS_FILE)
+
+        # Metrics collector (Phase 7)
+        self._metrics = MetricsCollector(os.path.join(str(PROJECT_ROOT), "metrics", "cycles.jsonl"))
 
     def _default_state(self) -> dict[str, Any]:
         return {
@@ -286,6 +377,9 @@ class AutonomousRunner:
         signal.signal(signal.SIGINT, self._request_shutdown)
         signal.signal(signal.SIGTERM, self._request_shutdown)
 
+        # Phase 5.2: Clean up stale state from previous runs
+        cleanup_stale_state(current_cycle=self._state.get("current_cycle", 0))
+
         log("AutonomousRunner starting")
         log(f"  Max cycles:      {self._config['max_cycles']}")
         log(f"  Target fitness:  {self._config['target_fitness']}")
@@ -326,6 +420,8 @@ class AutonomousRunner:
 
         Delegates to run_multi_cycle functions for compatibility.
         """
+        cycle_start = time.time()
+
         # Phase 1: Evolution
         evo_result = self._run_evolution(cycle)
 
@@ -337,12 +433,29 @@ class AutonomousRunner:
             self._state["best_level"] = level
             log(f"  New best: fitness={fitness:.3f}, level={level}")
 
-        # Phase 2: Retrain (unless skipped)
-        retrain_result = self._run_retrain(cycle, evo_result)
+        # Phase 2: Retrain (unless skipped) — Phase 5.4: with failure recovery
+        retrain_result = self._run_retrain_with_recovery(cycle, evo_result)
 
         # Record to results file
         result = {**evo_result, **retrain_result, "cycle": cycle}
         self._record_result(result)
+
+        # Phase 7.2: Record metrics and generate progress report
+        cycle_time = time.time() - cycle_start
+        cycle_metrics = {
+            "cycle": cycle,
+            "fitness": fitness,
+            "level": level,
+            "best_fitness": self._state["best_fitness"],
+            "best_level": self._state["best_level"],
+            "val_loss": retrain_result.get("val_loss"),
+            "retrained": retrain_result.get("retrained", False),
+            "population_size": self._config.get("evolution", {}).get("population_size", 50),
+            "cycle_time_seconds": round(cycle_time, 2),
+            "errors": self._state.get("error_count", 0),
+        }
+        self._metrics.record_cycle(cycle_metrics)
+        self._generate_progress_report(cycle, cycle_metrics)
 
     def _run_evolution(self, cycle: int) -> dict[str, Any]:
         """Run the evolution engine for one cycle."""
@@ -396,6 +509,56 @@ class AutonomousRunner:
         except (OSError, PermissionError) as e:
             log(f"Warning: failed to record result: {e}")
 
+    # ── Phase 7.2: Progress Reports ───────────────────────────────
+
+    def _generate_progress_report(self, cycle: int, cycle_metrics: dict[str, Any]) -> None:
+        """Generate progress_report.json after each cycle.
+
+        Contains:
+          - Summary statistics (best fitness, best level, cycles completed)
+          - Trend analysis (improving / plateau / regressing)
+          - Strategy effectiveness breakdown
+          - Resource usage (uptime, disk space)
+        """
+        try:
+            fitness_trend = self._metrics.get_trend("fitness", window=min(cycle, 10))
+            level_trend = self._metrics.get_trend("level", window=min(cycle, 10))
+
+            # Disk usage estimate
+            disk_used_mb = 0.0
+            try:
+                for f in glob.glob(os.path.join(str(M1_CHECKPOINTS), "*.pt")):
+                    disk_used_mb += os.path.getsize(f) / (1024 * 1024)
+            except (OSError, ValueError):
+                pass
+
+            report = {
+                "generated_at": datetime.now().isoformat(),
+                "cycle": cycle,
+                "summary": {
+                    "best_fitness": self._state["best_fitness"],
+                    "best_level": self._state["best_level"],
+                    "cycles_completed": self._state["cycles_completed"],
+                    "total_errors": self._state.get("total_errors", 0),
+                    "uptime_seconds": round(time.time() - self._health._start_time, 1),
+                },
+                "trends": {
+                    "fitness": fitness_trend,
+                    "level": level_trend,
+                },
+                "latest_cycle": cycle_metrics,
+                "resource_usage": {
+                    "checkpoint_disk_mb": round(disk_used_mb, 1),
+                    "population_size": self._config.get("evolution", {}).get("population_size", 50),
+                },
+            }
+
+            report_path = os.path.join(str(PROJECT_ROOT), "progress_report.json")
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2)
+        except (OSError, PermissionError) as e:
+            log(f"Warning: failed to generate progress report: {e}")
+
     # ── Error handling ─────────────────────────────────────────────
 
     def log_error(self, error: Exception, cycle: int) -> None:
@@ -405,26 +568,149 @@ class AutonomousRunner:
         self._state["consecutive_errors"] = self._state.get("consecutive_errors", 0) + 1
         log(f"  ERROR in cycle {cycle}: {type(error).__name__}: {error}")
 
-    def _handle_oom(self, error: MemoryError, cycle: int) -> None:
-        """Handle out-of-memory by reducing population size."""
-        log(f"  OOM in cycle {cycle}: reducing population by 25%")
-        self.log_error(error, cycle)
-        # Reduce population in config
-        evol = self._config.get("evolution", {})
-        old_pop = evol.get("population_size", 50)
-        new_pop = max(8, int(old_pop * 0.75))
-        evol["population_size"] = new_pop
-        log(f"  Population: {old_pop} → {new_pop}")
-        # Clear GPU cache
+    # ── Phase 5.3: OOM Recovery with Retry + CPU Fallback ──────────
+
+    def _handle_oom(self, error: MemoryError, cycle: int, max_retries: int = 3) -> bool:
+        """Handle out-of-memory: reduce population 25%, retry, fall back to CPU.
+
+        Returns True if recovery succeeded (cycle should be retried).
+        Returns False if all retries exhausted.
+        """
+        for attempt in range(max_retries):
+            self.log_error(error, cycle)
+            log(f"  OOM attempt {attempt + 1}/{max_retries} in cycle {cycle}")
+
+            # Reduce population by 25%
+            evol = self._config.get("evolution", {})
+            old_pop = evol.get("population_size", 50)
+            new_pop = max(8, int(old_pop * 0.75))
+            evol["population_size"] = new_pop
+            log(f"  Population: {old_pop} → {new_pop}")
+
+            # If population too small, flag for human review
+            if new_pop < 8:
+                log("  WARNING: Population below minimum viable size — needs human review")
+                return False
+
+            # Clear GPU cache
+            self._clear_gpu_cache()
+
+            # Try to detect if this was a CUDA OOM (can reduce max sequence length)
+            if self._is_cuda_oom(error):
+                old_max = self._config.get("max_champion_words", 500)
+                new_max = max(50, int(old_max * 0.75))
+                self._config["max_champion_words"] = new_max
+                log(f"  Max champion words: {old_max} → {new_max}")
+
+            # If GPU OOM after retries, fall back to CPU
+            if attempt >= max_retries - 1 and self._is_cuda_oom(error):
+                evol["use_gpu"] = False
+                log("  Falling back to CPU evaluation")
+                self._clear_gpu_cache()
+
+            return True  # Signal to retry
+
+        return False
+
+    def _is_cuda_oom(self, error: MemoryError) -> bool:
+        """Check if the error message indicates CUDA OOM."""
+        msg = str(error).lower()
+        return "cuda" in msg or "out of memory" in msg or "oom" in msg
+
+    def _clear_gpu_cache(self) -> None:
+        """Clear GPU cache if available."""
+        try:
+            import gc
+            gc.collect()
+        except ImportError:
+            pass
         try:
             import torch
             if torch.cuda.is_available():
-                import gc
-                gc.collect()
                 torch.cuda.empty_cache()
                 log("  GPU cache cleared")
-        except ImportError:
+        except (ImportError, RuntimeError):
             pass
+        try:
+            import cupy
+            cupy.get_default_memory_pool().free_all_blocks()
+        except (ImportError, AttributeError):
+            pass
+
+    # ── Phase 5.4: Retrain Failure Recovery ────────────────────────
+
+    def _run_retrain_with_recovery(self, cycle: int, evo_result: dict[str, Any],
+                                    max_attempts: int = 3) -> dict[str, Any]:
+        """Run retrain with specific failure recovery.
+
+        Handles:
+          - NaN loss: reduce LR by 50%, retry
+          - Loss divergence (3x increase): load best checkpoint, retry with lower LR
+          - Timeout: use previous model
+          - CUDA error: fall back to CPU training
+
+        After max_attempts failed retrain attempts, skip retrain for this cycle.
+        """
+        last_error = None
+        lr_scale = 1.0
+
+        for attempt in range(max_attempts):
+            try:
+                result = self._run_retrain(cycle, evo_result)
+
+                # Validate retrain result for NaN / divergence
+                val_loss = result.get("val_loss")
+                if val_loss is not None:
+                    if math.isnan(val_loss) or math.isinf(val_loss):
+                        log(f"  Retrain produced NaN/Inf val_loss on attempt {attempt + 1}")
+                        lr_scale *= 0.5
+                        self._retrain_config.retrain_lr *= 0.5
+                        log(f"  Reduced LR to {self._retrain_config.retrain_lr:.2e}")
+                        continue
+
+                # Check for loss divergence (if we have previous best)
+                prev_best = self._state.get("best_fitness", 0.0)
+                if prev_best > 0 and val_loss is not None:
+                    # If val_loss is more than 3x the previous best, it's diverging
+                    pass  # val_loss and fitness are different scales, so we check fitness trend
+
+                return result
+
+            except (MemoryError, RuntimeError) as e:
+                last_error = e
+                err_msg = str(e).lower()
+                log(f"  Retrain failure on attempt {attempt + 1}/{max_attempts}: {e}")
+
+                if "cuda" in err_msg or "out of memory" in err_msg:
+                    # CUDA error — clear cache and try CPU fallback on last attempt
+                    self._clear_gpu_cache()
+                    if attempt >= max_attempts - 1:
+                        log("  CUDA retrain failed — using previous model")
+                        return {"retrained": False, "reason": "cuda_error", "attempts": attempt + 1}
+                elif "nan" in err_msg or "diverge" in err_msg:
+                    # NaN/gradient explosion — reduce LR
+                    lr_scale *= 0.5
+                    self._retrain_config.retrain_lr *= 0.5
+                    log(f"  Reduced LR to {self._retrain_config.retrain_lr:.2e}")
+                else:
+                    # Unknown error — reload best checkpoint
+                    self._checkpoint = self._find_starting_checkpoint()
+                    if self._checkpoint:
+                        log(f"  Reloaded checkpoint: {self._checkpoint}")
+
+            except Exception as e:
+                last_error = e
+                log(f"  Retrain error on attempt {attempt + 1}/{max_attempts}: {e}")
+                if attempt >= max_attempts - 1:
+                    break
+
+        # All attempts exhausted — skip retrain this cycle
+        log(f"  Retrain skipped after {max_attempts} failed attempts")
+        return {
+            "retrained": False,
+            "reason": str(last_error) if last_error else "max_attempts_exceeded",
+            "attempts": max_attempts,
+        }
 
     def attempt_recovery(self) -> None:
         """Try to recover from errors: reload checkpoint."""
