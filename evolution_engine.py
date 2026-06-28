@@ -22,6 +22,10 @@ from typing import Any
 # Path setup -- import from sibling modules and milestone0
 # ----------------------------------------------------------------------
 
+from logging_config import get_logger
+
+_logger = get_logger("EvolutionEngine")
+
 from paths import (
     PROJECT_ROOT as SCRIPT_DIR,
     MILESTONE0_DIR,
@@ -67,7 +71,7 @@ class VMFarm:
         ]
         for c in candidates:
             if os.path.isfile(c):
-                print(f"[VMFarm] Kernel binary resolved: {c}")
+                _logger.info(f"Kernel binary resolved: {c}")
                 return c
         # No external kernel found -- pure-Python VM is used instead.
         return ""
@@ -102,7 +106,7 @@ class VMFarm:
                 self.use_gpu = False
 
     def _log(self, msg: str) -> None:
-        print(f"[VMFarm] {msg}")
+        _logger.info(f"[VMFarm] {msg}")
 
     def _run_bit_exact_check(self, n_samples: int = 10) -> None:
         """Verify GPU and CPU produce identical results for random programs."""
@@ -1874,10 +1878,9 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
 
     def _log(self, message: str) -> None:
-        """Log a message to stdout and optional log file."""
-        timestamp = time.strftime("%H:%M:%S")
-        line = f"[{timestamp}] Gen {self.current_generation:4d} | {message}"
-        print(line)
+        """Log a message via structured logger and optional log file."""
+        line = f"Gen {self.current_generation:4d} | {message}"
+        _logger.info(line)
         if self.config.log_dir:
             log_path = os.path.join(self.config.log_dir, "evolution.log")
             with open(log_path, "a") as f:
@@ -1958,11 +1961,11 @@ def main() -> None:
     engine = EvolutionEngine(config=config)
     summary = engine.run()
 
-    print("\n" + "=" * 60)
-    print("Evolution Run Complete")
-    print("=" * 60)
+    _logger.info("=" * 60)
+    _logger.info("Evolution Run Complete")
+    _logger.info("=" * 60)
     for k, v in summary.items():
-        print(f"  {k}: {v}")
+        _logger.info(f"  {k}: {v}")
 
 
 if __name__ == "__main__":

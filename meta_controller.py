@@ -31,6 +31,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+from logging_config import get_logger
+
+_logger = get_logger("MetaController")
+
 
 # ══════════════════════════════════════════════════════════════════════
 # Enums
@@ -801,8 +805,8 @@ class MetaController:
         self._tuning_log.append(TuningAction(domain, param, old, new, reason))
 
     def _log(self, msg: str) -> None:
-        """Log message to stdout and optional log file."""
-        print(f"[MetaController] {msg}", flush=True)
+        """Log message via structured logger and optional log file."""
+        _logger.info(msg)
         if self.log_file:
             try:
                 with open(self.log_file, "a") as f:
@@ -866,7 +870,7 @@ def _demo() -> None:
             generations_completed=50,
         )
         mc.update_cycle(snap)
-        print(f"C{c}: state={mc.detect_stagnation().value}, "
+        _logger.info(f"C{c}: state={mc.detect_stagnation().value}, "
               f"retrain_params={mc.tune_retrain_params(c)}")
 
     # Simulate plateau: fitness flat for 3 cycles
@@ -878,7 +882,7 @@ def _demo() -> None:
             generations_completed=50,
         )
         mc.update_cycle(snap)
-        print(f"C{c}: state={mc.detect_stagnation().value}, "
+        _logger.info(f"C{c}: state={mc.detect_stagnation().value}, "
               f"retrain_params={mc.tune_retrain_params(c)}")
 
     # Simulate regression
@@ -889,13 +893,13 @@ def _demo() -> None:
         generations_completed=50,
     )
     mc.update_cycle(snap)
-    print(f"C7: state={mc.detect_stagnation().value}, "
+    _logger.info(f"C7: state={mc.detect_stagnation().value}, "
           f"rollback={mc.should_rollback()}, "
           f"retrain_params={mc.tune_retrain_params(7)}")
 
-    print("\nState summary:")
-    print(json.dumps(mc.get_state_summary(), indent=2))
-    print("\nDemo complete.")
+    _logger.info("\nState summary:")
+    _logger.info(json.dumps(mc.get_state_summary(), indent=2))
+    _logger.info("\nDemo complete.")
 
 
 if __name__ == "__main__":

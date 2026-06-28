@@ -41,6 +41,10 @@ M1_RECURRENT = os.path.join(PROJECT_ROOT, "milestone1", "recurrent_data")
 M1_DIR = os.path.join(PROJECT_ROOT, "milestone1")
 RESULTS_FILE = os.path.join(PROJECT_ROOT, "multi_cycle_results.jsonl")
 
+# Structured logging
+from logging_config import get_logger as _get_logger
+_logger_rmc = _get_logger("RunMultiCycle")
+
 # v11: Keep this many recent cycle checkpoints + checkpoint_best.pt
 _KEEP_CYCLE_CHECKPOINTS: int = 5
 
@@ -91,8 +95,7 @@ BEST_CHECKPOINT_PATH = os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")
 
 
 def log(msg: str) -> None:
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+    _logger_rmc.info(msg)
 
 
 def run_evolution(
@@ -1221,9 +1224,9 @@ def main() -> None:
                 for f in glob.glob(os.path.join(clean_dir, pat)):
                     try:
                         os.remove(f)
-                        print(f"[CleanState] Removed {f}")
+                        _logger_rmc.info(f"[CleanState] Removed {f}")
                     except (PermissionError, OSError) as e:
-                        print(f"[CleanState] WARNING: Could not remove {f}: {e}")
+                        _logger_rmc.warning(f"[CleanState] Could not remove {f}: {e}")
 
     # -- MetaController initialization --------------------------------
     meta_controller = None

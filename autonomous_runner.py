@@ -50,12 +50,19 @@ from paths import (
 
 ensure_project_on_path()
 
-# ── Logging ────────────────────────────────────────────────────────────
+# ── Structured Logging ───────────────────────────────────────────────
+
+from logging_config import get_logger, setup_logging
+
+_logger = get_logger("Runner")
 
 
 def log(msg: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [Runner] {msg}", flush=True)
+    _logger.info(msg)
+
+# ── Unified Configuration ───────────────────────────────────────────
+
+from config import Config as EngineConfig, load_config, add_config_args
 
 
 # ── Health Status ──────────────────────────────────────────────────────
@@ -91,16 +98,16 @@ class HealthMonitor:
     def show_status(self) -> None:
         """Print current health status from disk."""
         if not os.path.isfile(self._health_path):
-            print("No health.json found. Runner has not been started.")
+            _logger.info("No health.json found. Runner has not been started.")
             return
         with open(self._health_path) as f:
             health = json.load(f)
-        print("=" * 60)
-        print("Evolution Engine — Health Status")
-        print("=" * 60)
+        _logger.info("=" * 60)
+        _logger.info("Evolution Engine — Health Status")
+        _logger.info("=" * 60)
         for k, v in health.items():
-            print(f"  {k:25s}: {v}")
-        print("=" * 60)
+            _logger.info(f"  {k:25s}: {v}")
+        _logger.info("=" * 60)
 
 
 # ── AutonomousRunner ───────────────────────────────────────────────────
@@ -113,12 +120,26 @@ class AutonomousRunner:
     system can resume after crashes or restarts.
     """
 
-    def __init__(self, config_path: str = "config/engine_config.json"):
+    def __init__(self, config_path: str = "config/engine_config.json",
+                 engine_config: EngineConfig | None = None):
         self._shutdown_requested = False
         self._health = HealthMonitor()
 
-        # Load config
-        self._config = self._load_config(config_path)
+        # Load config via unified Config class
+        if engine_config is not None:
+            self._engine_config = engine_config
+        else:
+            self._engine_config = load_config(config_path)
+
+        # Backward-compatible dict view for tests
+        self._config = self._engine_config.to_dict()
+        # Flatten runner section into top-level for dict-style access
+        self._config.update(self._config.get("autonomous_runner", {}))
+        # Also flatten evolution sub-section keys for legacy dict access
+        evo_dict = self._config.get("evolution", {})
+        for k, v in evo_dict.items():
+            if k not in self._config:
+                self._config[k] = v
 
         # Runner state
         self._state = self._default_state()
@@ -129,48 +150,6 @@ class AutonomousRunner:
         # Resolve paths
         self._checkpoint = self._find_starting_checkpoint()
         self._results_file = str(RESULTS_FILE)
-
-    # ── Config loading ─────────────────────────────────────────────
-
-    def _load_config(self, config_path: str) -> dict[str, Any]:
-        """Load config from JSON file, falling back to defaults."""
-        defaults = {
-            "max_cycles": 100,
-            "target_fitness": 200.0,
-            "generations_per_cycle": 100,
-            "health_check_interval": 60,
-            "state_file": "runner_state.json",
-            "stop_file": "stop",
-            "max_errors_before_stop": 10,
-            "evolution": {
-                "population_size": 50,
-                "auto_curriculum": True,
-                "use_gpu": True,
-            },
-            "retrain": {
-                "retrain_model_size": "xlarge",
-            },
-        }
-        cfg = dict(defaults)
-        full_path = os.path.join(PROJECT_ROOT, config_path)
-        if os.path.isfile(full_path):
-            try:
-                with open(full_path) as f:
-                    file_cfg = json.load(f)
-                # Merge top-level runner config
-                runner_cfg = file_cfg.get("autonomous_runner", {})
-                cfg.update(runner_cfg)
-                # Preserve sub-sections
-                if "evolution" in file_cfg:
-                    cfg["evolution"] = file_cfg["evolution"]
-                if "retrain" in file_cfg:
-                    cfg["retrain"] = file_cfg["retrain"]
-                log(f"Loaded config from {config_path}")
-            except (json.JSONDecodeError, OSError) as e:
-                log(f"Warning: failed to load config ({e}), using defaults")
-        else:
-            log(f"No config file at {config_path}, using defaults")
-        return cfg
 
     def _default_state(self) -> dict[str, Any]:
         return {
@@ -189,24 +168,24 @@ class AutonomousRunner:
         }
 
     def _build_retrain_config(self) -> Any:
-        """Build a config-like object for retrain_model()."""
+        """Build a config-like object for retrain_model() from EngineConfig."""
         import types
+        rc = self._engine_config.retrain
         cfg = types.SimpleNamespace()
-        rc = self._config.get("retrain", {})
-        cfg.retrain_lr = rc.get("retrain_lr", 3e-5)
-        cfg.retrain_freeze_layers = rc.get("retrain_freeze_layers", 0)
-        cfg.retrain_max_per_level = rc.get("retrain_max_per_level", 0)
-        cfg.retrain_model_size = rc.get("retrain_model_size", "xlarge")
-        cfg.retrain_timeout = rc.get("retrain_timeout", 3600)
-        cfg.retrain_patience = rc.get("retrain_patience", 5)
-        cfg.retrain_max_epochs = rc.get("retrain_max_epochs", 50)
-        cfg.retrain_grad_clip = rc.get("retrain_grad_clip", 1.0)
-        cfg.retrain_batch_size = rc.get("retrain_batch_size", 8)
-        cfg.retrain_weight_decay = rc.get("retrain_weight_decay", 0.01)
-        cfg.retrain_min_examples = rc.get("retrain_min_examples", 5)
-        cfg.retrain_val_split = rc.get("retrain_val_split", 0.15)
-        cfg.retrain_adaptive_freeze = rc.get("retrain_adaptive_freeze", False)
-        cfg.ref_high_augment = rc.get("ref_high_augment", 50)
+        cfg.retrain_lr = rc.retrain_lr
+        cfg.retrain_freeze_layers = rc.retrain_freeze_layers
+        cfg.retrain_max_per_level = rc.retrain_max_per_level
+        cfg.retrain_model_size = rc.retrain_model_size
+        cfg.retrain_timeout = rc.retrain_timeout
+        cfg.retrain_patience = rc.retrain_patience
+        cfg.retrain_max_epochs = rc.retrain_max_epochs
+        cfg.retrain_grad_clip = rc.retrain_grad_clip
+        cfg.retrain_batch_size = rc.retrain_batch_size
+        cfg.retrain_weight_decay = rc.retrain_weight_decay
+        cfg.retrain_min_examples = rc.retrain_min_examples
+        cfg.retrain_val_split = rc.retrain_val_split
+        cfg.retrain_adaptive_freeze = False
+        cfg.ref_high_augment = rc.ref_high_augment
         return cfg
 
     def _find_starting_checkpoint(self) -> str:
@@ -524,16 +503,16 @@ def main() -> None:
 
     # Dry run mode
     if args.dry_run:
-        print("Config validated OK:")
+        _logger.info("Config validated OK:")
         for k, v in runner._config.items():
             if isinstance(v, dict):
-                print(f"  {k}:")
+                _logger.info(f"  {k}:")
                 for kk, vv in v.items():
-                    print(f"    {kk}: {vv}")
+                    _logger.info(f"    {kk}: {vv}")
             else:
-                print(f"  {k}: {v}")
-        print(f"Checkpoint: {runner._checkpoint or 'none'}")
-        print(f"State file: {runner._state_path}")
+                _logger.info(f"  {k}: {v}")
+        _logger.info(f"Checkpoint: {runner._checkpoint or 'none'}")
+        _logger.info(f"State file: {runner._state_path}")
         return
 
     # Resume mode
