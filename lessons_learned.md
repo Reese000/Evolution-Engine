@@ -122,3 +122,25 @@
 - **Cause**: The Hermes agent.tool_executor manages process groups and sends SIGTERM to long-running child processes (~18s timeout) even for background terminal commands. This affects ALL subprocess spawning methods.
 - **Solution**: Import and call `train_model.train()` **in-process** instead of spawning a subprocess. Replace `subprocess.run(cmd, ...)` with `importlib.import_module('train_model'); train_mod.train(...)`. Redirect stdout/stderr to the retrain log file during training. The training runs within the parent Python process, completely bypassing Hermes child-process management.
 - **Prevention**: Any code in the Hermes environment that needs to run long-lived Python workloads (training, GPU kernels, inference servers) MUST run in-process rather than as subprocesses. Use `importlib.import_module()` and call functions directly.
+
+## 2026-06-28 — Phase 8 Integration Test Suite: Full Pipeline Coverage
+
+- **Problem**: 198 unit tests existed but no tests exercised the full pipeline end-to-end. Crash recovery, graceful shutdown, health monitoring, and stop conditions were only tested in isolation.
+- **Solution**: Created `tests/test_integration.py` with 40 tests across 8 test classes covering:
+  1. **Config→Runner pipeline**: Verifies config values propagate correctly through to AutonomousRunner
+  2. **Crash recovery**: State save/load, corrupt state handling, resume from disk
+  3. **Graceful shutdown**: SIGINT/SIGTERM flag propagation, stop file consumption
+  4. **Health monitoring**: health.json written with correct fields, updates between cycles, uptime tracking
+  5. **Stop conditions**: All 4 stop conditions (max-cycles, target-fitness, stop-file, max-errors) tested
+  6. **MetaController integration**: Checkpoint gating, tuning params, state persistence, stagnation lifecycle
+  7. **Full pipeline mock**: Multi-cycle evolution with state persistence and metrics
+  8. **Retrain failure recovery**: NaN loss → LR reduction, CUDA error → skip, success passthrough
+- **Total**: 238/238 tests passing (198 existing + 40 new integration tests)
+- **Lesson**: MetricsCollector.get_trend() returns a dict (not a string) — always check API return types in tests rather than assuming.
+
+## 2026-06-28 — Code Quality Pass: Imports and Logging
+
+- **Audit findings**: All 8 core modules have docstrings. No TODO/FIXME comments in core files. All logging uses structured `get_logger()` (no stray `print()` in core modules).
+- **Hardcoded paths**: `/root/` paths exist in legacy files (v9_monitor, v9_to_v10_watcher, run_multi_cycle.py) but these are Docker/container fallbacks. The core pipeline (paths.py → autonomous_runner.py → evolution_engine.py) uses centralized path resolution.
+- **Cleanup**: Removed unused `setup_logging` import from autonomous_runner.py. The `from __future__ import annotations` is required for type hint syntax.
+- **Lesson**: Always verify import usage with grep before removing — some "unused" imports like `Path` may be used in inline comments or docstrings.

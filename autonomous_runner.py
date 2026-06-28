@@ -34,7 +34,6 @@ import signal
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 # ── Path setup ─────────────────────────────────────────────────────────
@@ -54,7 +53,7 @@ ensure_project_on_path()
 
 # ── Structured Logging ───────────────────────────────────────────────
 
-from logging_config import get_logger, setup_logging
+from logging_config import get_logger
 
 _logger = get_logger("Runner")
 

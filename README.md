@@ -91,20 +91,35 @@ Each level uses a distinct output register, and verification checks all previous
 ## Commands
 
 ```bash
+# Autonomous evolution (recommended)
+python autonomous_runner.py                  # Run with config/engine_config.json
+python autonomous_runner.py --max-cycles 10  # Override max cycles
+python autonomous_runner.py --target-fitness 200  # Stop at target fitness
+python autonomous_runner.py --resume         # Resume from saved state
+python autonomous_runner.py --dry-run        # Validate config only
+python autonomous_runner.py --status         # Show health status from health.json
+
 # Evolution
-python meta_controller.py                    # Single evolution cycle
+python meta_controller.py                    # Single evolution cycle (demo)
 python run_multi_cycle.py                    # Multi-cycle evolution + retrain
-python v11_dashboard.py                      # Launch live dashboard
+python run_multi_cycle.py --cycles 5 --gens 100  # Custom cycles/generations
+python run_multi_cycle.py --resume           # Resume from last completed cycle
+python v11_dashboard.py --log engine_run.log # Launch live dashboard
 
 # Training
 python milestone1/train_model.py             # Train model on accumulated traces
 python milestone1/build_recurrent_dataset.py # Build dataset from champion traces
 
 # Testing
-python -m pytest tests/                      # Run test suite
+python -m pytest tests/ -v                   # Run full test suite (238 tests)
 
-# Benchmarks
-python run_benchmark.py                      # Run performance benchmarks
+# Deployment
+./deploy.sh                                  # Deploy via Docker
+./deploy.sh --dry-run                        # Dry-run deployment
+./status.sh                                  # Check running status
+./status.sh --json                           # JSON status output
+./stop.sh                                    # Graceful stop (SIGTERM)
+./stop.sh --force                            # Force stop (SIGKILL)
 ```
 
 ## Requirements
