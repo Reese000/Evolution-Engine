@@ -613,9 +613,12 @@ class AutonomousRunner:
         return False
 
     def _is_cuda_oom(self, error: MemoryError) -> bool:
-        """Check if the error message indicates CUDA OOM."""
+        """Check if the error message indicates CUDA OOM.
+
+        Requires "cuda" in the message to distinguish from generic OOM.
+        """
         msg = str(error).lower()
-        return "cuda" in msg or "out of memory" in msg or "oom" in msg
+        return "cuda" in msg or "out of memory" in msg
 
     def _clear_gpu_cache(self) -> None:
         """Clear GPU cache if available."""

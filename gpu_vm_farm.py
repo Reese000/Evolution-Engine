@@ -34,6 +34,162 @@ def _ensure_cupy():
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  GPU Memory Management
+# ══════════════════════════════════════════════════════════════════════
+
+def get_gpu_vram_info() -> dict[str, Any]:
+    """Return GPU VRAM usage statistics.
+
+    Returns dict with:
+        available: bool — whether CUDA GPU is present
+        total_mb: float — total VRAM in MB
+        used_mb: float — currently allocated VRAM in MB
+        free_mb: float — free VRAM in MB
+        utilization: float — fraction used (0.0–1.0)
+        device_name: str — GPU name or "N/A"
+    """
+    info: dict[str, Any] = {
+        "available": False,
+        "total_mb": 0.0,
+        "used_mb": 0.0,
+        "free_mb": 0.0,
+        "utilization": 0.0,
+        "device_name": "N/A",
+    }
+
+    # Try PyTorch first
+    try:
+        import torch
+        if torch.cuda.is_available():
+            dev = torch.cuda.current_device()
+            total = torch.cuda.get_device_properties(dev).total_mem / (1024 * 1024)
+            reserved = torch.cuda.memory_reserved(dev) / (1024 * 1024)
+            allocated = torch.cuda.memory_allocated(dev) / (1024 * 1024)
+            free = total - reserved
+            info.update({
+                "available": True,
+                "total_mb": round(total, 1),
+                "used_mb": round(allocated, 1),
+                "free_mb": round(free, 1),
+                "utilization": round(allocated / max(total, 1.0), 3),
+                "device_name": torch.cuda.get_device_name(dev),
+            })
+            return info
+    except (ImportError, RuntimeError):
+        pass
+
+    # Try CuPy next
+    _ensure_cupy()
+    if HAS_CUDA and cp is not None:
+        try:
+            mem = cp.get_default_memory_pool()
+            total = cp.cuda.Device().mem_info[1] / (1024 * 1024)
+            used = cp.cuda.Device().mem_info[0] / (1024 * 1024)
+            free = total - used
+            info.update({
+                "available": True,
+                "total_mb": round(total, 1),
+                "used_mb": round(used, 1),
+                "free_mb": round(free, 1),
+                "utilization": round(used / max(total, 1.0), 3),
+                "device_name": str(cp.cuda.Device().attributes.get("DeviceName", "CuPy GPU")),
+            })
+            return info
+        except Exception:
+            pass
+
+    return info
+
+
+def clear_gpu_memory() -> dict[str, Any]:
+    """Clear GPU memory from both PyTorch and CuPy.
+
+    Returns dict with:
+        torch_cleared: bool
+        cupy_cleared: bool
+        freed_mb: float — approximate MB freed
+    """
+    result: dict[str, Any] = {"torch_cleared": False, "cupy_cleared": False, "freed_mb": 0.0}
+
+    # Measure before
+    before = get_gpu_vram_info()
+    before_used = before.get("used_mb", 0.0)
+
+    # PyTorch
+    try:
+        import gc
+        gc.collect()
+    except ImportError:
+        pass
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            result["torch_cleared"] = True
+    except (ImportError, RuntimeError):
+        pass
+
+    # CuPy
+    try:
+        import cupy
+        mem = cupy.get_default_memory_pool()
+        mem.free_all_blocks()
+        result["cupy_cleared"] = True
+    except (ImportError, AttributeError):
+        pass
+
+    # Measure after
+    after = get_gpu_vram_info()
+    after_used = after.get("used_mb", 0.0)
+    result["freed_mb"] = max(0.0, round(before_used - after_used, 1))
+
+    return result
+
+
+def check_gpu_capacity(threshold: float = 0.90) -> dict[str, Any]:
+    """Check if GPU has capacity for more work.
+
+    Args:
+        threshold: Maximum utilization fraction before fallback (default 90%).
+
+    Returns dict with:
+        has_capacity: bool — True if GPU can handle more work
+        vram_info: dict — full VRAM stats
+        reason: str — explanation if capacity is low
+    """
+    vram = get_gpu_vram_info()
+    result: dict[str, Any] = {
+        "has_capacity": True,
+        "vram_info": vram,
+        "reason": "",
+    }
+
+    if not vram["available"]:
+        result["has_capacity"] = False
+        result["reason"] = "No CUDA GPU available"
+        return result
+
+    if vram["utilization"] >= threshold:
+        result["has_capacity"] = False
+        result["reason"] = (
+            f"GPU utilization {vram['utilization']:.0%} exceeds "
+            f"threshold {threshold:.0%} "
+            f"({vram['used_mb']:.0f}/{vram['total_mb']:.0f} MB used)"
+        )
+        return result
+
+    if vram["free_mb"] < 512:
+        result["has_capacity"] = False
+        result["reason"] = (
+            f"Only {vram['free_mb']:.0f} MB free VRAM (minimum 512 MB required)"
+        )
+        return result
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  RV32I Opcode Constants
 # ══════════════════════════════════════════════════════════════════════
 
@@ -439,3 +595,172 @@ class GpuVMFarm:
             _execute_vm(prog, inp.get("registers", {}), inp.get("memory", {}), budget)
             for prog, inp in zip(programs, inputs_list, strict=False)
         ]
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  VMFactory — Unified factory for best available backend
+# ══════════════════════════════════════════════════════════════════════
+
+
+class VMFactory:
+    """Factory that returns the best available VM backend.
+
+    Resolution order:
+      1. GPU (GpuVMFarm) when CUDA is available and VRAM has capacity
+      2. CPU (GpuVMFarm in pure-Python mode) as fallback
+
+    Usage:
+        farm = VMFactory(use_gpu=True)
+        farm.evaluate_batch(programs, inputs_list, budget)
+        farm.cleanup()  # clear GPU memory after batch
+    """
+
+    # VRAM utilization threshold before falling back to CPU
+    VRAM_CAPACITY_THRESHOLD: float = 0.90
+
+    # Minimum free VRAM in MB required for GPU evaluation
+    MIN_FREE_VRAM_MB: float = 512.0
+
+    def __init__(
+        self,
+        use_gpu: bool = True,
+        batch_size: int = 128,
+        budget: int = 5000,
+        vram_threshold: float | None = None,
+    ):
+        """
+        Args:
+            use_gpu: Request GPU acceleration (may fall back to CPU).
+            batch_size: Batch size for GPU evaluation.
+            budget: Default instruction budget per evaluation.
+            vram_threshold: Override VRAM capacity threshold (0.0–1.0).
+        """
+        self.use_gpu = use_gpu
+        self.batch_size = batch_size
+        self.budget = budget
+        self._vram_threshold = vram_threshold or self.VRAM_CAPACITY_THRESHOLD
+        self._backend: GpuVMFarm | None = None
+        self._backend_type: str = "uninitialized"
+        self._gpu_available: bool = False
+        self._fallback_reason: str = ""
+
+        self._initialize()
+
+    def _initialize(self) -> None:
+        """Resolve the best available backend."""
+        if not self.use_gpu:
+            self._init_cpu()
+            return
+
+        # Check CUDA availability
+        _ensure_cupy()
+        if not HAS_CUDA:
+            # Also check PyTorch CUDA
+            try:
+                import torch
+                torch_available = torch.cuda.is_available()
+            except (ImportError, RuntimeError):
+                torch_available = False
+
+            if not torch_available:
+                self._fallback_reason = "No CUDA runtime available (CuPy + PyTorch)"
+                self._init_cpu()
+                return
+
+        # Check VRAM capacity before allocating
+        capacity = check_gpu_capacity(self._vram_threshold)
+        if not capacity["has_capacity"]:
+            self._fallback_reason = capacity["reason"]
+            self._init_cpu()
+            return
+
+        # Initialize GPU backend
+        try:
+            self._backend = GpuVMFarm(batch_size=self.batch_size, budget=self.budget)
+            self._gpu_available = True
+            self._backend_type = "gpu"
+        except Exception as e:
+            self._fallback_reason = f"GPU init failed: {e}"
+            self._init_cpu()
+
+    def _init_cpu(self) -> None:
+        """Initialize CPU-only backend."""
+        self._backend = GpuVMFarm(batch_size=self.batch_size, budget=self.budget)
+        self._backend._use_cupy = False  # Force pure Python
+        self._gpu_available = False
+        self._backend_type = "cpu"
+
+    @property
+    def backend_type(self) -> str:
+        """Returns 'gpu', 'cpu', or 'uninitialized'."""
+        return self._backend_type
+
+    @property
+    def is_gpu(self) -> bool:
+        """True when using GPU acceleration."""
+        return self._gpu_available and self._backend_type == "gpu"
+
+    @property
+    def fallback_reason(self) -> str:
+        """Reason for CPU fallback (empty if GPU is active)."""
+        return self._fallback_reason
+
+    def evaluate_batch(
+        self, programs: list[list[int]], inputs_list: list[dict[str, Any]], budget: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Evaluate a batch of programs using the resolved backend.
+
+        If GPU is active and VRAM drops below capacity mid-evaluation,
+        automatically falls back to CPU for subsequent calls.
+        """
+        budget = budget or self.budget
+
+        if self._backend is None:
+            raise RuntimeError("VMFactory not initialized")
+
+        # Pre-batch VRAM check (skip if CPU)
+        if self._gpu_available:
+            capacity = check_gpu_capacity(self._vram_threshold)
+            if not capacity["has_capacity"]:
+                self._fallback_to_cpu(capacity["reason"])
+
+        try:
+            return self._backend.evaluate_multi(programs, inputs_list, budget=budget)
+        except Exception as e:
+            if self._gpu_available:
+                self._fallback_to_cpu(f"GPU eval failed: {e}")
+                return self._backend.evaluate_multi(programs, inputs_list, budget=budget)
+            raise
+
+    def evaluate_single(
+        self, program: list[int], inputs: dict[str, Any], budget: int | None = None
+    ) -> dict[str, Any]:
+        """Evaluate a single program. Convenience wrapper."""
+        budget = budget or self.budget
+        results = self.evaluate_batch([program], [inputs], budget=budget)
+        return results[0] if results else {}
+
+    def _fallback_to_cpu(self, reason: str) -> None:
+        """Transition from GPU to CPU backend."""
+        self._fallback_reason = reason
+        self._init_cpu()
+
+    def get_status(self) -> dict[str, Any]:
+        """Return factory status for monitoring."""
+        status: dict[str, Any] = {
+            "backend": self._backend_type,
+            "gpu_requested": self.use_gpu,
+            "gpu_active": self._gpu_available,
+            "fallback_reason": self._fallback_reason,
+        }
+        if self._gpu_available:
+            vram = get_gpu_vram_info()
+            status["vram"] = vram
+        return status
+
+    def cleanup(self) -> dict[str, Any]:
+        """Clear GPU memory and return cleanup stats."""
+        return clear_gpu_memory()
+
+    def __repr__(self) -> str:
+        return f"<VMFactory backend={self._backend_type} gpu={self._gpu_available}>"

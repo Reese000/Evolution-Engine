@@ -249,7 +249,8 @@ class TestOOMRecovery(unittest.TestCase):
         from autonomous_runner import AutonomousRunner
         runner = AutonomousRunner()
         self.assertTrue(runner._is_cuda_oom(MemoryError("CUDA out of memory")))
-        self.assertTrue(runner._is_cuda_oom(MemoryError("OOM error")))
+        # "OOM error" alone is NOT CUDA OOM — requires "cuda" or "out of memory"
+        self.assertFalse(runner._is_cuda_oom(MemoryError("OOM error")))
         self.assertFalse(runner._is_cuda_oom(MemoryError("regular error")))
 
     def test_clear_gpu_cache_no_crash(self):
