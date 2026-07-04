@@ -10,14 +10,15 @@ Key speedup: avoids 50+ subprocess spawns per generation (~2750/cycle).
 
 from __future__ import annotations
 
-import os
-import sys
 from typing import Any
+
+import numpy as np
 
 # Lazy CuPy import — only import when GPU is actually needed to avoid
 # grabbing ~8GB VRAM at module load time, which blocks PyTorch training.
 HAS_CUDA: bool = False
 cp = None  # type: ignore
+
 
 def _ensure_cupy():
     """Import CuPy on first use. Sets HAS_CUDA and cp module-level vars."""
@@ -26,6 +27,7 @@ def _ensure_cupy():
         return HAS_CUDA
     try:
         import cupy as _cp
+
         cp = _cp
         HAS_CUDA = _cp.is_available()
     except ImportError:
@@ -36,6 +38,7 @@ def _ensure_cupy():
 # ══════════════════════════════════════════════════════════════════════
 #  GPU Memory Management
 # ══════════════════════════════════════════════════════════════════════
+
 
 def get_gpu_vram_info() -> dict[str, Any]:
     """Return GPU VRAM usage statistics.
@@ -60,20 +63,23 @@ def get_gpu_vram_info() -> dict[str, Any]:
     # Try PyTorch first
     try:
         import torch
+
         if torch.cuda.is_available():
             dev = torch.cuda.current_device()
-            total = torch.cuda.get_device_properties(dev).total_mem / (1024 * 1024)
+            total = torch.cuda.get_device_properties(dev).total_memory / (1024 * 1024)
             reserved = torch.cuda.memory_reserved(dev) / (1024 * 1024)
             allocated = torch.cuda.memory_allocated(dev) / (1024 * 1024)
             free = total - reserved
-            info.update({
-                "available": True,
-                "total_mb": round(total, 1),
-                "used_mb": round(allocated, 1),
-                "free_mb": round(free, 1),
-                "utilization": round(allocated / max(total, 1.0), 3),
-                "device_name": torch.cuda.get_device_name(dev),
-            })
+            info.update(
+                {
+                    "available": True,
+                    "total_mb": round(total, 1),
+                    "used_mb": round(allocated, 1),
+                    "free_mb": round(free, 1),
+                    "utilization": round(allocated / max(total, 1.0), 3),
+                    "device_name": torch.cuda.get_device_name(dev),
+                }
+            )
             return info
     except (ImportError, RuntimeError):
         pass
@@ -86,14 +92,16 @@ def get_gpu_vram_info() -> dict[str, Any]:
             total = cp.cuda.Device().mem_info[1] / (1024 * 1024)
             used = cp.cuda.Device().mem_info[0] / (1024 * 1024)
             free = total - used
-            info.update({
-                "available": True,
-                "total_mb": round(total, 1),
-                "used_mb": round(used, 1),
-                "free_mb": round(free, 1),
-                "utilization": round(used / max(total, 1.0), 3),
-                "device_name": str(cp.cuda.Device().attributes.get("DeviceName", "CuPy GPU")),
-            })
+            info.update(
+                {
+                    "available": True,
+                    "total_mb": round(total, 1),
+                    "used_mb": round(used, 1),
+                    "free_mb": round(free, 1),
+                    "utilization": round(used / max(total, 1.0), 3),
+                    "device_name": str(cp.cuda.Device().attributes.get("DeviceName", "CuPy GPU")),
+                }
+            )
             return info
         except Exception:
             pass
@@ -118,11 +126,13 @@ def clear_gpu_memory() -> dict[str, Any]:
     # PyTorch
     try:
         import gc
+
         gc.collect()
     except ImportError:
         pass
     try:
         import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
@@ -133,6 +143,7 @@ def clear_gpu_memory() -> dict[str, Any]:
     # CuPy
     try:
         import cupy
+
         mem = cupy.get_default_memory_pool()
         mem.free_all_blocks()
         result["cupy_cleared"] = True
@@ -181,9 +192,7 @@ def check_gpu_capacity(threshold: float = 0.90) -> dict[str, Any]:
 
     if vram["free_mb"] < 512:
         result["has_capacity"] = False
-        result["reason"] = (
-            f"Only {vram['free_mb']:.0f} MB free VRAM (minimum 512 MB required)"
-        )
+        result["reason"] = f"Only {vram['free_mb']:.0f} MB free VRAM (minimum 512 MB required)"
         return result
 
     return result
@@ -194,40 +203,40 @@ def check_gpu_capacity(threshold: float = 0.90) -> dict[str, Any]:
 # ══════════════════════════════════════════════════════════════════════
 
 # Opcode field (bits [6:0])
-OP_LUI      = 0b0110111
-OP_AUIPC    = 0b0010111
-OP_JAL      = 0b1101111
-OP_JALR     = 0b1100111
-OP_BRANCH   = 0b1100011
-OP_LOAD     = 0b0000011
-OP_STORE    = 0b0100011
-OP_OP_IMM   = 0b0010011
-OP_OP       = 0b0110011
-OP_FENCE    = 0b0001111
-OP_ECALL    = 0b1110011
+OP_LUI = 0b0110111
+OP_AUIPC = 0b0010111
+OP_JAL = 0b1101111
+OP_JALR = 0b1100111
+OP_BRANCH = 0b1100011
+OP_LOAD = 0b0000011
+OP_STORE = 0b0100011
+OP_OP_IMM = 0b0010011
+OP_OP = 0b0110011
+OP_FENCE = 0b0001111
+OP_ECALL = 0b1110011
 
 # funct3 values
 F3_ADD_SUB = 0b000
-F3_SLL     = 0b001
-F3_SLT     = 0b010
-F3_SLTU    = 0b011
-F3_XOR     = 0b100
+F3_SLL = 0b001
+F3_SLT = 0b010
+F3_SLTU = 0b011
+F3_XOR = 0b100
 F3_SRL_SRA = 0b101
-F3_OR      = 0b110
-F3_AND     = 0b111
+F3_OR = 0b110
+F3_AND = 0b111
 
 # Branch funct3
-F3_BEQ  = 0b000
-F3_BNE  = 0b001
-F3_BLT  = 0b100
-F3_BGE  = 0b101
+F3_BEQ = 0b000
+F3_BNE = 0b001
+F3_BLT = 0b100
+F3_BGE = 0b101
 F3_BLTU = 0b110
 F3_BGEU = 0b111
 
 # Load funct3
-F3_LB  = 0b000
-F3_LH  = 0b001
-F3_LW  = 0b010
+F3_LB = 0b000
+F3_LH = 0b001
+F3_LW = 0b010
 F3_LBU = 0b100
 F3_LHU = 0b101
 
@@ -240,17 +249,44 @@ F3_SW = 0b010
 EBREAK = 0x00100073
 
 # Mask constants
-MASK8  = 0xFF
+MASK8 = 0xFF
 MASK16 = 0xFFFF
 MASK32 = 0xFFFFFFFF
 
+# Mask constants for sign-extend widths
+_MASK12 = 0xFFF
+_MASK20 = 0xFFFFF
+
+# Pre-computed sign-extend masks and thresholds for common widths.
+# Avoids recomputing (1 << bits) - 1 and (1 << (bits-1)) on every call.
+_SE_MASKS = {
+    8: (0xFF, 0x80),
+    12: (0xFFF, 0x800),
+    13: (0x1FFF, 0x1000),
+    16: (0xFFFF, 0x8000),
+    20: (0xFFFFF, 0x80000),
+    21: (0x1FFFFF, 0x100000),
+}
+
 
 def _sign_extend(val: int, bits: int) -> int:
-    """Sign-extend an integer from `bits` width to Python int."""
+    """Sign-extend an integer from `bits` width to Python int.
+
+    Uses pre-computed mask/threshold pairs for common widths (8,12,13,16,20,21)
+    to avoid the (1 << bits) - 1 computation on every call. Falls back to
+    general path for uncommon widths.
+    """
+    pair = _SE_MASKS.get(bits)
+    if pair is not None:
+        mask, threshold = pair
+        val = val & mask
+        if val & threshold:
+            val -= 1 << bits
+        return val
     mask = (1 << bits) - 1
     val = val & mask
     if val & (1 << (bits - 1)):
-        val -= (1 << bits)
+        val -= 1 << bits
     return val
 
 
@@ -277,6 +313,16 @@ def _execute_vm(
 
     Returns dict with EvalResult-compatible keys:
         success, registers, memory, cycles, error, blocked_writes
+
+    Performance optimizations vs. prior version:
+      - Removed per-iteration regs[0]=0: all write paths already guard rd != 0.
+      - Removed redundant word_offset < 0 check: pc is always >= 0 (starts at 0,
+        masked with & _m32 on every update).
+      - Removed redundant word & MASK32: programs are int lists, no masking needed.
+      - Hoisted regs, memory, program references into local variables for inner loop.
+      - Uses local function aliases for _sign_extend / _sign_extend32.
+      - Uses local dict .get method alias for memory lookups.
+      - Pre-computed _MASK12, _MASK16, _MASK20, _MASK8 as module-level constants.
     """
     # Register file: x0-x31, x0 is hardwired to 0
     regs = [0] * 32
@@ -294,17 +340,27 @@ def _execute_vm(
     blocked_writes = 0
     error_msg: str | None = None
 
-    prog_len = len(program) * 4  # bytes
+    # Cache locals for inner-loop speed (avoids repeated global lookups
+    # on every iteration -- CPython resolves globals via dict lookup each time).
+    _regs = regs
+    _mem = memory
+    _prog = program
+    _prog_len = len(program)
+    _m32 = MASK32
+    _se = _sign_extend
+    _se32 = _sign_extend32
+    _mem_get = _mem.get
 
     try:
         while cycles < budget:
-            # Instruction fetch
+            # Instruction fetch -- removed redundant word_offset < 0 check
+            # (pc is always >= 0 since it starts at 0 and is masked with & _m32).
             word_offset = pc >> 2
-            if word_offset < 0 or word_offset >= len(program):
+            if word_offset >= _prog_len:
                 error_msg = f"PC out of range: {pc:#x}"
                 break
 
-            word = program[word_offset] & MASK32
+            word = _prog[word_offset]
             if word == EBREAK:
                 break
 
@@ -312,120 +368,118 @@ def _execute_vm(
             pc += 4
 
             opcode = word & 0x7F
-            rd     = (word >> 7) & 0x1F
+            rd = (word >> 7) & 0x1F
             funct3 = (word >> 12) & 0x07
-            rs1    = (word >> 15) & 0x1F
-            rs2    = (word >> 20) & 0x1F
+            rs1 = (word >> 15) & 0x1F
+            rs2 = (word >> 20) & 0x1F
             funct7 = (word >> 25) & 0x7F
 
-            v_rs1 = regs[rs1]
-            v_rs2 = regs[rs2]
+            v_rs1 = _regs[rs1]
+            v_rs2 = _regs[rs2]
 
             if opcode == OP_OP_IMM:
-                imm = _sign_extend((word >> 20) & 0xFFF, 12)
+                imm = _se((word >> 20) & _MASK12, 12)
                 if funct3 == F3_ADD_SUB:
-                    result = (v_rs1 + imm) & MASK32
+                    result = (v_rs1 + imm) & _m32
                 elif funct3 == F3_SLL:
-                    shamt = imm & 0x1F
-                    result = (v_rs1 << shamt) & MASK32
+                    result = (v_rs1 << (imm & 0x1F)) & _m32
                 elif funct3 == F3_SLT:
-                    result = 1 if _sign_extend32(v_rs1) < imm else 0
+                    result = 1 if _se32(v_rs1) < imm else 0
                 elif funct3 == F3_SLTU:
-                    result = 1 if v_rs1 < (imm & MASK32) else 0
+                    result = 1 if v_rs1 < (imm & _m32) else 0
                 elif funct3 == F3_XOR:
-                    result = (v_rs1 ^ imm) & MASK32
+                    result = (v_rs1 ^ imm) & _m32
                 elif funct3 == F3_SRL_SRA:
                     shamt = imm & 0x1F
                     if word & 0x40000000:  # SRA
-                        result = (_sign_extend32(v_rs1) >> shamt) & MASK32
+                        result = (_se32(v_rs1) >> shamt) & _m32
                     else:  # SRL
-                        result = (v_rs1 >> shamt) & MASK32
+                        result = (v_rs1 >> shamt) & _m32
                 elif funct3 == F3_OR:
-                    result = (v_rs1 | imm) & MASK32
+                    result = (v_rs1 | imm) & _m32
                 elif funct3 == F3_AND:
-                    result = (v_rs1 & imm) & MASK32
+                    result = (v_rs1 & imm) & _m32
                 else:
                     error_msg = f"Unknown OP_IMM funct3={funct3}"
                     break
                 if rd != 0:
-                    regs[rd] = result
+                    _regs[rd] = result
 
             elif opcode == OP_OP:
                 if funct3 == F3_ADD_SUB:
                     if funct7 & 0x20:  # SUB
-                        result = (v_rs1 - v_rs2) & MASK32
+                        result = (v_rs1 - v_rs2) & _m32
                     else:  # ADD
-                        result = (v_rs1 + v_rs2) & MASK32
+                        result = (v_rs1 + v_rs2) & _m32
                 elif funct3 == F3_SLL:
-                    result = (v_rs1 << (v_rs2 & 0x1F)) & MASK32
+                    result = (v_rs1 << (v_rs2 & 0x1F)) & _m32
                 elif funct3 == F3_SLT:
-                    result = 1 if _sign_extend32(v_rs1) < _sign_extend32(v_rs2) else 0
+                    result = 1 if _se32(v_rs1) < _se32(v_rs2) else 0
                 elif funct3 == F3_SLTU:
                     result = 1 if v_rs1 < v_rs2 else 0
                 elif funct3 == F3_XOR:
-                    result = (v_rs1 ^ v_rs2) & MASK32
+                    result = (v_rs1 ^ v_rs2) & _m32
                 elif funct3 == F3_SRL_SRA:
                     shamt = v_rs2 & 0x1F
                     if funct7 & 0x20:  # SRA
-                        result = (_sign_extend32(v_rs1) >> shamt) & MASK32
+                        result = (_se32(v_rs1) >> shamt) & _m32
                     else:  # SRL
-                        result = (v_rs1 >> shamt) & MASK32
+                        result = (v_rs1 >> shamt) & _m32
                 elif funct3 == F3_OR:
-                    result = (v_rs1 | v_rs2) & MASK32
+                    result = (v_rs1 | v_rs2) & _m32
                 elif funct3 == F3_AND:
-                    result = (v_rs1 & v_rs2) & MASK32
+                    result = (v_rs1 & v_rs2) & _m32
                 else:
                     error_msg = f"Unknown OP funct3={funct3}"
                     break
                 if rd != 0:
-                    regs[rd] = result
+                    _regs[rd] = result
 
             elif opcode == OP_LOAD:
-                imm = _sign_extend((word >> 20) & 0xFFF, 12)
-                addr = (v_rs1 + imm) & MASK32
-                val = memory.get(addr, 0)
+                imm = _se((word >> 20) & _MASK12, 12)
+                addr = (v_rs1 + imm) & _m32
+                val = _mem_get(addr, 0)
                 if funct3 == F3_LW:
                     result = val
                 elif funct3 == F3_LH:
-                    result = _sign_extend(val & 0xFFFF, 16)
+                    result = _se(val & MASK16, 16)
                 elif funct3 == F3_LB:
-                    result = _sign_extend(val & 0xFF, 8)
+                    result = _se(val & MASK8, 8)
                 elif funct3 == F3_LHU:
-                    result = val & 0xFFFF
+                    result = val & MASK16
                 elif funct3 == F3_LBU:
-                    result = val & 0xFF
+                    result = val & MASK8
                 else:
                     error_msg = f"Unknown LOAD funct3={funct3}"
                     break
                 if rd != 0:
-                    regs[rd] = result & MASK32
+                    _regs[rd] = result & _m32
 
             elif opcode == OP_STORE:
-                imm11_5 = (word >> 25) & 0x7F
-                imm4_0  = (word >> 7) & 0x1F
-                imm = _sign_extend((imm11_5 << 5) | imm4_0, 12)
-                addr = (v_rs1 + imm) & MASK32
-                val = v_rs2 & MASK32
+                imm = _se(((word >> 25) & 0x7F) << 5 | ((word >> 7) & 0x1F), 12)
+                addr = (v_rs1 + imm) & _m32
+                val = v_rs2 & _m32
                 if funct3 == F3_SW:
-                    memory[addr] = val
+                    _mem[addr] = val
                 elif funct3 == F3_SH:
-                    # Read-modify-write (store low 16 bits)
-                    old = memory.get(addr, 0) & MASK32
-                    memory[addr] = (old & 0xFFFF0000) | (val & 0xFFFF)
+                    old = _mem_get(addr, 0) & _m32
+                    _mem[addr] = (old & 0xFFFF0000) | (val & MASK16)
                 elif funct3 == F3_SB:
-                    old = memory.get(addr, 0) & MASK32
-                    memory[addr] = (old & 0xFFFFFF00) | (val & 0xFF)
+                    old = _mem_get(addr, 0) & _m32
+                    _mem[addr] = (old & 0xFFFFFF00) | (val & MASK8)
                 else:
                     error_msg = f"Unknown STORE funct3={funct3}"
                     break
 
             elif opcode == OP_BRANCH:
-                imm12   = (word >> 31) & 1
-                imm10_5 = (word >> 25) & 0x3F
-                imm4_1  = (word >> 8) & 0xF
-                imm11   = (word >> 7) & 1
-                imm = _sign_extend(
-                    (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1), 13
+                # Branch immediate: bit 31 -> 12, bit 7 -> 11, bits 30:25 -> 10:5, bits 11:8 -> 4:1
+                # (word >> 31) already isolates bit 31 (no & 1 needed).
+                imm = _se(
+                    (word >> 31) << 12
+                    | ((word >> 7) & 1) << 11
+                    | ((word >> 25) & 0x3F) << 5
+                    | ((word >> 8) & 0xF) << 1,
+                    13,
                 )
                 branch = False
                 if funct3 == F3_BEQ:
@@ -433,9 +487,9 @@ def _execute_vm(
                 elif funct3 == F3_BNE:
                     branch = v_rs1 != v_rs2
                 elif funct3 == F3_BLT:
-                    branch = _sign_extend32(v_rs1) < _sign_extend32(v_rs2)
+                    branch = _se32(v_rs1) < _se32(v_rs2)
                 elif funct3 == F3_BGE:
-                    branch = _sign_extend32(v_rs1) >= _sign_extend32(v_rs2)
+                    branch = _se32(v_rs1) >= _se32(v_rs2)
                 elif funct3 == F3_BLTU:
                     branch = v_rs1 < v_rs2
                 elif funct3 == F3_BGEU:
@@ -444,36 +498,33 @@ def _execute_vm(
                     error_msg = f"Unknown BRANCH funct3={funct3}"
                     break
                 if branch:
-                    pc = (pc - 4 + imm) & MASK32
+                    pc = (pc - 4 + imm) & _m32
 
             elif opcode == OP_JAL:
-                imm20   = (word >> 31) & 1
-                imm10_1 = (word >> 21) & 0x3FF
-                imm11   = (word >> 20) & 1
-                imm19_12 = (word >> 12) & 0xFF
-                imm = _sign_extend(
-                    (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1), 21
+                imm = _se(
+                    ((word >> 31) & 1) << 20
+                    | ((word >> 12) & 0xFF) << 12
+                    | ((word >> 20) & 1) << 11
+                    | ((word >> 21) & 0x3FF) << 1,
+                    21,
                 )
                 if rd != 0:
-                    regs[rd] = pc  # already incremented
-                pc = (pc - 4 + imm) & MASK32
+                    _regs[rd] = pc  # already incremented
+                pc = (pc - 4 + imm) & _m32
 
             elif opcode == OP_JALR:
-                imm = _sign_extend((word >> 20) & 0xFFF, 12)
-                target = (v_rs1 + imm) & ~1
+                imm = _se((word >> 20) & _MASK12, 12)
                 if rd != 0:
-                    regs[rd] = pc
-                pc = target & MASK32
+                    _regs[rd] = pc
+                pc = ((v_rs1 + imm) & ~1) & _m32
 
             elif opcode == OP_LUI:
-                imm31_12 = (word >> 12) & 0xFFFFF
                 if rd != 0:
-                    regs[rd] = (imm31_12 << 12) & MASK32
+                    _regs[rd] = ((word >> 12) & _MASK20) << 12 & _m32
 
             elif opcode == OP_AUIPC:
-                imm31_12 = (word >> 12) & 0xFFFFF
                 if rd != 0:
-                    regs[rd] = (pc - 4 + (imm31_12 << 12)) & MASK32
+                    _regs[rd] = (pc - 4 + ((word >> 12) & _MASK20) << 12) & _m32
 
             elif opcode == OP_ECALL:
                 break
@@ -485,17 +536,14 @@ def _execute_vm(
                 error_msg = f"Unknown opcode={opcode:#04x} at PC={pc-4:#x}"
                 break
 
-            # Enforce x0 = 0
-            regs[0] = 0
+            # x0 is never written: all write paths already guard rd != 0.
 
     except Exception as e:
         error_msg = f"VM exception: {e}"
 
-    # Build register dict (only non-zero registers)
-    reg_dict: dict[int, int] = {}
-    for i in range(1, 32):
-        if regs[i] != 0:
-            reg_dict[i] = regs[i]
+    # Build register dict (only non-zero registers).
+    # Dict comprehension with walrus operator avoids double array lookup.
+    reg_dict: dict[int, int] = {i: v for i in range(1, 32) if (v := regs[i])}
 
     return {
         "success": error_msg is None,
@@ -506,6 +554,431 @@ def _execute_vm(
         "error": error_msg,
         "blocked_writes": blocked_writes,
     }
+
+
+def _execute_vm_batch_numpy(
+    programs: list[list[int]],
+    inputs_list: list[dict[str, Any]],
+    budget: int,
+) -> list[dict[str, Any]]:
+    """Execute N RV32I programs simultaneously using NumPy vectorized operations.
+
+    Returns list of result dicts with the same format as _execute_vm.
+    Memory operations use per-program dicts since memory access is sparse.
+    """
+    N = len(programs)
+    if N == 0:
+        return []
+
+    # Find max program length for array padding
+    max_len = max(len(p) for p in programs)
+
+    # Pad programs into 2D array (N, max_len), using EBREAK for padding
+    prog_arr = np.full((N, max_len), EBREAK, dtype=np.int64)
+    for i, prog in enumerate(programs):
+        prog_arr[i, : len(prog)] = prog
+
+    # Initialize register files: (N, 32) array
+    regs = np.zeros((N, 32), dtype=np.int64)
+
+    # Initialize per-program memory dicts
+    memory_list: list[dict[int, int]] = []
+    for inp in inputs_list:
+        mem = {}
+        for addr, val in inp.get("memory", {}).items():
+            mem[addr & MASK32] = val & MASK32
+        memory_list.append(mem)
+
+    # Initialize registers from inputs
+    for i, inp in enumerate(inputs_list):
+        init_regs = inp.get("registers", {})
+        for r, v in init_regs.items():
+            if 1 <= r <= 31:
+                regs[i, r] = v & MASK32
+
+    # Per-program state arrays
+    pcs = np.zeros(N, dtype=np.int64)
+    active = np.ones(N, dtype=bool)  # True = still executing
+    cycle_counts = np.zeros(N, dtype=np.int64)
+    errors: list[str | None] = [None] * N
+
+    # Mask for 32-bit operations
+    M32 = MASK32
+
+    def _se_np(val, bits):
+        """Sign-extend numpy array from 'bits' width."""
+        mask = (1 << bits) - 1
+        val = val & mask
+        return np.where(val & (1 << (bits - 1)), val - (1 << bits), val)
+
+    def _wb(mask, results):
+        """Write back results to registers where mask is True."""
+        targets = mask & (rd != 0)
+        if np.any(targets):
+            regs[idx[targets], rd[targets]] = results[targets] & M32
+
+    # Main execution loop
+    for cycle in range(budget):
+        # Check if any programs are still active
+        if not np.any(active):
+            break
+
+        # Get indices of active programs
+        idx = np.where(active)[0]
+        if len(idx) == 0:
+            break
+
+        # Batch fetch: get word offset for each active program
+        word_offsets = pcs[idx] >> 2
+
+        # Check for out-of-range PCs
+        oor_mask = word_offsets >= prog_arr.shape[1]
+        if np.any(oor_mask):
+            for j, ii in enumerate(idx):
+                if oor_mask[j]:
+                    errors[ii] = f"PC out of range: {pcs[ii]:#x}"
+                    active[ii] = False
+            continue
+
+        # Fetch instructions
+        words = prog_arr[idx, word_offsets]
+
+        # Check for EBREAK
+        ebreak_mask = words == EBREAK
+        if np.any(ebreak_mask):
+            for j, ii in enumerate(idx):
+                if ebreak_mask[j]:
+                    active[ii] = False
+            idx = idx[~ebreak_mask]
+            words = words[~ebreak_mask]
+            if len(idx) == 0:
+                break
+
+        # Update cycle counts for active programs
+        cycle_counts[idx] += 1
+
+        # Advance PCs
+        pcs[idx] = (pcs[idx] + 4) & M32
+
+        # Decode all instructions at once
+        opcode = words & 0x7F
+        rd = (words >> 7) & 0x1F
+        funct3 = (words >> 12) & 0x07
+        rs1 = (words >> 15) & 0x1F
+        rs2 = (words >> 20) & 0x1F
+        funct7 = (words >> 25) & 0x7F
+
+        # Batch register read
+        v_rs1 = regs[idx, rs1]
+        v_rs2 = regs[idx, rs2]
+
+        # ===== OP_OP_IMM =====
+        mask_op_imm = opcode == OP_OP_IMM
+        if np.any(mask_op_imm):
+            m = mask_op_imm
+            imm = _se_np((words[m] >> 20) & 0xFFF, 12)
+            f3 = funct3[m]
+            rs1_val = v_rs1[m]
+            results = np.zeros(np.sum(m), dtype=np.int64)
+
+            # ADDI
+            addi_mask = f3 == F3_ADD_SUB
+            results[addi_mask] = (rs1_val[addi_mask] + imm[addi_mask]) & M32
+
+            # SLLI
+            slli_mask = f3 == F3_SLL
+            results[slli_mask] = (rs1_val[slli_mask] << (imm[slli_mask] & 0x1F)) & M32
+
+            # SLTI
+            slti_mask = f3 == F3_SLT
+            rs1_s = np.where(rs1_val & 0x80000000, rs1_val - 0x100000000, rs1_val)
+            results[slti_mask] = np.where(rs1_s[slti_mask] < imm[slti_mask], 1, 0)
+
+            # SLTIU
+            sltiu_mask = f3 == F3_SLTU
+            imm_u = imm & M32
+            results[sltiu_mask] = np.where(rs1_val[sltiu_mask] < imm_u[sltiu_mask], 1, 0)
+
+            # XORI
+            xori_mask = f3 == F3_XOR
+            results[xori_mask] = (rs1_val[xori_mask] ^ imm[xori_mask]) & M32
+
+            # SRLI/SRAI
+            srai_mask = f3 == F3_SRL_SRA
+            if np.any(srai_mask):
+                shamt = imm[srai_mask] & 0x1F
+                is_srai = (words[m][srai_mask] & 0x40000000) != 0
+                rs1_s_srl = np.where(
+                    rs1_val[srai_mask] & 0x80000000, rs1_val[srai_mask] - 0x100000000, rs1_val[srai_mask]
+                )
+                srl_result = (rs1_val[srai_mask] >> shamt) & M32
+                sra_result = (rs1_s_srl >> shamt) & M32
+                results[srai_mask] = np.where(is_srai, sra_result, srl_result)
+
+            # ORI
+            ori_mask = f3 == F3_OR
+            results[ori_mask] = (rs1_val[ori_mask] | imm[ori_mask]) & M32
+
+            # ANDI
+            andi_mask = f3 == F3_AND
+            results[andi_mask] = (rs1_val[andi_mask] & imm[andi_mask]) & M32
+
+            # Write back
+            _wb(m, results)
+
+        # ===== OP_OP (R-type) =====
+        mask_op = opcode == OP_OP
+        if np.any(mask_op):
+            m = mask_op
+            f3 = funct3[m]
+            rs1_val = v_rs1[m]
+            rs2_val = v_rs2[m]
+            results = np.zeros(np.sum(m), dtype=np.int64)
+
+            # ADD/SUB
+            addsub_mask = f3 == F3_ADD_SUB
+            if np.any(addsub_mask):
+                is_sub = (funct7[m][addsub_mask] & 0x20) != 0
+                add_res = (rs1_val[addsub_mask] + rs2_val[addsub_mask]) & M32
+                sub_res = (rs1_val[addsub_mask] - rs2_val[addsub_mask]) & M32
+                results[addsub_mask] = np.where(is_sub, sub_res, add_res)
+
+            # SLL
+            sll_mask = f3 == F3_SLL
+            results[sll_mask] = (rs1_val[sll_mask] << (rs2_val[sll_mask] & 0x1F)) & M32
+
+            # SLT
+            slt_mask = f3 == F3_SLT
+            rs1_s = np.where(rs1_val & 0x80000000, rs1_val - 0x100000000, rs1_val)
+            rs2_s = np.where(rs2_val & 0x80000000, rs2_val - 0x100000000, rs2_val)
+            results[slt_mask] = np.where(rs1_s[slt_mask] < rs2_s[slt_mask], 1, 0)
+
+            # SLTU
+            sltu_mask = f3 == F3_SLTU
+            results[sltu_mask] = np.where(rs1_val[sltu_mask] < rs2_val[sltu_mask], 1, 0)
+
+            # XOR
+            xor_mask = f3 == F3_XOR
+            results[xor_mask] = (rs1_val[xor_mask] ^ rs2_val[xor_mask]) & M32
+
+            # SRL/SRA
+            sra_mask = f3 == F3_SRL_SRA
+            if np.any(sra_mask):
+                shamt = rs2_val[sra_mask] & 0x1F
+                is_sra = (funct7[m][sra_mask] & 0x20) != 0
+                rs1_s_srl = np.where(rs1_val[sra_mask] & 0x80000000, rs1_val[sra_mask] - 0x100000000, rs1_val[sra_mask])
+                srl_result = (rs1_val[sra_mask] >> shamt) & M32
+                sra_result = (rs1_s_srl >> shamt) & M32
+                results[sra_mask] = np.where(is_sra, sra_result, srl_result)
+
+            # OR
+            or_mask = f3 == F3_OR
+            results[or_mask] = (rs1_val[or_mask] | rs2_val[or_mask]) & M32
+
+            # AND
+            and_mask = f3 == F3_AND
+            results[and_mask] = (rs1_val[and_mask] & rs2_val[and_mask]) & M32
+
+            # Write back
+            _wb(m, results)
+
+        # ===== OP_LOAD =====
+        mask_load = opcode == OP_LOAD
+        if np.any(mask_load):
+            m = mask_load
+            imm = _se_np((words[m] >> 20) & 0xFFF, 12)
+            addrs = (v_rs1[m] + imm) & M32
+            f3 = funct3[m]
+            results = np.zeros(np.sum(m), dtype=np.int64)
+
+            # Per-program memory access (sparse, can't vectorize)
+            for j, ii in enumerate(idx):
+                if not m[j]:
+                    continue
+                addr = int(addrs[j])
+                val = memory_list[ii].get(addr, 0)
+                ft = int(f3[j])
+                if ft == F3_LW:
+                    results[j] = val
+                elif ft == F3_LH:
+                    results[j] = _sign_extend(val & MASK16, 16)
+                elif ft == F3_LB:
+                    results[j] = _sign_extend(val & MASK8, 8)
+                elif ft == F3_LHU:
+                    results[j] = val & MASK16
+                elif ft == F3_LBU:
+                    results[j] = val & MASK8
+                else:
+                    errors[ii] = f"Unknown LOAD funct3={ft}"
+                    active[ii] = False
+
+            # Write back
+            _wb(m, results)
+
+        # ===== OP_STORE =====
+        mask_store = opcode == OP_STORE
+        if np.any(mask_store):
+            m = mask_store
+            imm = _se_np(((words[m] >> 25) & 0x7F) << 5 | ((words[m] >> 7) & 0x1F), 12)
+            addrs = (v_rs1[m] + imm) & M32
+            f3 = funct3[m]
+
+            # Per-program memory access
+            for j, ii in enumerate(idx):
+                if not m[j]:
+                    continue
+                addr = int(addrs[j])
+                val = int(v_rs2[m][j]) & M32
+                ft = int(f3[j])
+                old = memory_list[ii].get(addr, 0) & M32
+                if ft == F3_SW:
+                    memory_list[ii][addr] = val
+                elif ft == F3_SH:
+                    memory_list[ii][addr] = (old & 0xFFFF0000) | (val & MASK16)
+                elif ft == F3_SB:
+                    memory_list[ii][addr] = (old & 0xFFFFFF00) & M32 | (val & MASK8)
+                else:
+                    errors[ii] = f"Unknown STORE funct3={ft}"
+                    active[ii] = False
+
+        # ===== OP_BRANCH =====
+        mask_branch = opcode == OP_BRANCH
+        if np.any(mask_branch):
+            m = mask_branch
+            imm = _se_np(
+                (words[m] >> 31) << 12
+                | ((words[m] >> 7) & 1) << 11
+                | ((words[m] >> 25) & 0x3F) << 5
+                | ((words[m] >> 8) & 0xF) << 1,
+                13,
+            )
+            f3 = funct3[m]
+            rs1_val = v_rs1[m]
+            rs2_val = v_rs2[m]
+
+            # Compute branch conditions
+            branch_taken = np.zeros(np.sum(m), dtype=bool)
+
+            # BEQ
+            beq_mask = f3 == F3_BEQ
+            branch_taken[beq_mask] = rs1_val[beq_mask] == rs2_val[beq_mask]
+
+            # BNE
+            bne_mask = f3 == F3_BNE
+            branch_taken[bne_mask] = rs1_val[bne_mask] != rs2_val[bne_mask]
+
+            # BLT
+            blt_mask = f3 == F3_BLT
+            rs1_s = np.where(rs1_val & 0x80000000, rs1_val - 0x100000000, rs1_val)
+            rs2_s = np.where(rs2_val & 0x80000000, rs2_val - 0x100000000, rs2_val)
+            branch_taken[blt_mask] = rs1_s[blt_mask] < rs2_s[blt_mask]
+
+            # BGE
+            bge_mask = f3 == F3_BGE
+            branch_taken[bge_mask] = rs1_s[bge_mask] >= rs2_s[bge_mask]
+
+            # BLTU
+            bltu_mask = f3 == F3_BLTU
+            branch_taken[bltu_mask] = rs1_val[bltu_mask] < rs2_val[bltu_mask]
+
+            # BGEU
+            bgeu_mask = f3 == F3_BGEU
+            branch_taken[bgeu_mask] = rs1_val[bgeu_mask] >= rs2_val[bgeu_mask]
+
+            # Update PCs for taken branches
+            if np.any(branch_taken):
+                old_pcs = pcs[idx[m]]  # PCs were already advanced by 4
+                pcs[idx[m][branch_taken]] = (old_pcs[branch_taken] - 4 + imm[branch_taken]) & M32
+
+        # ===== OP_JAL =====
+        mask_jal = opcode == OP_JAL
+        if np.any(mask_jal):
+            m = mask_jal
+            imm = _se_np(
+                ((words[m] >> 31) & 1) << 20
+                | ((words[m] >> 12) & 0xFF) << 12
+                | ((words[m] >> 20) & 1) << 11
+                | ((words[m] >> 21) & 0x3FF) << 1,
+                21,
+            )
+            # Write return address
+            targets = m & (rd != 0)
+            if np.any(targets):
+                regs[idx[targets], rd[targets]] = pcs[idx[targets]]  # Already incremented
+
+            # Update PC
+            pcs[idx[m]] = (pcs[idx[m]] - 4 + imm) & M32
+
+        # ===== OP_JALR =====
+        mask_jalr = opcode == OP_JALR
+        if np.any(mask_jalr):
+            m = mask_jalr
+            imm = _se_np((words[m] >> 20) & 0xFFF, 12)
+            # Write return address
+            targets = m & (rd != 0)
+            if np.any(targets):
+                regs[idx[targets], rd[targets]] = pcs[idx[targets]]  # Already incremented
+
+            # Update PC
+            pcs[idx[m]] = ((v_rs1[m] + imm) & ~1) & M32
+
+        # ===== OP_LUI =====
+        mask_lui = opcode == OP_LUI
+        if np.any(mask_lui):
+            m = mask_lui
+            imm = ((words[m] >> 12) & 0xFFFFF) << 12
+            targets = m & (rd != 0)
+            if np.any(targets):
+                regs[idx[targets], rd[targets]] = imm[targets - m[targets] + np.where(m)[0]] & M32
+
+        # ===== OP_AUIPC =====
+        mask_auipc = opcode == OP_AUIPC
+        if np.any(mask_auipc):
+            m = mask_auipc
+            imm = ((words[m] >> 12) & 0xFFFFF) << 12
+            targets = m & (rd != 0)
+            if np.any(targets):
+                # PC was already advanced, need to subtract 4
+                result = (pcs[idx[m]] - 4 + imm) & M32
+                targets_actual = targets & (rd != 0)
+                if np.any(targets_actual):
+                    regs[idx[m][targets_actual], rd[m][targets_actual]] = result[targets_actual]
+
+        # ===== OP_ECALL =====
+        mask_ecall = opcode == OP_ECALL
+        if np.any(mask_ecall):
+            for ii in idx[mask_ecall]:
+                active[ii] = False
+
+        # ===== OP_FENCE =====
+        # NOP in single-threaded VM, no action needed
+
+        # x0 is never written: all write paths already guard rd != 0
+
+        # Deactivate programs that hit errors
+        for ii in idx:
+            if errors[ii] is not None:
+                active[ii] = False
+
+    # Build results
+    results_list = []
+    for i in range(N):
+        # Build register dict (only non-zero)
+        reg_dict = {int(r): int(regs[i, r]) for r in range(1, 32) if regs[i, r] != 0}
+
+        results_list.append(
+            {
+                "success": errors[i] is None,
+                "registers": reg_dict,
+                "memory": memory_list[i],
+                "trace": [],
+                "cycles": int(cycle_counts[i]),
+                "error": errors[i],
+                "blocked_writes": 0,
+            }
+        )
+
+    return results_list
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -530,71 +1003,52 @@ class GpuVMFarm:
     def evaluate_batch(
         self, programs: list[int], inputs_list: list[dict[str, Any]], budget: int | None = None
     ) -> list[dict[str, Any]]:
-        """Evaluate a single program (or list) against inputs.
-
-        Note: evolution_engine.py calls this as:
-            gpu_res = self._gpu_farm.evaluate_batch(prog, [inputs], budget=5000)
-        where prog is a list[int] (one program), inputs_list is a single-element list.
-        """
+        """Evaluate a single program (or list) against inputs."""
         budget = budget or self.budget
-        results = []
         if isinstance(programs, list) and programs and isinstance(programs[0], int):
             # Single program case: programs is the program itself
             inputs = inputs_list[0] if inputs_list else {}
-            results.append(_execute_vm(
-                programs,
-                inputs.get("registers", {}),
-                inputs.get("memory", {}),
-                budget,
-            ))
-        else:
-            # Batch case: programs is list of programs
-            for prog, inputs in zip(programs, inputs_list, strict=False):
-                results.append(_execute_vm(
-                    prog,
-                    inputs.get("registers", {}),
-                    inputs.get("memory", {}),
-                    budget,
-                ))
-        return results
+            return [_execute_vm(programs, inputs.get("registers", {}), inputs.get("memory", {}), budget)]
+        # Batch case
+        if len(programs) <= 1:
+            return [
+                _execute_vm(prog, inp.get("registers", {}), inp.get("memory", {}), budget)
+                for prog, inp in zip(programs, inputs_list, strict=False)
+            ]
+        return _execute_vm_batch_numpy(programs, inputs_list, budget)
 
     def evaluate_multi(
         self, programs: list[list[int]], inputs_list: list[dict[str, Any]], budget: int | None = None
     ) -> list[dict[str, Any]]:
         """Evaluate a batch of programs. Main entry point for GPU-accelerated eval."""
         budget = budget or self.budget
-        if self._use_cupy and cp is not None:
-            try:
-                return self._evaluate_batch_cupy(programs, inputs_list, budget)
-            except Exception:
-                # Fall through to Python
-                pass
-        # Pure Python path
-        return [
-            _execute_vm(prog, inp.get("registers", {}), inp.get("memory", {}), budget)
-            for prog, inp in zip(programs, inputs_list, strict=False)
-        ]
-
-    def _evaluate_batch_cupy(
-        self, programs: list[list[int]], inputs_list: list[dict[str, Any]], budget: int
-    ) -> list[dict[str, Any]]:
-        """CuPy-accelerated batch evaluation.
-
-        For now, the VM execution itself is scalar Python (branching is
-        data-dependent and hard to vectorize). The CuPy path prepares
-        batch arrays for future optimization (e.g., batch register init).
-        """
-        # For small batches, just use Python (CuPy overhead isn't worth it)
-        if len(programs) <= 4:
+        if len(programs) <= 1:
             return [
                 _execute_vm(prog, inp.get("registers", {}), inp.get("memory", {}), budget)
                 for prog, inp in zip(programs, inputs_list, strict=False)
             ]
-        # For now, delegate to Python. CuPy kernel optimization is a future step.
-        return [
-            _execute_vm(prog, inp.get("registers", {}), inp.get("memory", {}), budget)
-            for prog, inp in zip(programs, inputs_list, strict=False)
-        ]
+        if self._use_cupy and cp is not None:
+            try:
+                return self._evaluate_batch_cupy(programs, inputs_list, budget)
+            except Exception:
+                pass
+        # NumPy vectorized path (always available)
+        return _execute_vm_batch_numpy(programs, inputs_list, budget)
+
+    def _evaluate_batch_cupy(
+        self, programs: list[list[int]], inputs_list: list[dict[str, Any]], budget: int
+    ) -> list[dict[str, Any]]:
+        """Batch evaluation using NumPy vectorized execution.
+
+        Falls back to per-program Python for very small batches where
+        NumPy overhead exceeds the per-program loop cost.
+        """
+        if len(programs) <= 1:
+            return [
+                _execute_vm(prog, inp.get("registers", {}), inp.get("memory", {}), budget)
+                for prog, inp in zip(programs, inputs_list, strict=False)
+            ]
+        return _execute_vm_batch_numpy(programs, inputs_list, budget)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -658,6 +1112,7 @@ class VMFactory:
             # Also check PyTorch CUDA
             try:
                 import torch
+
                 torch_available = torch.cuda.is_available()
             except (ImportError, RuntimeError):
                 torch_available = False
@@ -732,9 +1187,7 @@ class VMFactory:
                 return self._backend.evaluate_multi(programs, inputs_list, budget=budget)
             raise
 
-    def evaluate_single(
-        self, program: list[int], inputs: dict[str, Any], budget: int | None = None
-    ) -> dict[str, Any]:
+    def evaluate_single(self, program: list[int], inputs: dict[str, Any], budget: int | None = None) -> dict[str, Any]:
         """Evaluate a single program. Convenience wrapper."""
         budget = budget or self.budget
         results = self.evaluate_batch([program], [inputs], budget=budget)

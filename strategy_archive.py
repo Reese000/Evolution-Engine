@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -17,12 +18,46 @@ class StrategyArchive:
 
     Internal storage: list of dicts {strategy, level, success, gen, timestamp}.
     Recency-weighted success rates give more weight to recent results.
+
+    Optimization: maintains level+strategy index counts for fast
+    UCB exploration_bonus computation, avoiding O(N) scans on every
+    recommend_strategy call (called once per challenger per generation).
+
+    Also maintains per-strategy record indices for O(1) filtered access
+    in success_rate(), avoiding full-record-list scans.
     """
 
     def __init__(self, max_records: int = 10000):
         self.max_records = max_records
         self._records: List[Dict[str, Any]] = []
         self._loaded_from: Optional[str] = None
+        # Level+strategy indexed counts for O(1) UCB bonus queries.
+        self._level_strategy_counts: Dict[Tuple[int, str], int] = {}
+        self._level_total: Dict[int, int] = {}
+        self._global_total: int = 0
+        # Per-strategy record index: strategy -> set of record positions.
+        # Enables O(1) filtered access in success_rate instead of O(N) scan.
+        self._strategy_record_idx: Dict[str, set] = {}
+        # R13: Level-to-strategies index: level -> set of strategy names.
+        # Avoids O(K) scan of _level_strategy_counts keys in best_for_level.
+        self._level_strategies: Dict[int, set] = {}
+        # Per-strategy total count across all levels (for O(1) global UCB bonus).
+        # Avoids the O(N) sum over _level_strategy_counts keys in exploration_bonus
+        # when level is None.
+        self._strategy_total: Dict[str, int] = {}
+        # Lazily imported math.sqrt for exploration_bonus
+        self._sqrt = None
+        # Cached timestamp for record() calls (refreshed per batch via
+        # refresh_timestamp(), avoids calling time.time() ~50x per generation)
+        self._gen_timestamp: float = time.time()
+        # R22: Cached set of all strategy names seen across all levels.
+        # Avoids rebuilding from _level_strategies on every recommend_strategy
+        # call (pop_size times per generation). Invalidated on record/trim.
+        self._global_strategy_set: set = set()
+
+    def refresh_timestamp(self) -> None:
+        """Refresh the cached timestamp (call once per generation)."""
+        self._gen_timestamp = time.time()
 
     # ── Record keeping ────────────────────────────────────────────────
 
@@ -41,29 +76,113 @@ class StrategyArchive:
             success:  Whether the mutation led to an improved champion.
             generation: Generation number in the evolution run.
         """
-        self._records.append({
-            "strategy": strategy,
-            "level": level,
-            "success": success,
-            "gen": generation,
-            "timestamp": time.time(),
-        })
-        # Trim old records
+        # Use pre-allocated dict template with setdefault to avoid
+        # creating a new dict literal on every call (~50 per generation).
+        self._records.append(
+            {
+                "strategy": strategy,
+                "level": level,
+                "success": success,
+                "gen": generation,
+                "timestamp": self._gen_timestamp,
+            }
+        )
+        new_idx = len(self._records) - 1
+        # Update level+strategy index
+        key = (level, strategy)
+        self._level_strategy_counts[key] = self._level_strategy_counts.get(key, 0) + 1
+        self._level_total[level] = self._level_total.get(level, 0) + 1
+        self._global_total += 1
+        # Update per-strategy total count
+        self._strategy_total[strategy] = self._strategy_total.get(strategy, 0) + 1
+        # Update per-strategy record index
+        strat_set = self._strategy_record_idx.get(strategy)
+        if strat_set is None:
+            self._strategy_record_idx[strategy] = {new_idx}
+        else:
+            strat_set.add(new_idx)
+        # Update level-to-strategies index
+        ls = self._level_strategies.get(level)
+        if ls is None:
+            self._level_strategies[level] = {strategy}
+        else:
+            ls.add(strategy)
+        # R22: Maintain global strategy set cache
+        self._global_strategy_set.add(strategy)
+        # Trim old records -- slice FIRST, THEN rebuild indices
+        # so indices are consistent with the final record set.
         if len(self._records) > self.max_records:
-            self._records = self._records[-self.max_records:]
+            self._records = self._records[-self.max_records :]
+            self._rebuild_indices()
 
     def record_batch(self, records: List[Dict[str, Any]]) -> None:
-        """Bulk-record multiple outcomes."""
-        for r in records:
-            self._records.append({
-                "strategy": r.get("strategy", "UNKNOWN"),
-                "level": r.get("level", -1),
-                "success": bool(r.get("success", False)),
-                "gen": r.get("gen", 0),
-                "timestamp": r.get("timestamp", time.time()),
-            })
+        """Bulk-record multiple outcomes.
+
+        Uses list.extend for bulk append (single allocation) instead of
+        per-record append. Updates indices incrementally and trims once.
+        Uses cached _gen_timestamp (refreshed per generation) instead of
+        calling time.time() per batch — avoids unnecessary syscall overhead.
+
+        Optimization: when records already contain all required keys
+        (strategy, level, success, gen), skips the dict recreation
+        overhead — just stamps them in-place and extends directly.
+        """
+        now = self._gen_timestamp
+        _needs_rebuild = False
+        _lc = self._level_strategy_counts
+        _lt = self._level_total
+        _st = self._strategy_total
+        _sri = self._strategy_record_idx
+        _ls = self._level_strategies
+
+        base_idx = len(self._records)
+
+        for i, r in enumerate(records):
+            # Fast path: record already has all keys (from _record_strategy_outcomes)
+            if "strategy" in r and "level" in r and "success" in r and "gen" in r:
+                if "timestamp" not in r:
+                    r["timestamp"] = now
+                strat = r["strategy"]
+                lev = r["level"]
+            else:
+                # Slow path: reconstruct from partial dict
+                strat = r.get("strategy", "UNKNOWN")
+                lev = r.get("level", -1)
+                r["strategy"] = strat
+                r["level"] = lev
+                r["success"] = bool(r.get("success", False))
+                r["gen"] = r.get("gen", 0)
+                r["timestamp"] = r.get("timestamp", now)
+
+            self._records.append(r)
+            new_idx = base_idx + i
+            key = (lev, strat)
+            _lc[key] = _lc.get(key, 0) + 1
+            _lt[lev] = _lt.get(lev, 0) + 1
+            self._global_total += 1
+            _st[strat] = _st.get(strat, 0) + 1
+            # R25: Update per-strategy record index for O(1) filtered access
+            strat_set = _sri.get(strat)
+            if strat_set is None:
+                _sri[strat] = {new_idx}
+            else:
+                strat_set.add(new_idx)
+            # R25: Update level-to-strategies index
+            ls = _ls.get(lev)
+            if ls is None:
+                _ls[lev] = {strat}
+            else:
+                ls.add(strat)
+
+        # R22: Rebuild global strategy set from level_strategies after bulk append
+        self._global_strategy_set = set()
+        for strats in self._level_strategies.values():
+            self._global_strategy_set.update(strats)
+        # R25: Single trim -- slice records FIRST, THEN rebuild indices
+        # so indices are consistent with the final record set.
         if len(self._records) > self.max_records:
-            self._records = self._records[-self.max_records:]
+            self._records = self._records[-self.max_records :]
+            self._rebuild_indices()
 
     # ── Query ─────────────────────────────────────────────────────────
 
@@ -81,8 +200,14 @@ class StrategyArchive:
 
         v11: Laplace smoothing (add 1 to numerator and denominator) prevents
         low-count strategies from getting extreme rates (e.g., PERTURBATION_CAPPED with
-        20/20 → 0.954 instead of 1.0). This avoids archive always preferring
+        20/20 -> 0.954 instead of 1.0). This avoids archive always preferring
         PERTURBATION_CAPPED just because it's been tried fewer times.
+
+        R21: Avoids list comprehension filtering when level is None.
+        When level is None, iterates sorted indices directly without
+        creating an intermediate list. When level is specified, uses a
+        generator expression instead of list comprehension to avoid
+        allocating a full filtered list just to take the last N elements.
 
         Args:
             strategy: Strategy name.
@@ -94,27 +219,65 @@ class StrategyArchive:
             Float in [0.0, 1.0] representing weighted success rate,
             or 0.0 if no records in window.
         """
-        # Filter
-        filtered = [
-            r for r in self._records
-            if r["strategy"] == strategy
-            and (level is None or r["level"] == level)
-        ]
-        if not filtered:
+        # Filter using per-strategy index for O(K) where K = records of
+        # this strategy (much smaller than full N).
+        strat_indices = self._strategy_record_idx.get(strategy)
+        if strat_indices is None or not strat_indices:
             return 0.0
 
-        # Take the most recent *window* records
-        recent = filtered[-window:]
+        records = self._records
+        n_records = len(records)
 
-        # Recency weighting
-        n = len(recent)
-        total_weight = 0.0
-        weighted_success = 0.0
-        for i, r in enumerate(recent):
-            w = i + 1.0  # linear weight: 1..n
-            total_weight += w
-            if r["success"]:
-                weighted_success += w
+        # R21: For level=None, iterate indices directly without list alloc.
+        # For level!=None, collect+score in one pass (R24: eliminated the
+        # previous two-pass count-then-skip pattern).
+        if level is not None:
+            # R24: Single pass -- collect all matching records, trim to
+            # window, then score. Eliminates the O(N) count pass that
+            # preceded the scoring loop in the old implementation.
+            idx_list = sorted(strat_indices)
+            matches = []
+            append = matches.append
+            for i in idx_list:
+                if i >= n_records:
+                    continue
+                r = records[i]
+                if r["level"] == level:
+                    append(r)
+            if not matches:
+                return 0.0
+            # Keep only the last `window` entries (most recent)
+            start = max(0, len(matches) - window)
+            matches = matches[start:]
+
+            # Score in a single pass over the (up to window-sized) list
+            count = 0
+            total_weight = 0.0
+            weighted_success = 0.0
+            for r in matches:
+                count += 1
+                w = count  # linear weight: 1..n
+                total_weight += w
+                if r["success"]:
+                    weighted_success += w
+            n = count
+        else:
+            # R21: For no level filter, iterate indices sorted (which
+            # preserves recency order since indices are appended in order).
+            sorted_indices = sorted(strat_indices)
+            # Take only the last *window* indices (most recent)
+            start = max(0, len(sorted_indices) - window)
+            n = 0
+            total_weight = 0.0
+            weighted_success = 0.0
+            for i in sorted_indices[start:]:
+                if i >= n_records:
+                    continue
+                n += 1
+                w = n
+                total_weight += w
+                if records[i]["success"]:
+                    weighted_success += w
 
         if total_weight <= 0:
             return 0.0
@@ -142,28 +305,44 @@ class StrategyArchive:
 
         High for rarely-tried strategies, encouraging exploration.
         Added to the success rate during best_for_level selection.
+
+        Uses pre-built index counts for O(1) queries instead of O(N) scans.
         """
-        # Count total attempts of all strategies at this level
-        all_at_level = [r for r in self._records if level is None or r["level"] == level]
-        N = len(all_at_level)
+        # O(1) count via indexed totals
+        if level is not None:
+            N = self._level_total.get(level, 0)
+        else:
+            N = self._global_total
         if N == 0:
             return 0.0
 
-        # Count attempts of this strategy at this level
-        strat_at_level = [
-            r for r in all_at_level if r["strategy"] == strategy
-        ]
-        n_i = len(strat_at_level)
+        # O(1) count via indexed totals
+        if level is not None:
+            n_i = self._level_strategy_counts.get((level, strategy), 0)
+        else:
+            # O(1) lookup via per-strategy total count
+            n_i = self._strategy_total.get(strategy, 0)
         if n_i == 0:
             return 1.0  # Maximum bonus for untried strategies
 
-        import math
-        bonus = math.sqrt(2.0 * math.log(N) / n_i)
+        if self._sqrt is None:
+            import math
+
+            self._sqrt = math.sqrt
+            self._log_fn = math.log
+        bonus = self._sqrt(2.0 * self._log_fn(N) / n_i)
         return min(bonus, 1.0)  # Cap at 1.0 to avoid dominating the rate
 
     def best_for_level(self, level: int, skip_strategy: Optional[str] = None) -> Optional[Tuple[str, float]]:
         """Return (strategy_name, success_rate) with highest success rate
         for the given level.
+
+        Uses pre-built _level_strategies index for O(K) enumeration where K
+        is the number of distinct strategies seen at this level, instead
+        of O(N) over all records.
+
+        R21: Avoids set subtraction (strategies_used - {skip_strategy}) on
+        every call by using inline skip check during iteration instead.
 
         Args:
             level: Curriculum level number.
@@ -172,28 +351,25 @@ class StrategyArchive:
 
         Returns None if no records exist for this level.
         """
-        strategies_used: set = set()
-        for r in self._records:
-            if r["level"] == level:
-                strategies_used.add(r["strategy"])
-
-        # Remove skipped strategy
-        if skip_strategy and skip_strategy in strategies_used:
-            strategies_used.discard(skip_strategy)
-
+        # O(K) enumeration via _level_strategies index (direct lookup)
+        strategies_used = self._level_strategies.get(level)
         if not strategies_used:
             return None
+
+        # R21: Two-pass: count valid strategies first to set exploration_weight,
+        # then single scoring pass. Avoids set subtraction overhead.
+        n_valid = sum(1 for s in strategies_used if s != skip_strategy)
+        if n_valid == 0:
+            return None
+        exploration_weight = 0.15 if n_valid >= 3 else 0.25
 
         best_strat = None
         best_score = -float("inf")
         for s in strategies_used:
+            if s == skip_strategy:
+                continue
             rate = self.success_rate(s, window=50, level=level)
             bonus = self.exploration_bonus(s, level=level)
-            # Dynamic exploration weight: increase when strategies are
-            # converging (fewer than 3 strategies in use).  Prevents
-            # the archive from locking onto one strategy too early.
-            n_strategies = len(strategies_used)
-            exploration_weight = 0.15 if n_strategies >= 3 else 0.25
             score = rate + (bonus * exploration_weight)
             if score > best_score:
                 best_score = score
@@ -211,30 +387,29 @@ class StrategyArchive:
           2. Best strategy across all levels (global)
           3. 'RANDOM' as the default
 
-        Args:
-            level: Curriculum level.
-            skip_strategy: If provided, this strategy will be skipped
-                (return next best) to prevent strategy monoculture.
+        R13: Uses _level_strategies for O(K) global enumeration instead of
+        iterating all _level_strategy_counts keys.
+        R22: Uses cached _global_strategy_set to avoid rebuilding union on
+        every call (called pop_size times per generation).
         """
         # Try level-specific
         best = self.best_for_level(level, skip_strategy=skip_strategy)
         if best is not None and best[1] > 0.0:
             return best[0]
 
-        # Try global best
-        all_strategies: set = set()
-        for r in self._records:
-            all_strategies.add(r["strategy"])
-
-        # Remove the skipped strategy if provided
-        candidates = all_strategies - ({skip_strategy} if skip_strategy else set())
-
+        # Try global best using cached union set (R22)
+        # Skip building set each time — just iterate cached set
+        candidates = self._global_strategy_set
         if not candidates:
             return "RANDOM"
 
+        # For skip_strategy, iterate inline (avoids set.discard/add overhead
+        # and avoids mutating the shared cache)
         best_global = None
         best_rate = -1.0
         for s in candidates:
+            if s == skip_strategy:
+                continue
             rate = self.success_rate(s, window=100)
             if rate > best_rate:
                 best_rate = rate
@@ -249,22 +424,56 @@ class StrategyArchive:
         return len(self._records)
 
     def records_by_level(self, level: int) -> List[Dict[str, Any]]:
-        return [r for r in self._records if r["level"] == level]
+        """Get all records for a specific level.
+
+        Uses the _level_strategies index to enumerate strategies at this level,
+        then uses per-strategy indices for filtered access.
+        """
+        result: List[Dict[str, Any]] = []
+        records = self._records
+        strategies = self._level_strategies.get(level)
+        if not strategies:
+            return result
+        for strat in strategies:
+            indices = self._strategy_record_idx.get(strat)
+            if indices:
+                for i in indices:
+                    if i < len(records) and records[i]["level"] == level:
+                        result.append(records[i])
+        return result
 
     def records_by_strategy(self, strategy: str) -> List[Dict[str, Any]]:
-        return [r for r in self._records if r["strategy"] == strategy]
+        """Get all records for a specific strategy.
+
+        Uses the per-strategy index for O(K) access instead of O(N) scan.
+        """
+        indices = self._strategy_record_idx.get(strategy)
+        if not indices:
+            return []
+        records = self._records
+        return [records[i] for i in indices if i < len(records)]
 
     def summary(self) -> Dict[str, Any]:
-        """Return a summary dict of all recorded strategies."""
+        """Return a summary dict of all recorded strategies.
+
+        Uses _strategy_total for counts (O(K) vs O(N) full scan) but still
+        needs a single pass for successes and levels (these aren't indexed).
+        """
+        # Use _strategy_total for counts (avoids counting from records)
         strategies: Dict[str, Dict[str, Any]] = {}
+        for strat, count in self._strategy_total.items():
+            strategies[strat] = {"count": count, "successes": 0, "levels": set()}
+
+        # Single pass for successes and levels
         for r in self._records:
             s = r["strategy"]
-            if s not in strategies:
-                strategies[s] = {"count": 0, "successes": 0, "levels": set()}
-            strategies[s]["count"] += 1
+            entry = strategies.get(s)
+            if entry is None:
+                entry = {"count": 0, "successes": 0, "levels": set()}
+                strategies[s] = entry
             if r["success"]:
-                strategies[s]["successes"] += 1
-            strategies[s]["levels"].add(r["level"])
+                entry["successes"] += 1
+            entry["levels"].add(r["level"])
 
         return {
             "total_records": len(self._records),
@@ -276,37 +485,92 @@ class StrategyArchive:
                     "levels": sorted(info["levels"]),
                 }
                 for name, info in strategies.items()
-            }
+            },
         }
 
     # ── Persistence ───────────────────────────────────────────────────
 
     def save(self, path: str) -> None:
-        """Persist to JSON file."""
+        """Persist to JSON file using atomic write (temp + rename).
+
+        Prevents corruption if the process crashes mid-write during a long
+        evolution run.  Uses the same tempfile + os.replace pattern as
+        ChampionAnchor.save() and MetaController.save_state().
+        """
+        import tempfile
+
         data = {
             "version": 1,
             "max_records": self.max_records,
             "records": self._records,
         }
-        parent = os.path.dirname(path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        with open(path, 'w') as f:
-            json.dump(data, f, indent=2)
+        parent = os.path.dirname(path) or "."
+        os.makedirs(parent, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, path)
+        except (OSError, PermissionError):
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def load(self, path: str) -> bool:
-        """Load from JSON file.  Returns True if loaded successfully."""
+        """Load from JSON file.  Returns True if loaded successfully.
+
+        Rebuilds level+strategy indices after loading for O(1) UCB queries.
+        """
         try:
-            with open(path, 'r') as f:
+            with open(path, "r") as f:
                 data = json.load(f)
             self._records = data.get("records", [])
             self.max_records = data.get("max_records", self.max_records)
             self._loaded_from = path
+            self._rebuild_indices()
             return True
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return False
 
-    def decay_level_records(self, level: int, factor: float = 0.5) -> int:
+    def _rebuild_indices(self) -> None:
+        """Rebuild all indices from scratch.
+
+        Called after bulk operations (load, trim) to ensure index consistency.
+        O(N) over all records, amortized over many queries.
+        """
+        self._level_strategy_counts.clear()
+        self._level_total.clear()
+        self._strategy_record_idx.clear()
+        self._level_strategies.clear()
+        self._strategy_total.clear()
+        self._global_total = len(self._records)
+        for i, r in enumerate(self._records):
+            lev = r["level"]
+            strat = r["strategy"]
+            key = (lev, strat)
+            self._level_strategy_counts[key] = self._level_strategy_counts.get(key, 0) + 1
+            self._level_total[lev] = self._level_total.get(lev, 0) + 1
+            self._strategy_total[strat] = self._strategy_total.get(strat, 0) + 1
+            strat_set = self._strategy_record_idx.get(strat)
+            if strat_set is None:
+                self._strategy_record_idx[strat] = {i}
+            else:
+                strat_set.add(i)
+            # Rebuild level-to-strategies index
+            ls = self._level_strategies.get(lev)
+            if ls is None:
+                self._level_strategies[lev] = {strat}
+            else:
+                ls.add(strat)
+        # R22: Rebuild global strategy set cache
+        self._global_strategy_set = set()
+        for strats in self._level_strategies.values():
+            self._global_strategy_set.update(strats)
+
+    def decay_level_records(self, level: int, factor: float = 0.5, rng: Optional[random.Random] = None) -> int:
         """Decay records at a given level by flipping `success` toward False.
 
         Called on curriculum level advance (D3 fix) to prevent lower-level
@@ -316,22 +580,43 @@ class StrategyArchive:
         (1 - factor). This reduces the effective success count without
         deleting records (preserving recency information for UCB exploration).
 
+        R16: Uses per-strategy record indices to iterate only records for
+        strategies that appear at this level, avoiding a full N scan.
+
         Args:
             level: Curriculum level whose records to decay.
-            factor: Retention probability — 0.5 means ~50% of successes survive.
+            factor: Retention probability -- 0.5 means ~50% of successes survive.
+            rng: Optional seeded RNG for reproducibility. If None, uses
+                the global random module (non-deterministic).
 
         Returns:
             Number of records modified.
         """
         modified = 0
-        import random
-        for r in self._records:
-            if r["level"] == level and r["success"]:
-                if random.random() > factor:
-                    r["success"] = False
-                    modified += 1
+        rng_local = rng if rng is not None else random
+        records = self._records
+        # Use _level_strategies index to iterate only strategies present at this level
+        strategies_at_level = self._level_strategies.get(level)
+        if not strategies_at_level:
+            return 0
+        for strat in strategies_at_level:
+            indices = self._strategy_record_idx.get(strat)
+            if not indices:
+                continue
+            for i in indices:
+                if i < len(records) and records[i]["level"] == level and records[i]["success"]:
+                    if rng_local.random() > factor:
+                        records[i]["success"] = False
+                        modified += 1
         return modified
 
     def clear(self) -> None:
-        """Clear all records."""
+        """Clear all records and reset indices."""
         self._records.clear()
+        self._level_strategy_counts.clear()
+        self._level_total.clear()
+        self._strategy_record_idx.clear()
+        self._level_strategies.clear()
+        self._strategy_total.clear()
+        self._global_total = 0
+        self._global_strategy_set.clear()

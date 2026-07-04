@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "evolution-engine"
+version = "0.1.0"
+description = "Autonomous evolution engine with recurrent feedback — proves the evolution-to-retrain loop produces compounding self-improvement."
+readme = "README.md"
+license = {text = "Proprietary"}
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "cupy-cuda12x",
+    "triton",
+]
+dev = [
+    "pytest>=7.0.0",
+]
+all = [
+    "evolution-engine[gpu,dev]",
+]
+
+[project.scripts]
+evolution-engine = "run_multi_cycle:main"
+autonomous-runner = "autonomous_runner:main"
+benchmark = "benchmarks.fitness_benchmark:main"
+
+[tool.setuptools]
+py-modules = [
+    "autonomous_runner",
+    "champion_anchor",
+    "config",
+    "cycle_state",
+    "evolution_engine",
+    "gpu_vm_farm",
+    "log_rotation",
+    "logging_config",
+    "meta_controller",
+    "meta_evolution",
+    "meta_genome",
+    "metrics",
+    "monitoring_alerts",
+    "mutation_proposer",
+    "novelty",
+    "paths",
+    "prefix_generator",
+    "qd_archive",
+    "run_multi_cycle",
+    "strategy_archive",
+    "tasks_rv32i",
+    "v11_dashboard",
+    "v9_monitor",
+    "v9_to_v10_watcher",
+    "vm_farm",
+]
+
+[tool.setuptools.packages.find]
+include = ["milestone1*", "benchmarks"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+# E501: handled by black/line-length instead.
+# E402: many modules intentionally set up sys.path / call
+#       ensure_project_on_path() before importing sibling project modules;
+#       reordering these is a larger refactor tracked separately, not part
+#       of the Phase 8 recovery/test-stabilization pass.
+# E741: pre-existing use of `l` as a loop/level variable in several
+#       curriculum/task modules -- renaming is cosmetic and out of scope
+#       for this pass; tracked as follow-up cleanup.
+# F401/F841: a number of pre-existing unused imports/locals across the
+#       codebase (mostly optional-dependency probe imports and
+#       intentionally-unused destructured values in tests). Bulk-fixing
+#       these is deferred to a dedicated lint-cleanup pass so it can be
+#       reviewed independently of functional changes.
+ignore = ["E501", "E402", "E741", "F401", "F841"]
+
+[tool.black]
+line-length = 120
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 120

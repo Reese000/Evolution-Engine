@@ -168,7 +168,7 @@ class TestGPUOOMRecovery(unittest.TestCase):
         """AutonomousRunner OOM handler reduces population on MemoryError."""
         from autonomous_runner import AutonomousRunner
 
-        with patch.object(AutonomousRunner, '__init__', lambda self, **kw: None):
+        with patch.object(AutonomousRunner, "__init__", lambda self, **kw: None):
             runner = AutonomousRunner.__new__(AutonomousRunner)
             runner._shutdown_requested = False
             runner._health = MagicMock()
@@ -200,7 +200,7 @@ class TestGPUOOMRecovery(unittest.TestCase):
         """_is_cuda_oom correctly identifies CUDA OOM messages."""
         from autonomous_runner import AutonomousRunner
 
-        with patch.object(AutonomousRunner, '__init__', lambda self, **kw: None):
+        with patch.object(AutonomousRunner, "__init__", lambda self, **kw: None):
             runner = AutonomousRunner.__new__(AutonomousRunner)
 
             self.assertTrue(runner._is_cuda_oom(MemoryError("CUDA out of memory")))
@@ -240,15 +240,25 @@ class TestGPUFunctions(unittest.TestCase):
         self.assertIsInstance(result["freed_mb"], float)
 
     def test_check_gpu_capacity_no_cuda(self):
-        """check_gpu_capacity reports no capacity when no CUDA."""
+        """check_gpu_capacity reports no capacity when no CUDA is present.
+
+        On machines with a real GPU (CUDA available), capacity should be
+        a bool driven by current utilization vs. threshold rather than
+        unconditionally False -- this test only asserts the "no capacity"
+        behavior when CUDA is genuinely absent, so it passes consistently
+        on both CPU-only CI and GPU dev boxes.
+        """
         from gpu_vm_farm import check_gpu_capacity
 
         cap = check_gpu_capacity()
         self.assertIn("has_capacity", cap)
         self.assertIn("vram_info", cap)
         self.assertIn("reason", cap)
-        # No CUDA -> no capacity
-        self.assertFalse(cap["has_capacity"])
+        if not cap["vram_info"]["available"]:
+            self.assertFalse(cap["has_capacity"])
+            self.assertEqual(cap["reason"], "No CUDA GPU available")
+        else:
+            self.assertIsInstance(cap["has_capacity"], bool)
 
     def test_check_gpu_capacity_threshold(self):
         """check_gpu_capacity respects custom threshold."""

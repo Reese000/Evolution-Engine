@@ -93,9 +93,11 @@ Each level uses a distinct output register, and verification checks all previous
 ```bash
 # Autonomous evolution (recommended)
 python autonomous_runner.py                  # Run with config/engine_config.json
+python autonomous_runner.py --no-limit       # Run indefinitely (no cycle cap)
 python autonomous_runner.py --max-cycles 10  # Override max cycles
 python autonomous_runner.py --target-fitness 200  # Stop at target fitness
 python autonomous_runner.py --resume         # Resume from saved state
+python autonomous_runner.py --resume --no-limit  # Resume and keep going forever
 python autonomous_runner.py --dry-run        # Validate config only
 python autonomous_runner.py --status         # Show health status from health.json
 
@@ -121,6 +123,99 @@ python -m pytest tests/ -v                   # Run full test suite (238 tests)
 ./stop.sh                                    # Graceful stop (SIGTERM)
 ./stop.sh --force                            # Force stop (SIGKILL)
 ```
+
+## Continuous Operation
+
+The evolution engine can run indefinitely for unattended long-term evolution. The `--no-limit` flag disables the cycle cap so the engine runs until stopped externally.
+
+### Running Indefinitely
+
+```bash
+# Start from scratch with no cycle limit
+python autonomous_runner.py --no-limit
+
+# Resume a previous session and keep going forever
+python autonomous_runner.py --resume --no-limit
+
+# Resume with a custom cycle cap
+python autonomous_runner.py --resume --max-cycles 500
+```
+
+When `--no-limit` is active, the engine ignores `max_cycles` from `config/engine_config.json` and runs until one of:
+- Target fitness is reached
+- A stop file is created (`touch stop`)
+- A SIGINT/SIGTERM signal is received
+- Too many consecutive errors occur (`max_errors_before_stop`)
+
+### Stopping Gracefully
+
+```bash
+# Option 1: Create a stop file (safest — completes current cycle first)
+touch stop
+
+# Option 2: Send SIGTERM (completes current cycle)
+kill -SIGTERM <pid>
+
+# Option 3: Send SIGINT (Ctrl+C — completes current cycle)
+kill -SIGINT <pid>
+```
+
+### Disk Management
+
+Old cycle directories (`cycle_*`) are automatically pruned after each cycle, keeping the most recent 10. This prevents unbounded disk usage during long-running sessions. The `archive/` directory is used by startup cleanup to preserve a history of older cycles.
+
+### Systemd Service (Auto-restart)
+
+A service file is included for running as a persistent background service:
+
+```bash
+# Install the service
+sudo cp evolution-engine.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable evolution-engine
+sudo systemctl start evolution-engine
+
+# Manage the service
+sudo systemctl status evolution-engine
+sudo systemctl stop evolution-engine
+sudo journalctl -u evolution-engine -f   # View logs
+```
+
+The service uses `--resume --no-limit` so it automatically picks up where it left off after a crash or reboot, with a 30-second restart delay to avoid rapid crash loops.
+
+### Monitoring
+
+```bash
+# Quick health check
+python autonomous_runner.py --status
+
+# Watch health.json directly
+watch -n 5 cat health.json
+
+# Tail the log
+tail -f runner.log
+```
+
+`health.json` reports: status, uptime, cycles completed, current fitness, current level, errors, and target fitness.
+
+### Self-Correction & Stagnation
+
+The engine monitors fitness progress across cycles. When stagnation is detected (via MetaController telemetry analysis):
+
+1. **Self-correction** (up to 5 attempts):
+   - Attempt 1: Inject diversity (prune low-fitness QD archive entries)
+   - Attempt 2: Boost mutation rate (2x)
+   - Attempt 3: Reset champion from archive
+   - Attempt 4: Full archive reset (preserve champion)
+   - Attempt 5: Log diagnostics
+
+2. **Exit with report** (after 15 stagnant cycles):
+   - Writes `stagnation_report.json` with full history and recommendation
+   - Exits with code 0 (clean shutdown)
+
+The stagnation counter resets whenever progress is detected. Self-correction state and history are persisted across restarts via `runner_state.json`.
+
+To adjust thresholds: set `max_stagnation_cycles` and `max_self_correction_attempts` in `config/engine_config.json` under the `autonomous_runner` section.
 
 ## Requirements
 

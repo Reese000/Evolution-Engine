@@ -1,42 +1,113 @@
 {
-  "best_fitness": 150.0,
+  "best_fitness": 116.94790160972576,
   "best_level": 11,
-  "best_val_loss": 0.068,
-  "cycles_since_fitness_improvement": 1,
-  "cycles_since_level_up": 0,
-  "recovery_mode": true,
-  "recovery_cycles_remaining": 2,
-  "last_stagnation": "normal",
-  "total_gated": 46,
-  "total_rollbacks": 7,
-  "total_cycles_observed": 1,
-  "_consecutive_none_val_loss": 0,
+  "best_val_loss": null,
+  "cycles_since_fitness_improvement": 2,
+  "cycles_since_level_up": 4,
+  "recovery_mode": false,
+  "recovery_cycles_remaining": 0,
+  "last_stagnation": "diversity_collapse",
+  "total_gated": 0,
+  "total_rollbacks": 0,
+  "total_cycles_observed": 5,
+  "_consecutive_none_val_loss": 5,
   "last_5_cycles": [
     {
       "cycle": 1,
-      "fitness": 150.0,
+      "fitness": 106.66559267593705,
       "level": 11,
-      "val_loss": 0.075,
-      "diversity": 0.3
+      "val_loss": null,
+      "diversity": 0.03
+    },
+    {
+      "cycle": 2,
+      "fitness": 105.94124832403064,
+      "level": 11,
+      "val_loss": null,
+      "diversity": 0.04
+    },
+    {
+      "cycle": 3,
+      "fitness": 116.94790160972576,
+      "level": 11,
+      "val_loss": null,
+      "diversity": 0.04
+    },
+    {
+      "cycle": 4,
+      "fitness": 102.31858463311568,
+      "level": 11,
+      "val_loss": null,
+      "diversity": 0.045
+    },
+    {
+      "cycle": 5,
+      "fitness": 72.3356438933035,
+      "level": 11,
+      "val_loss": null,
+      "diversity": 0.045
     }
   ],
   "tuning_history": [
     {
       "domain": "evolution",
-      "param": "mutation_rate",
+      "param": "diversity_inject_ratio",
       "old": null,
-      "new": 0.55,
-      "reason": "recovery_mode"
+      "new": 0.3,
+      "reason": "stagnation: diversity_collapse (tier 1)"
     },
     {
       "domain": "retrain",
-      "param": "retrain_lr",
+      "param": "retrain_freeze_layers",
       "old": null,
-      "new": 0.00015,
-      "reason": "recovery_mode"
+      "new": 1,
+      "reason": "stagnation: diversity_collapse (tier 1)"
+    },
+    {
+      "domain": "evolution",
+      "param": "diversity_inject_ratio",
+      "old": null,
+      "new": 0.3,
+      "reason": "stagnation: diversity_collapse (tier 1)"
+    },
+    {
+      "domain": "retrain",
+      "param": "retrain_freeze_layers",
+      "old": null,
+      "new": 0,
+      "reason": "stagnation: diversity_collapse (tier 3)"
+    },
+    {
+      "domain": "evolution",
+      "param": "champion_crossover_prob",
+      "old": null,
+      "new": 0.85,
+      "reason": "stagnation: diversity_collapse (tier 2)"
+    },
+    {
+      "domain": "retrain",
+      "param": "retrain_freeze_layers",
+      "old": null,
+      "new": 0,
+      "reason": "stagnation: diversity_collapse (tier 3)"
     }
   ],
-  "_best_val_loss": 0.068,
-  "_gated_count": 46,
-  "_rollback_count": 7
+  "_best_val_loss": Infinity,
+  "_gated_count": 0,
+  "_rollback_count": 0,
+  "_compound_stall_counter": 0,
+  "_fitness_momentum": -15.018869500559026,
+  "_best_fitness_at_last_tune": -Infinity,
+  "_last_stagnation_state": "diversity_collapse",
+  "_consecutive_stagnation_counter": 6,
+  "_state_ring": [
+    "diversity_collapse",
+    "diversity_collapse",
+    "diversity_collapse",
+    "diversity_collapse",
+    "diversity_collapse",
+    "diversity_collapse"
+  ],
+  "last_level": 11,
+  "best_champion_words": 7
 }

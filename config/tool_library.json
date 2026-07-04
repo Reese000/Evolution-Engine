@@ -1,0 +1,306 @@
+{
+  "version": "1.0",
+  "description": "Standard RV32I instruction set tools for evolution engine evaluation",
+  "instructions": [
+    {
+      "name": "LUI",
+      "opcode": "0110111",
+      "format": "U",
+      "description": "Load Upper Immediate"
+    },
+    {
+      "name": "AUIPC",
+      "opcode": "0010111",
+      "format": "U",
+      "description": "Add Upper Immediate to PC"
+    },
+    {
+      "name": "JAL",
+      "opcode": "1101111",
+      "format": "J",
+      "description": "Jump And Link"
+    },
+    {
+      "name": "JALR",
+      "opcode": "1100111",
+      "format": "I",
+      "description": "Jump And Link Register"
+    },
+    {
+      "name": "BEQ",
+      "opcode": "1100011",
+      "funct3": "000",
+      "format": "B",
+      "description": "Branch if Equal"
+    },
+    {
+      "name": "BNE",
+      "opcode": "1100011",
+      "funct3": "001",
+      "format": "B",
+      "description": "Branch if Not Equal"
+    },
+    {
+      "name": "BLT",
+      "opcode": "1100011",
+      "funct3": "100",
+      "format": "B",
+      "description": "Branch if Less Than"
+    },
+    {
+      "name": "BGE",
+      "opcode": "1100011",
+      "funct3": "101",
+      "format": "B",
+      "description": "Branch if Greater or Equal"
+    },
+    {
+      "name": "BLTU",
+      "opcode": "1100011",
+      "funct3": "110",
+      "format": "B",
+      "description": "Branch if Less Than (unsigned)"
+    },
+    {
+      "name": "BGEU",
+      "opcode": "1100011",
+      "funct3": "111",
+      "format": "B",
+      "description": "Branch if Greater or Equal (unsigned)"
+    },
+    {
+      "name": "LB",
+      "opcode": "0000011",
+      "funct3": "000",
+      "format": "I",
+      "description": "Load Byte"
+    },
+    {
+      "name": "LH",
+      "opcode": "0000011",
+      "funct3": "001",
+      "format": "I",
+      "description": "Load Halfword"
+    },
+    {
+      "name": "LW",
+      "opcode": "0000011",
+      "funct3": "010",
+      "format": "I",
+      "description": "Load Word"
+    },
+    {
+      "name": "LBU",
+      "opcode": "0000011",
+      "funct3": "100",
+      "format": "I",
+      "description": "Load Byte Unsigned"
+    },
+    {
+      "name": "LHU",
+      "opcode": "0000011",
+      "funct3": "101",
+      "format": "I",
+      "description": "Load Halfword Unsigned"
+    },
+    {
+      "name": "SB",
+      "opcode": "0100011",
+      "funct3": "000",
+      "format": "S",
+      "description": "Store Byte"
+    },
+    {
+      "name": "SH",
+      "opcode": "0100011",
+      "funct3": "001",
+      "format": "S",
+      "description": "Store Halfword"
+    },
+    {
+      "name": "SW",
+      "opcode": "0100011",
+      "funct3": "010",
+      "format": "S",
+      "description": "Store Word"
+    },
+    {
+      "name": "ADDI",
+      "opcode": "0010011",
+      "funct3": "000",
+      "format": "I",
+      "description": "Add Immediate"
+    },
+    {
+      "name": "SLTI",
+      "opcode": "0010011",
+      "funct3": "010",
+      "format": "I",
+      "description": "Set Less Than Immediate"
+    },
+    {
+      "name": "SLTIU",
+      "opcode": "0010011",
+      "funct3": "011",
+      "format": "I",
+      "description": "Set Less Than Immediate (unsigned)"
+    },
+    {
+      "name": "XORI",
+      "opcode": "0010011",
+      "funct3": "100",
+      "format": "I",
+      "description": "XOR Immediate"
+    },
+    {
+      "name": "ORI",
+      "opcode": "0010011",
+      "funct3": "110",
+      "format": "I",
+      "description": "OR Immediate"
+    },
+    {
+      "name": "ANDI",
+      "opcode": "0010011",
+      "funct3": "111",
+      "format": "I",
+      "description": "AND Immediate"
+    },
+    {
+      "name": "SLLI",
+      "opcode": "0010011",
+      "funct3": "001",
+      "format": "I",
+      "description": "Shift Left Logical Immediate"
+    },
+    {
+      "name": "SRLI",
+      "opcode": "0010011",
+      "funct3": "101",
+      "funct7": "0000000",
+      "format": "I",
+      "description": "Shift Right Logical Immediate"
+    },
+    {
+      "name": "SRAI",
+      "opcode": "0010011",
+      "funct3": "101",
+      "funct7": "0100000",
+      "format": "I",
+      "description": "Shift Right Arithmetic Immediate"
+    },
+    {
+      "name": "ADD",
+      "opcode": "0110011",
+      "funct3": "000",
+      "funct7": "0000000",
+      "format": "R",
+      "description": "Add"
+    },
+    {
+      "name": "SUB",
+      "opcode": "0110011",
+      "funct3": "000",
+      "funct7": "0100000",
+      "format": "R",
+      "description": "Subtract"
+    },
+    {
+      "name": "SLL",
+      "opcode": "0110011",
+      "funct3": "001",
+      "funct7": "0000000",
+      "format": "R",
+      "description": "Shift Left Logical"
+    },
+    {
+      "name": "SLT",
+      "opcode": "0110011",
+      "funct3": "010",
+      "funct7": "0000000",
+      "format": "R",
+      "description": "Set Less Than"
+    },
+    {
+      "name": "SLTU",
+      "opcode": "0110011",
+      "funct3": "011",
+      "funct7": "0000000",
+      "format": "R",
+      "description": "Set Less Than (unsigned)"
+    },
+    {
+      "name": "XOR",
+      "opcode": "0110011",
+      "funct3": "100",
+      "funct7": "0000000",
+      "format": "R",
+      "description": "XOR"
+    },
+    {
+      "name": "SRL",
+      "opcode": "0110011",
+      "funct3": "101",
+      "funct7": "0000000",
+      "format": "R",
+      "description": "Shift Right Logical"
+    },
+    {
+      "name": "SRA",
+      "opcode": "0110011",
+      "funct3": "101",
+      "funct7": "0100000",
+      "format": "R",
+      "description": "Shift Right Arithmetic"
+    },
+    {
+      "name": "OR",
+      "opcode": "0110011",
+      "funct3": "110",
+      "funct7": "0000000",
+      "format": "R",
+      "description": "OR"
+    },
+    {
+      "name": "AND",
+      "opcode": "0110011",
+      "funct3": "111",
+      "funct7": "0000000",
+      "format": "R",
+      "description": "AND"
+    },
+    {
+      "name": "FENCE",
+      "opcode": "0001111",
+      "format": "I",
+      "description": "Fence Memory Ordering"
+    },
+    {
+      "name": "ECALL",
+      "opcode": "1110011",
+      "funct3": "000",
+      "funct7": "0000000",
+      "format": "I",
+      "description": "Environment Call"
+    },
+    {
+      "name": "EBREAK",
+      "opcode": "1110011",
+      "funct3": "000",
+      "funct7": "0000001",
+      "format": "I",
+      "description": "Environment Breakpoint"
+    }
+  ],
+  "registers": {
+    "count": 32,
+    "x0_behavior": "Hardwired to zero, writes ignored",
+    "non_zero": "x1-x31 are general purpose, 31 usable registers"
+  },
+  "memory": {
+    "word_size": 4,
+    "max_program_size_words": 500,
+    "big_endian": true,
+    "protection": "No writes below 0x1000 (kernel protection)"
+  }
+}

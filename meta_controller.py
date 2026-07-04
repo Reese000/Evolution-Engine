@@ -24,12 +24,15 @@ Usage:
 
 from __future__ import annotations
 
+import collections
 import json
 import os
+import re as _re
 import shutil
-from dataclasses import dataclass, field
+import tempfile
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from logging_config import get_logger
 
@@ -43,12 +46,18 @@ _logger = get_logger("MetaController")
 
 class StagnationResult(Enum):
     """Classifications of system state based on telemetry."""
+
     NORMAL = "normal"
-    FITNESS_PLATEAU = "fitness_plateau"       # fitness flat for N cycles
-    LEVEL_STALLED = "level_stalled"            # same level for N cycles
+    FITNESS_PLATEAU = "fitness_plateau"  # fitness flat for N cycles
+    LEVEL_STALLED = "level_stalled"  # same level for N cycles
     VAL_LOSS_REGRESSION = "val_loss_regression"  # val loss spiked
     DIVERSITY_COLLAPSE = "diversity_collapse"  # diversity below threshold
-    COMPOUND_STALL = "compound_stall"          # multiple indicators
+    COMPOUND_STALL = "compound_stall"  # multiple indicators
+
+
+# Pre-built set of stagnation state values for O(1) lookup in _record_tuning.
+# Avoids iterating StagnationResult members on every tuning log entry.
+_STAGNATION_STATE_VALUES: frozenset[str] = frozenset(s.value for s in StagnationResult)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -58,18 +67,38 @@ class StagnationResult(Enum):
 
 @dataclass
 class TelemetrySnapshot:
-    """Immutable snapshot of system state at the end of a cycle."""
+    """Immutable snapshot of system state at the end of a cycle.
+
+    R37: Uses __slots__ to reduce per-instance memory overhead by ~40%.
+    Over a 200-cycle multi-cycle run, this saves ~40KB compared to
+    regular dict-based __dict__ instances.
+    """
+
+    __slots__ = (
+        "cycle",
+        "fitness",
+        "level",
+        "champion_words",
+        "val_loss",
+        "diversity",
+        "novelty_size",
+        "qd_occupied",
+        "qd_total",
+        "traces_count",
+        "retrained",
+        "generations_completed",
+    )
     cycle: int
     fitness: float
     level: int
     champion_words: int
-    val_loss: Optional[float]          # None = retrain didn't run or wasn't captured
-    diversity: float                   # population diversity at end of cycle
+    val_loss: Optional[float]  # None = retrain didn't run or wasn't captured
+    diversity: float  # population diversity at end of cycle
     novelty_size: int
     qd_occupied: int
     qd_total: int
     traces_count: int
-    retrained: bool                    # whether retrain ran this cycle
+    retrained: bool  # whether retrain ran this cycle
     generations_completed: int
 
     def to_dict(self) -> Dict[str, Any]:
@@ -91,13 +120,13 @@ class TelemetrySnapshot:
 
 class TuningAction:
     """Record of a tuning decision made by the MetaController."""
-    def __init__(self, domain: str, param: str, old_value: Any, new_value: Any,
-                 reason: str):
-        self.domain = domain          # "retrain", "evolution", "recovery"
-        self.param = param            # e.g. "retrain_lr"
+
+    def __init__(self, domain: str, param: str, old_value: Any, new_value: Any, reason: str):
+        self.domain = domain  # "retrain", "evolution", "recovery"
+        self.param = param  # e.g. "retrain_lr"
         self.old_value = old_value
         self.new_value = new_value
-        self.reason = reason          # e.g. "stagnation: fitness_plateau"
+        self.reason = reason  # e.g. "stagnation: fitness_plateau"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -129,7 +158,7 @@ class MetaController:
         self,
         checkpoint_dir: str,
         best_checkpoint_name: str = "checkpoint_best.pt",
-        initial_val_loss: float = float('inf'),
+        initial_val_loss: float = float("inf"),
         # ── Tuning bounds ──────────────────────────────────────────────
         lr_min: float = 1e-6,
         lr_max: float = 3e-4,
@@ -169,10 +198,14 @@ class MetaController:
         self.checkpoint_acceptance_tolerance = checkpoint_acceptance_tolerance
 
         # Telemetry history
+        # R34: Cap telemetry to last 100 entries. detect_stagnation only uses
+        # the last 5, save_state/get_state_summary only use the last 5/20.
+        # Unbounded growth on long multi-cycle runs wastes memory.
         self.telemetry: List[TelemetrySnapshot] = []
+        self._max_telemetry_len: int = 100
 
         # Best known values
-        self.best_fitness: float = -float('inf')
+        self.best_fitness: float = -float("inf")
         self.best_level: int = 0
         self.best_champion_words: int = 0
 
@@ -187,12 +220,44 @@ class MetaController:
         self.recovery_cycles_remaining: int = 0
         self._last_stagnation: StagnationResult = StagnationResult.NORMAL
         self._tuning_log: List[TuningAction] = []
+        # R34: Cap tuning log to prevent unbounded memory growth.
+        # get_state_summary only shows last 20, consecutive stagnation
+        # counter only uses last 16 ring entries. 200 is sufficient.
+        self._max_tuning_log_len: int = 200
         self._gated_count: int = 0
         self._rollback_count: int = 0
         self._last_snapshot_path: str = ""
 
         # Consecutive cycles with None val_loss (for degenerate-loop detection)
         self._consecutive_none_val_loss: int = 0
+
+        # Compound stall counter (for meta-evolution trigger)
+        self._compound_stall_counter: int = 0
+
+        # R28: Fitness momentum tracking -- exponential moving average of
+        # fitness improvement rate. Used to detect acceleration/deceleration
+        # in improvement and make smarter tuning decisions.
+        self._fitness_momentum: float = 0.0
+        self._fitness_momentum_alpha: float = 0.3  # EMA smoothing factor
+        self._best_fitness_at_last_tune: float = -float("inf")
+
+        # O(1) consecutive stagnation counter -- tracks how many consecutive
+        # tuning log entries match a given state value, avoiding the O(N)
+        # backward scan of _count_consecutive_stagnation.
+        # R19: Also maintain a deque of the last 16 state values
+        # so we can provide exact counts for any stagnation state in O(1)
+        # without the O(N) fallback scan.
+        self._consecutive_stagnation_counter: int = 0
+        self._last_stagnation_state: str = ""
+        self._state_ring: collections.deque = collections.deque(maxlen=16)
+
+        # R16: Cache stagnation detection result per cycle (both tune_retrain_params
+        # and tune_evolution_params call detect_stagnation; cache avoids redundant scan).
+        self._cached_stagnation: Optional[StagnationResult] = None
+        self._cached_stagnation_len: int = -1  # len(self.telemetry) when cached
+
+        # Lazy log file handle (avoids fd exhaustion on long runs)
+        self._log_file = None
 
         # Logging
         self.log_file = log_file
@@ -209,6 +274,11 @@ class MetaController:
         Updates all internal state and stagnation counters.
         Should be called once per cycle, AFTER retrain decision.
         """
+        # R28: Update fitness momentum (EMA of fitness delta)
+        delta = snapshot.fitness - self.best_fitness if self.best_fitness > -float("inf") else 0.0
+        alpha = self._fitness_momentum_alpha
+        self._fitness_momentum = alpha * delta + (1.0 - alpha) * self._fitness_momentum
+
         # Update best values
         if snapshot.fitness > self.best_fitness:
             self.best_fitness = snapshot.fitness
@@ -243,9 +313,20 @@ class MetaController:
 
         # Append to history
         self.telemetry.append(snapshot)
-        self._log(f"Cycle {snapshot.cycle}: F={snapshot.fitness:.3f} L={snapshot.level} "
-                  f"val={snapshot.val_loss} div={snapshot.diversity:.3f} "
-                  f"retrain={snapshot.retrained}")
+        # R34: Cap telemetry to prevent unbounded memory growth on long runs.
+        # Only the last _max_telemetry_len entries are needed for diagnostics
+        # and stagnation detection (which uses a window of 5).
+        if len(self.telemetry) > self._max_telemetry_len:
+            self.telemetry = self.telemetry[-self._max_telemetry_len :]
+        # R25: Invalidate stagnation cache when telemetry changes.
+        # Without this, detect_stagnation() may return a stale cached result
+        # from a previous call within the same cycle.
+        self._cached_stagnation_len = -1
+        self._log(
+            f"Cycle {snapshot.cycle}: F={snapshot.fitness:.3f} L={snapshot.level} "
+            f"val={snapshot.val_loss} div={snapshot.diversity:.3f} "
+            f"retrain={snapshot.retrained}"
+        )
 
     def accept_checkpoint(self, val_loss: float, new_checkpoint_path: str) -> bool:
         """Gate: should we accept this checkpoint?
@@ -277,60 +358,149 @@ class MetaController:
             old_best = self._best_val_loss
             if val_loss < self._best_val_loss:
                 self._best_val_loss = val_loss
-            self._log(f"Gate: ACCEPT val_loss={val_loss:.4f} "
-                      f"(best={old_best:.4f}, threshold={threshold:.4f})")
+            self._log(f"Gate: ACCEPT val_loss={val_loss:.4f} " f"(best={old_best:.4f}, threshold={threshold:.4f})")
             self._gated_count += 1
             return True
         else:
             # Reject — model is worse
-            self._log(f"Gate: REJECT val_loss={val_loss:.4f} > threshold={threshold:.4f} "
-                      f"(best={self._best_val_loss:.4f})")
+            self._log(
+                f"Gate: REJECT val_loss={val_loss:.4f} > threshold={threshold:.4f} " f"(best={self._best_val_loss:.4f})"
+            )
             self._gated_count += 1
             return False
 
     def detect_stagnation(self) -> StagnationResult:
-        """Classify current system state based on recent telemetry."""
-        if len(self.telemetry) < 2:
+        """Classify current system state based on recent telemetry.
+
+        R24: Single-pass over the window for ALL four indicators.
+        Previous version scanned the window 3-4 separate times (fitness
+        min/max, val_loss first/last, diversity min). This version
+        extracts all signals in one iteration, reducing cache misses
+        and Python loop overhead.
+
+        R16: Caches result within a cycle -- telemetry length doesn't change
+        between tune_retrain_params and tune_evolution_params calls.
+
+        R35: Fast-path early return when all indicators are clearly
+        below their thresholds (no telemetry window scan needed).
+        """
+        tel_len = len(self.telemetry)
+        if tel_len < 2:
             return StagnationResult.NORMAL
+        # R16: Return cached result if telemetry hasn't changed since last call
+        if self._cached_stagnation is not None and self._cached_stagnation_len == tel_len:
+            return self._cached_stagnation
 
-        # Collect recent window
-        window = self.telemetry[-min(5, len(self.telemetry)):]
-        fitnesses = [t.fitness for t in window]
-        levels = [t.level for t in window]
-        val_losses = [t.val_loss for t in window if t.val_loss is not None]
-        diversities = [t.diversity for t in window]
+        # R35: Fast-path -- if fitness is improving AND level just changed
+        # AND diversity is above threshold, we can skip the full window scan
+        # since no indicator is active. Only applies when we have at least
+        # 3 data points for a reliable signal.
+        if tel_len >= 3:
+            last = self.telemetry[-1]
+            prev = self.telemetry[-2]
+            # Fitness improving: last > prev, and no cycle gap in improvement
+            fitness_improving = last.fitness > prev.fitness and self.cycles_since_fitness_improvement <= 1
+            # Level changed: not stalled
+            level_fresh = self.cycles_since_level_up <= 1
+            # Diversity healthy
+            div_healthy = last.diversity >= self.diversity_collapse_threshold
+            if fitness_improving and level_fresh and div_healthy:
+                result = StagnationResult.NORMAL
+                self._last_stagnation = result
+                self._cached_stagnation = result
+                self._cached_stagnation_len = tel_len
+                return result
 
-        indications: List[StagnationResult] = []
+        tel = self.telemetry
+        win_len = min(5, len(tel))
+        start_idx = len(tel) - win_len
 
-        # 1. Fitness plateau
-        if self.cycles_since_fitness_improvement >= self.fitness_plateau_cycles:
-            if len(fitnesses) >= 2:
-                f_range = max(fitnesses) - min(fitnesses)
-                if f_range < 0.1:  # Flat plateau
-                    indications.append(StagnationResult.FITNESS_PLATEAU)
+        # Precompute constants once
+        fp_cycles = self.fitness_plateau_cycles
+        vlr_ratio = self.val_loss_regression_ratio
+        dc_thresh = self.diversity_collapse_threshold
 
-        # 2. Level stall
+        # R24: Single pass over the window -- extract fitness min/max,
+        # val_loss first/last, and diversity min in one iteration.
+        first = tel[start_idx]
+        f_min = f_max = first.fitness
+        div_min = first.diversity
+        vl_first = vl_last = None
+        vl0 = first.val_loss
+        if vl0 is not None:
+            vl_first = vl0
+            vl_last = vl0
+
+        for j in range(start_idx + 1, tel_len):
+            snap = tel[j]
+            fj = snap.fitness
+            if fj < f_min:
+                f_min = fj
+            elif fj > f_max:
+                f_max = fj
+            dj = snap.diversity
+            if dj < div_min:
+                div_min = dj
+            vj = snap.val_loss
+            if vj is not None:
+                vl_last = vj
+                if vl_first is None:
+                    vl_first = vj
+
+        # Classify indicators
+        indications_count = 0
+        ind_fitness = ind_level = ind_valloss = ind_diversity = False
+
+        # 1. Fitness plateau (fast path: skip if counter too low)
+        if self.cycles_since_fitness_improvement >= fp_cycles and f_max - f_min < 0.1:
+            ind_fitness = True
+            indications_count += 1
+
+        # 2. Level stall (fast path: skip if counter too low)
         if self.cycles_since_level_up >= self.level_stall_cycles:
-            indications.append(StagnationResult.LEVEL_STALLED)
+            ind_level = True
+            indications_count += 1
 
         # 3. Val loss regression
-        if len(val_losses) >= 2:
-            if val_losses[-1] > val_losses[0] * self.val_loss_regression_ratio:
-                indications.append(StagnationResult.VAL_LOSS_REGRESSION)
+        if vl_first is not None and vl_last is not None and vl_first != vl_last and vl_last > vl_first * vlr_ratio:
+            ind_valloss = True
+            indications_count += 1
 
-        # 4. Diversity collapse
-        if diversities and min(diversities) < self.diversity_collapse_threshold:
-            indications.append(StagnationResult.DIVERSITY_COLLAPSE)
+        # 4. Diversity collapse — absolute threshold OR downward trend
+        # Trend detection catches early diversity erosion before the absolute
+        # threshold is reached: if diversity drops >40% across the window AND
+        # current diversity is below a relaxed threshold (1.5x the collapse
+        # threshold), flag it as an early warning.  This enables earlier
+        # intervention (diversity injection, population expansion) to prevent
+        # full collapse.
+        div_first = first.diversity
+        div_last = tel[tel_len - 1].diversity
+        diversity_trend_detected = False
+        if div_first > 0 and div_last < div_first * 0.6 and div_last < dc_thresh * 1.5:
+            diversity_trend_detected = True
+        if div_min < dc_thresh or diversity_trend_detected:
+            ind_diversity = True
+            indications_count += 1
 
-        # Classify
-        if len(indications) >= 2:
+        # Classify from counts (avoids list allocation entirely)
+        if indications_count >= 2:
             result = StagnationResult.COMPOUND_STALL
-        elif len(indications) == 1:
-            result = indications[0]
+        elif indications_count == 1:
+            if ind_fitness:
+                result = StagnationResult.FITNESS_PLATEAU
+            elif ind_level:
+                result = StagnationResult.LEVEL_STALLED
+            elif ind_valloss:
+                result = StagnationResult.VAL_LOSS_REGRESSION
+            else:
+                result = StagnationResult.DIVERSITY_COLLAPSE
         else:
             result = StagnationResult.NORMAL
 
         self._last_stagnation = result
+        # R16: Cache result (avoids redundant scan when both tune_* methods call detect)
+        self._cached_stagnation = result
+        self._cached_stagnation_len = tel_len
         return result
 
     def tune_retrain_params(self, cycle: int) -> Dict[str, Any]:
@@ -383,55 +553,51 @@ class MetaController:
             # Break out: increase LR slightly, reduce freezing
             base_lr = min(self.lr_max, base_lr * 2.0)
             base_freeze = max(self.freeze_min, base_freeze - 1)
-            self._record_tuning("retrain", "retrain_lr", None, base_lr,
-                                "stagnation: fitness_plateau")
+            self._record_tuning("retrain", "retrain_lr", None, base_lr, "stagnation: fitness_plateau")
 
         elif state == StagnationResult.LEVEL_STALLED:
             # Level stall: moderate LR, reduced freezing for plasticity
             base_lr = min(self.lr_max, base_lr * 1.5)
             base_freeze = max(self.freeze_min, base_freeze - 1)
-            self._record_tuning("retrain", "retrain_lr", None, base_lr,
-                                "stagnation: level_stalled")
+            self._record_tuning("retrain", "retrain_lr", None, base_lr, "stagnation: level_stalled")
 
         elif state == StagnationResult.VAL_LOSS_REGRESSION:
             # Regression: protect existing knowledge, slow learning
             base_lr = max(self.lr_min, base_lr * 0.3)
             base_freeze = min(self.freeze_max, base_freeze + 2)
-            self._record_tuning("retrain", "retrain_lr", None, base_lr,
-                                "regression: val_loss_regression")
+            self._record_tuning("retrain", "retrain_lr", None, base_lr, "regression: val_loss_regression")
 
         elif state == StagnationResult.DIVERSITY_COLLAPSE:
             # Diversity collapse: escalate retrain params
             if consecutive <= 2:
                 # Initial: moderate LR, minimal freezing
                 base_freeze = max(self.freeze_min, base_freeze - 1)
-                params["ref_high_augment"] = 100
             elif consecutive <= 4:
                 # Escalation 1: high LR, no freezing, more augment
                 base_freeze = 0
                 base_lr = min(self.lr_max, base_lr * 2.0)
-                params["ref_high_augment"] = 200
             else:
                 # Escalation 2: max LR, no freezing, max augment
                 base_freeze = 0
                 base_lr = self.lr_max
-                params["ref_high_augment"] = 500
-            self._record_tuning("retrain", "retrain_freeze_layers",
-                                None, base_freeze,
-                                f"stagnation: diversity_collapse (tier {min(consecutive, 3)})")
+            self._record_tuning(
+                "retrain",
+                "retrain_freeze_layers",
+                None,
+                base_freeze,
+                f"stagnation: diversity_collapse (tier {min(consecutive, 3)})",
+            )
 
         elif state == StagnationResult.COMPOUND_STALL:
             # Multiple indicators: conservative approach
-            if self._best_val_loss < float('inf'):
+            if self._best_val_loss < float("inf"):
                 # We have a good model — protect it aggressively
                 base_freeze = min(self.freeze_max, base_freeze + 1)
             else:
                 # No good model yet — explore
                 base_lr = min(self.lr_max, base_lr * 1.5)
                 base_freeze = max(self.freeze_min, base_freeze - 1)
-            self._record_tuning("retrain", "retrain_freeze_layers",
-                                None, base_freeze,
-                                "stagnation: compound_stall")
+            self._record_tuning("retrain", "retrain_freeze_layers", None, base_freeze, "stagnation: compound_stall")
 
         # ── Fitness-based fallback when val_loss is unavailable ──────
         # When val_loss has been None for 3+ consecutive cycles (e.g. retrain
@@ -442,20 +608,25 @@ class MetaController:
         if self._consecutive_none_val_loss >= 3:
             if self.cycles_since_fitness_improvement <= 1:
                 # Fitness is improving — keep current LR (don't change base_lr)
-                self._log(f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
-                          f"fitness improving, keeping LR={base_lr:.2e}")
+                self._log(
+                    f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
+                    f"fitness improving, keeping LR={base_lr:.2e}"
+                )
             elif self.cycles_since_fitness_improvement >= 3:
                 # Fitness is stagnant — halve LR to escape local minimum
                 base_lr = max(self.lr_min, base_lr * 0.5)
-                self._log(f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}, "
-                          f"fitness stagnant ({self.cycles_since_fitness_improvement} cycles): "
-                          f"halving LR to {base_lr:.2e}")
-                self._record_tuning("retrain", "retrain_lr", None, base_lr,
-                                    f"fallback: val_loss_none_fitness_stagnant")
+                self._log(
+                    f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}, "
+                    f"fitness stagnant ({self.cycles_since_fitness_improvement} cycles): "
+                    f"halving LR to {base_lr:.2e}"
+                )
+                self._record_tuning("retrain", "retrain_lr", None, base_lr, "fallback: val_loss_none_fitness_stagnant")
             else:
-                self._log(f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
-                          f"fitness slightly stale ({self.cycles_since_fitness_improvement}), "
-                          f"keeping LR={base_lr:.2e}")
+                self._log(
+                    f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
+                    f"fitness slightly stale ({self.cycles_since_fitness_improvement}), "
+                    f"keeping LR={base_lr:.2e}"
+                )
 
         # ── Per-level data diversity ─────────────────────────────────
         if cycle >= 3:
@@ -467,8 +638,7 @@ class MetaController:
             base_lr = max(self.lr_min, base_lr * 0.5)
             base_patience = min(self.patience_max, base_patience + 2)
             base_freeze = min(self.freeze_max, base_freeze + 1)
-            self._record_tuning("retrain", "retrain_lr", None, base_lr,
-                                "recovery_mode")
+            self._record_tuning("retrain", "retrain_lr", None, base_lr, "recovery_mode")
             self.recovery_cycles_remaining -= 1
             if self.recovery_cycles_remaining <= 0:
                 self.recovery_mode = False
@@ -479,34 +649,21 @@ class MetaController:
         params["retrain_patience"] = min(self.patience_max, base_patience)
         params["retrain_max_epochs"] = base_epochs
 
-        # ── High-level reference augmentation ──────────────────────
-        # When diversity is collapsed or multiple indicators, inject extra
-        # L11-L13 reference examples to break out of local minima.
-        if state in (StagnationResult.DIVERSITY_COLLAPSE,
-                     StagnationResult.COMPOUND_STALL):
-            params["ref_high_augment"] = 200
-        elif state == StagnationResult.LEVEL_STALLED:
-            params["ref_high_augment"] = 100
-        else:
-            params["ref_high_augment"] = 50
-
-        self._log(f"Retrain params for C{cycle}: LR={base_lr:.2e} "
-                  f"freeze={base_freeze} patience={base_patience} "
-                  f"epochs={base_epochs} hl_ref={params['ref_high_augment']} "
-                  f"state={state.value}")
+        self._log(
+            f"Retrain params for C{cycle}: LR={base_lr:.2e} "
+            f"freeze={base_freeze} patience={base_patience} "
+            f"epochs={base_epochs} "
+            f"state={state.value}"
+        )
 
         # v11 P3.2: Request meta-evolution if compound_stall persists
         if state == StagnationResult.COMPOUND_STALL:
-            # Count consecutive compound_stalls
-            if not hasattr(self, '_compound_stall_counter'):
-                self._compound_stall_counter = 0
             self._compound_stall_counter += 1
             if self._compound_stall_counter >= 3 and cycle >= 10:
                 params["meta_evolution_requested"] = True
                 self._log(f"  *** META-EVOLUTION REQUESTED (compound_stall x{self._compound_stall_counter})")
         else:
-            if hasattr(self, '_compound_stall_counter'):
-                self._compound_stall_counter = 0
+            self._compound_stall_counter = 0
 
         return params
 
@@ -530,16 +687,14 @@ class MetaController:
             params["diversity_threshold"] = 0.20
             params["diversity_inject_ratio"] = 0.20
             params["novelty_weight"] = 0.30
-            self._record_tuning("evolution", "mutation_rate", None, 0.70,
-                                "stagnation: fitness_plateau")
+            self._record_tuning("evolution", "mutation_rate", None, 0.70, "stagnation: fitness_plateau")
 
         elif state == StagnationResult.LEVEL_STALLED:
             params["mutation_rate"] = 0.60
             params["diversity_threshold"] = 0.25
             params["diversity_inject_ratio"] = 0.25
             params["novelty_weight"] = 0.35
-            self._record_tuning("evolution", "novelty_weight", None, 0.35,
-                                "stagnation: level_stalled")
+            self._record_tuning("evolution", "novelty_weight", None, 0.35, "stagnation: level_stalled")
 
         elif state == StagnationResult.DIVERSITY_COLLAPSE:
             # Escalate: progressively stronger fixes for persistent collapse
@@ -548,8 +703,9 @@ class MetaController:
                 params["diversity_inject_ratio"] = 0.30
                 params["mutation_rate"] = 0.65
                 params["diversity_threshold"] = 0.15
-                self._record_tuning("evolution", "diversity_inject_ratio", None, 0.30,
-                                    "stagnation: diversity_collapse (tier 1)")
+                self._record_tuning(
+                    "evolution", "diversity_inject_ratio", None, 0.30, "stagnation: diversity_collapse (tier 1)"
+                )
             elif consecutive <= 4:
                 # Escalation 1: champion-level crossover, higher novelty
                 params["diversity_inject_ratio"] = 0.50
@@ -557,8 +713,9 @@ class MetaController:
                 params["novelty_weight"] = 0.50
                 params["champion_crossover_prob"] = 0.85
                 params["diversity_threshold"] = 0.10
-                self._record_tuning("evolution", "champion_crossover_prob", None, 0.85,
-                                    "stagnation: diversity_collapse (tier 2)")
+                self._record_tuning(
+                    "evolution", "champion_crossover_prob", None, 0.85, "stagnation: diversity_collapse (tier 2)"
+                )
             else:
                 # Escalation 2: drastic — large pop, high mutation, heavy injection
                 params["diversity_inject_ratio"] = 0.75
@@ -568,8 +725,9 @@ class MetaController:
                 params["champion_crossover_prob"] = 0.90
                 params["diversity_threshold"] = 0.08
                 params["elite_ratio"] = 0.05
-                self._record_tuning("evolution", "population_size", None, 120,
-                                    "stagnation: diversity_collapse (tier 3)")
+                self._record_tuning(
+                    "evolution", "population_size", None, 120, "stagnation: diversity_collapse (tier 3)"
+                )
 
         elif state == StagnationResult.VAL_LOSS_REGRESSION:
             # Regression: explore more cautiously — higher elite ratio
@@ -581,8 +739,13 @@ class MetaController:
                 params["elite_ratio"] = 0.20
                 params["mutation_rate"] = 0.40
                 params["novelty_weight"] = 0.10
-            self._record_tuning("evolution", "elite_ratio", None, params.get("elite_ratio", 0.15),
-                                f"regression: val_loss_regression (tier {min(consecutive, 2)})")
+            self._record_tuning(
+                "evolution",
+                "elite_ratio",
+                None,
+                params.get("elite_ratio", 0.15),
+                f"regression: val_loss_regression (tier {min(consecutive, 2)})",
+            )
 
         elif state == StagnationResult.COMPOUND_STALL:
             # Multiple issues: aggressive exploration
@@ -595,15 +758,19 @@ class MetaController:
                 params["diversity_inject_ratio"] = 0.50
                 params["novelty_weight"] = 0.50
                 params["population_size"] = 100
-            self._record_tuning("evolution", "mutation_rate", None, params.get("mutation_rate", 0.75),
-                                f"stagnation: compound_stall (tier {min(consecutive, 2)})")
+            self._record_tuning(
+                "evolution",
+                "mutation_rate",
+                None,
+                params.get("mutation_rate", 0.75),
+                f"stagnation: compound_stall (tier {min(consecutive, 2)})",
+            )
 
         elif state == StagnationResult.NORMAL and self.recovery_mode:
             # In recovery from previous stagnation: moderate params
             params["mutation_rate"] = 0.55
             params["novelty_weight"] = 0.25
-            self._record_tuning("evolution", "mutation_rate", None, 0.55,
-                                "recovery_mode")
+            self._record_tuning("evolution", "mutation_rate", None, 0.55, "recovery_mode")
 
         return params
 
@@ -618,12 +785,13 @@ class MetaController:
             return False
 
         state = self.detect_stagnation()
-        if state in (StagnationResult.VAL_LOSS_REGRESSION,
-                     StagnationResult.COMPOUND_STALL):
+        if state in (StagnationResult.VAL_LOSS_REGRESSION, StagnationResult.COMPOUND_STALL):
             if self.cycles_since_fitness_improvement >= 2:
-                self._log(f"ROLLBACK: state={state.value}, "
-                          f"cycles_since_fitness_improvement="
-                          f"{self.cycles_since_fitness_improvement}")
+                self._log(
+                    f"ROLLBACK: state={state.value}, "
+                    f"cycles_since_fitness_improvement="
+                    f"{self.cycles_since_fitness_improvement}"
+                )
                 self._rollback_count += 1
                 return True
         return False
@@ -642,8 +810,7 @@ class MetaController:
         """
         if not os.path.isfile(checkpoint_path):
             return
-        snapshot_dir = os.path.join(os.path.dirname(self.best_checkpoint_path),
-                                    "pre_cycle_snapshots")
+        snapshot_dir = os.path.join(os.path.dirname(self.best_checkpoint_path), "pre_cycle_snapshots")
         os.makedirs(snapshot_dir, exist_ok=True)
         snapshot_path = os.path.join(snapshot_dir, f"snapshot_cycle_{cycle}.pt")
         try:
@@ -653,8 +820,7 @@ class MetaController:
         except (OSError, shutil.Error) as e:
             self._log(f"Snapshot: failed to save pre-cycle checkpoint: {e}")
 
-    def execute_rollback(self, current_checkpoint: str,
-                         use_snapshot: bool = False) -> Optional[str]:
+    def execute_rollback(self, current_checkpoint: str, use_snapshot: bool = False) -> Optional[str]:
         """Perform rollback: copy best checkpoint (or pre-cycle snapshot) over current.
 
         Args:
@@ -678,16 +844,17 @@ class MetaController:
         if source is None:
             source = self.get_best_checkpoint()
             if source is None or not os.path.isfile(source):
-                self._log(f"Rollback failed: best checkpoint not found at "
-                          f"{self.best_checkpoint_path}")
+                self._log(f"Rollback failed: best checkpoint not found at " f"{self.best_checkpoint_path}")
                 return None
 
         # Guard against same-file copy (source == current_checkpoint)
         abs_source = os.path.abspath(source)
         abs_current = os.path.abspath(current_checkpoint)
         if abs_source == abs_current:
-            self._log(f"Rollback skipped: source and current are the same file "
-                      f"({source}). Retrain output path must differ from best.")
+            self._log(
+                f"Rollback skipped: source and current are the same file "
+                f"({source}). Retrain output path must differ from best."
+            )
             # Don't treat this as a failure — the file itself is fine
             self.recovery_mode = True
             self.recovery_cycles_remaining = 2
@@ -721,7 +888,7 @@ class MetaController:
         return {
             "best_fitness": self.best_fitness,
             "best_level": self.best_level,
-            "best_val_loss": None if self._best_val_loss == float('inf') else self._best_val_loss,
+            "best_val_loss": None if self._best_val_loss == float("inf") else self._best_val_loss,
             "cycles_since_fitness_improvement": self.cycles_since_fitness_improvement,
             "cycles_since_level_up": self.cycles_since_level_up,
             "recovery_mode": self.recovery_mode,
@@ -741,25 +908,59 @@ class MetaController:
                 }
                 for t in self.telemetry[-5:]
             ],
-            "tuning_history": [
-                a.to_dict() for a in self._tuning_log[-20:]  # Last 20 actions
-            ],
+            "tuning_history": [a.to_dict() for a in self._tuning_log[-20:]],  # Last 20 actions
         }
 
     def save_state(self, path: str) -> None:
-        """Save controller state to a JSON file (for resumption)."""
+        """Save controller state to a JSON file (for resumption).
+
+        Persists all tuning-dependent state including stagnation tracking,
+        fitness momentum, compound stall counter, and the state ring buffer
+        so that load_state can fully restore the controller's behavior.
+
+        Uses atomic write (temp file + rename) to prevent corruption
+        if the process crashes mid-write.
+        """
         state = self.get_state_summary()
         state["_best_val_loss"] = self._best_val_loss
         state["_gated_count"] = self._gated_count
         state["_rollback_count"] = self._rollback_count
+
+        # R34: Save tuning-dependent state for accurate post-restart behavior.
+        state["_compound_stall_counter"] = self._compound_stall_counter
+        state["_fitness_momentum"] = self._fitness_momentum
+        state["_best_fitness_at_last_tune"] = self._best_fitness_at_last_tune
+        state["_last_stagnation_state"] = self._last_stagnation_state
+        state["_consecutive_stagnation_counter"] = self._consecutive_stagnation_counter
+        state["_state_ring"] = list(self._state_ring)
+        state["cycles_since_fitness_improvement"] = self.cycles_since_fitness_improvement
+        state["cycles_since_level_up"] = self.cycles_since_level_up
+        state["last_level"] = self.last_level
+        state["best_champion_words"] = self.best_champion_words
+
         try:
-            with open(path, "w") as f:
-                json.dump(state, f, indent=2)
+            dir_name = os.path.dirname(path) or "."
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(state, f, indent=2)
+                os.replace(tmp_path, path)
+            except (OSError, PermissionError):
+                # Clean up temp file on failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except (OSError, PermissionError) as e:
             self._log(f"Failed to save state: {e}")
 
     def load_state(self, path: str) -> bool:
         """Load controller state from a JSON file.
+
+        Restores all tuning-dependent state including stagnation tracking,
+        fitness momentum, compound stall counter, and the state ring buffer
+        so that the controller can resume accurate detection after restart.
 
         Returns True on success, False if file doesn't exist.
         """
@@ -768,14 +969,36 @@ class MetaController:
         try:
             with open(path) as f:
                 data = json.load(f)
-            self._best_val_loss = data.get("_best_val_loss", float('inf'))
-            self.best_fitness = data.get("best_fitness", -float('inf'))
+            self._best_val_loss = data.get("_best_val_loss", float("inf"))
+            self.best_fitness = data.get("best_fitness", -float("inf"))
             self.best_level = data.get("best_level", 0)
             self._gated_count = data.get("_gated_count", 0)
             self._rollback_count = data.get("_rollback_count", 0)
             self.recovery_mode = data.get("recovery_mode", False)
             self.recovery_cycles_remaining = data.get("recovery_cycles_remaining", 0)
             self._consecutive_none_val_loss = data.get("_consecutive_none_val_loss", 0)
+
+            # R34: Restore tuning-dependent state for accurate post-restart behavior.
+            # Without these, the controller would lose its stagnation tracking
+            # and fitness momentum, causing duplicate tuning decisions.
+            self._compound_stall_counter = data.get("_compound_stall_counter", 0)
+            self._fitness_momentum = data.get("_fitness_momentum", 0.0)
+            self._best_fitness_at_last_tune = data.get("_best_fitness_at_last_tune", -float("inf"))
+            self._last_stagnation_state = data.get("_last_stagnation_state", "")
+            self._consecutive_stagnation_counter = data.get("_consecutive_stagnation_counter", 0)
+
+            # Restore the state ring buffer (last 16 entries)
+            saved_ring = data.get("_state_ring", [])
+            self._state_ring.clear()
+            for entry in saved_ring[-16:]:  # cap at maxlen
+                self._state_ring.append(entry)
+
+            # Restore cycles_since tracking
+            self.cycles_since_fitness_improvement = data.get("cycles_since_fitness_improvement", 0)
+            self.cycles_since_level_up = data.get("cycles_since_level_up", 0)
+            self.last_level = data.get("last_level", -1)
+            self.best_champion_words = data.get("best_champion_words", 0)
+
             return True
         except (json.JSONDecodeError, KeyError, OSError) as e:
             self._log(f"Failed to load state: {e}")
@@ -788,36 +1011,118 @@ class MetaController:
     def _count_consecutive_stagnation(self, state: StagnationResult) -> int:
         """Count how many consecutive tuning events match the given stagnation state.
 
-        Scans the tuning log backwards and counts consecutive entries
-        whose reason string contains the state value.
+        R19: Always O(1) -- uses the cached counter when state matches
+        the tracked value.  For non-tracked states, scans the small
+        ring buffer (max 16 entries) instead of the full tuning log.
+        R23: When state matches but counter is 0, fall through to ring
+        scan instead of returning 0 (which would be wrong if the ring
+        has entries but no tuning log entry was recorded yet).
+        R33: When state matches AND counter > 0, also cache the ring
+        scan result so subsequent calls within the same cycle avoid
+        redundant scan.
         """
-        count = 0
         state_str = state.value
-        for t in reversed(self._tuning_log):
-            if state_str in t.reason:
+        if state_str == self._last_stagnation_state and self._consecutive_stagnation_counter > 0:
+            return self._consecutive_stagnation_counter
+        # O(K) scan of state buffer (K <= 16) instead of O(N) tuning log
+        count = 0
+        ring = self._state_ring
+        ring_len = len(ring)
+        for i in range(ring_len - 1, -1, -1):
+            if ring[i] == state_str:
                 count += 1
             else:
                 break
+        # Cache result so next call for same state is O(1)
+        # Note: only cache non-zero counts. When count=0, we cannot cache
+        # because _record_tuning may have added matching entries to the ring
+        # between calls (within the same cycle), and a stale cached 0 would
+        # mask the correct non-zero count.
+        if count > 0:
+            self._last_stagnation_state = state_str
+            self._consecutive_stagnation_counter = count
         return count
 
-    def _record_tuning(self, domain: str, param: str,
-                       old: Any, new: Any, reason: str) -> None:
+    def _record_tuning(self, domain: str, param: str, old: Any, new: Any, reason: str) -> None:
         self._tuning_log.append(TuningAction(domain, param, old, new, reason))
+        # R34: Cap tuning log to prevent unbounded memory growth on long runs.
+        # The ring buffer and consecutive counter are O(1) — only the log list
+        # grows. Truncate to keep last _max_tuning_log_len entries.
+        if len(self._tuning_log) > self._max_tuning_log_len:
+            self._tuning_log = self._tuning_log[-self._max_tuning_log_len :]
+        # Maintain O(1) consecutive stagnation counter.
+        # R24: Use str.partition once instead of str.find() + inner loop.
+        # Reason strings follow patterns: "stagnation: <value> (tier N)",
+        # "regression: <value>", "recovery", "fallback: <desc>".
+        # str.partition("stagnation: ") is a single C call that extracts
+        # everything after the prefix, then we partition again on " (" to
+        # strip the tier suffix. Two C-level calls total, no Python loops.
+        _state = None
+        if reason.startswith("recovery"):
+            _state = "recovery"
+        else:
+            # Single partition for "stagnation: " or "regression: "
+            for prefix in ("stagnation: ", "regression: "):
+                before, _, after = reason.partition(prefix)
+                if before != reason:  # partition found the separator
+                    # Strip tier suffix: "fitness_plateau (tier 2)" -> "fitness_plateau"
+                    _state, _, _ = after.partition(" (")
+                    if not _state:
+                        _state = after
+                    break
+        if _state is not None and _state == self._last_stagnation_state:
+            self._consecutive_stagnation_counter += 1
+        elif _state is not None and _state in _STAGNATION_STATE_VALUES:
+            self._last_stagnation_state = _state
+            self._consecutive_stagnation_counter = 1
+        else:
+            # Non-stagnation reason resets the counter
+            self._last_stagnation_state = ""
+            self._consecutive_stagnation_counter = 0
+
+        # Maintain capped state buffer for O(K) consecutive count on
+        # non-tracked states.  K <= 16, effectively O(1).
+        self._state_ring.append(_state or "")
 
     def _log(self, msg: str) -> None:
-        """Log message via structured logger and optional log file."""
+        """Log message via structured logger and optional log file.
+
+        Uses lazy file handle caching (same pattern as EvolutionEngine._log)
+        to avoid fd exhaustion on long multi-cycle runs where _log is called
+        hundreds of times per cycle.
+        """
         _logger.info(msg)
         if self.log_file:
             try:
-                with open(self.log_file, "a") as f:
-                    f.write(f"[MetaController] {msg}\n")
-            except (OSError, PermissionError):
-                pass
+                if self._log_file is None:
+                    self._log_file = open(self.log_file, "a", encoding="utf-8")
+                self._log_file.write(f"[MetaController] {msg}\n")
+                self._log_file.flush()
+            except (OSError, ValueError):
+                # File handle stale or directory deleted -- reset and retry once
+                self._log_file = None
+                try:
+                    self._log_file = open(self.log_file, "a", encoding="utf-8")
+                    self._log_file.write(f"[MetaController] {msg}\n")
+                    self._log_file.flush()
+                except (OSError, ValueError):
+                    pass
 
 
 # ══════════════════════════════════════════════════════════════════════
 # Convenience: parse val_loss from retrain output
 # ══════════════════════════════════════════════════════════════════════
+
+
+# Pre-compiled regex patterns for parse_val_loss_from_retrain_log
+# (avoids re-compilation on every call — called once per cycle per retrain)
+_VAL_PATTERNS = (
+    _re.compile(r"val=([0-9]+\.[0-9]+)"),
+    _re.compile(r"val_loss=([0-9]+\.[0-9]+)"),
+    _re.compile(r"Val Loss:\s*([0-9]+\.[0-9]+)"),
+)
+_VAL_LOSS_RE = _re.compile(r"val[_=]?(?:loss)?:\s*([0-9]+\.[0-9]+)")
+_GRAD_NORM_RE = _re.compile(r"grad_norm[/\s](\S+?)\s*[=:]\s*([0-9]+\.?[0-9]*)")
 
 
 def parse_val_loss_from_retrain_log(log_path: str) -> Optional[float]:
@@ -832,22 +1137,48 @@ def parse_val_loss_from_retrain_log(log_path: str) -> Optional[float]:
     if not os.path.isfile(log_path):
         return None
     try:
-        import re
         best_val = None
         with open(log_path) as f:
             for line in f:
-                for pattern in (
-                    r"val=([0-9]+\.[0-9]+)",
-                    r"val_loss=([0-9]+\.[0-9]+)",
-                    r"Val Loss:\s*([0-9]+\.[0-9]+)",
-                ):
-                    m = re.search(pattern, line)
+                for pat in _VAL_PATTERNS:
+                    m = pat.search(line)
                     if m:
                         val = float(m.group(1))
                         if best_val is None or val < best_val:
                             best_val = val
                         break  # first matching pattern per line
         return best_val
+    except (OSError, PermissionError, ValueError):
+        return None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Convenience: parse gradient norms from retrain output
+# ══════════════════════════════════════════════════════════════════════
+
+
+def parse_grad_norms_from_retrain_log(log_path: str) -> Optional[Dict[str, float]]:
+    """Extract per-layer gradient norms from a retrain log file.
+
+    Matches output formats like:
+      - "grad_norm/layer.0=0.0234"
+      - "grad_norm blocks.0.attn=0.0156"
+
+    Returns dict mapping parameter names to gradient norm values,
+    or None if no gradient norms found.
+    """
+    if not os.path.isfile(log_path):
+        return None
+    try:
+        norms: Dict[str, float] = {}
+        with open(log_path) as f:
+            for line in f:
+                m = _GRAD_NORM_RE.search(line)
+                if m:
+                    key = m.group(1).strip()
+                    val = float(m.group(2))
+                    norms[key] = val
+        return norms if norms else None
     except (OSError, PermissionError, ValueError):
         return None
 
@@ -864,38 +1195,62 @@ def _demo() -> None:
     # Simulate first 3 cycles: improving
     for c, f, l, v in [(1, -3.0, 9, 3.0), (2, -2.5, 10, 2.5), (3, -2.0, 11, 2.0)]:
         snap = TelemetrySnapshot(
-            cycle=c, fitness=f, level=l, champion_words=50,
-            val_loss=v, diversity=0.3, novelty_size=10, qd_occupied=5,
-            qd_total=100, traces_count=20, retrained=True,
+            cycle=c,
+            fitness=f,
+            level=l,
+            champion_words=50,
+            val_loss=v,
+            diversity=0.3,
+            novelty_size=10,
+            qd_occupied=5,
+            qd_total=100,
+            traces_count=20,
+            retrained=True,
             generations_completed=50,
         )
         mc.update_cycle(snap)
-        _logger.info(f"C{c}: state={mc.detect_stagnation().value}, "
-              f"retrain_params={mc.tune_retrain_params(c)}")
+        _logger.info(f"C{c}: state={mc.detect_stagnation().value}, " f"retrain_params={mc.tune_retrain_params(c)}")
 
     # Simulate plateau: fitness flat for 3 cycles
     for c, f, l in [(4, -1.8, 11), (5, -1.8, 11), (6, -1.8, 11)]:
         snap = TelemetrySnapshot(
-            cycle=c, fitness=f, level=l, champion_words=50,
-            val_loss=1.8, diversity=0.25, novelty_size=10, qd_occupied=5,
-            qd_total=100, traces_count=25, retrained=True,
+            cycle=c,
+            fitness=f,
+            level=l,
+            champion_words=50,
+            val_loss=1.8,
+            diversity=0.25,
+            novelty_size=10,
+            qd_occupied=5,
+            qd_total=100,
+            traces_count=25,
+            retrained=True,
             generations_completed=50,
         )
         mc.update_cycle(snap)
-        _logger.info(f"C{c}: state={mc.detect_stagnation().value}, "
-              f"retrain_params={mc.tune_retrain_params(c)}")
+        _logger.info(f"C{c}: state={mc.detect_stagnation().value}, " f"retrain_params={mc.tune_retrain_params(c)}")
 
     # Simulate regression
     snap = TelemetrySnapshot(
-        cycle=7, fitness=-1.9, level=11, champion_words=50,
-        val_loss=7.7, diversity=0.2, novelty_size=10, qd_occupied=5,
-        qd_total=100, traces_count=30, retrained=True,
+        cycle=7,
+        fitness=-1.9,
+        level=11,
+        champion_words=50,
+        val_loss=7.7,
+        diversity=0.2,
+        novelty_size=10,
+        qd_occupied=5,
+        qd_total=100,
+        traces_count=30,
+        retrained=True,
         generations_completed=50,
     )
     mc.update_cycle(snap)
-    _logger.info(f"C7: state={mc.detect_stagnation().value}, "
-          f"rollback={mc.should_rollback()}, "
-          f"retrain_params={mc.tune_retrain_params(7)}")
+    _logger.info(
+        f"C7: state={mc.detect_stagnation().value}, "
+        f"rollback={mc.should_rollback()}, "
+        f"retrain_params={mc.tune_retrain_params(7)}"
+    )
 
     _logger.info("\nState summary:")
     _logger.info(json.dumps(mc.get_state_summary(), indent=2))

@@ -11,10 +11,10 @@ learned position embeddings) and the current model (SwiGLU FFN, RoPE)
 by mapping compatible weights and randomly initializing new components.
 """
 
+import logging
 import os
 import sys
-import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -24,8 +24,8 @@ _milestone1 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mileston
 if _milestone1 not in sys.path:
     sys.path.insert(0, _milestone1)
 
-from rv32i_model import RV32ITransformer, RV32IFieldTokenizer, RV32IVocab
 from rv32i_mask import decode as rv_decode
+from rv32i_model import RV32IFieldTokenizer, RV32ITransformer, RV32IVocab
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 #  KEY MAPPING: Old checkpoint (GELU FFN) -> New model (SwiGLU + RoPE)
 # =====================================================================
+
 
 def _build_key_map(n_layers: int) -> Dict[str, str]:
     """Build a mapping from old checkpoint keys to new model keys.
@@ -120,7 +121,7 @@ def _infer_model_dims(state_dict: dict) -> dict:
     dims["n_layers"] = max(layer_nums) + 1 if layer_nums else 8
 
     # d_ff from ffn.0.weight shape (old checkpoint)
-    ffn_key = f"blocks.0.ffn.0.weight"
+    ffn_key = "blocks.0.ffn.0.weight"
     if ffn_key in state_dict:
         dims["d_ff"] = state_dict[ffn_key].shape[0]
     else:
@@ -149,6 +150,7 @@ def _infer_model_dims(state_dict: dict) -> dict:
 # =====================================================================
 #  PREFIX GENERATOR
 # =====================================================================
+
 
 class PrefixGenerator:
     """Generates RV32I instruction completions from prefix contexts.
@@ -192,30 +194,23 @@ class PrefixGenerator:
         if self.device.type == "cuda":
             try:
                 import triton  # noqa: F401
+
                 self.model = torch.compile(self.model, mode="reduce-overhead")
                 logger.info("torch.compile enabled for inference (reduce-overhead)")
             except ImportError:
                 logger.info("Triton not available — skipping torch.compile for inference")
             except Exception as e:
                 logger.warning(f"torch.compile failed (falling back to eager): {e}")
-        logger.info(
-            f"PrefixGenerator loaded from {checkpoint_path} "
-            f"(device={self.device}, temp={temperature})"
-        )
+        logger.info(f"PrefixGenerator loaded from {checkpoint_path} " f"(device={self.device}, temp={temperature})")
 
     def _load_model(self, checkpoint_path: str) -> RV32ITransformer:
         """Load model from checkpoint, handling architecture migration."""
         if not os.path.isfile(checkpoint_path):
-            logger.warning(
-                f"Checkpoint not found: {checkpoint_path}, "
-                f"creating fresh model"
-            )
+            logger.warning(f"Checkpoint not found: {checkpoint_path}, " f"creating fresh model")
             return self._create_fresh_model()
 
         try:
-            ckpt = torch.load(
-                checkpoint_path, map_location="cpu", weights_only=False
-            )
+            ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         except Exception as e:
             logger.warning(f"Failed to load checkpoint: {e}, creating fresh model")
             return self._create_fresh_model()
@@ -312,6 +307,7 @@ class PrefixGenerator:
         """
         try:
             from rv32i_mask import encode as rv_encode
+
             name = inst.get("name", "ADDI")
             rd = inst.get("rd", 0) or 0
             rs1 = inst.get("rs1", 0) or 0
@@ -412,16 +408,12 @@ class PrefixGenerator:
 
             # Top-k filtering
             if top_k is not None and top_k > 0:
-                top_k_vals, _ = torch.topk(
-                    next_logits, min(top_k, next_logits.size(-1)), dim=-1
-                )
+                top_k_vals, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)), dim=-1)
                 next_logits[next_logits < top_k_vals[:, -1:]] = float("-inf")
 
             # Top-p (nucleus) filtering
             if top_p is not None and 0.0 < top_p < 1.0:
-                sorted_logits, sorted_indices = torch.sort(
-                    next_logits, descending=True, dim=-1
-                )
+                sorted_logits, sorted_indices = torch.sort(next_logits, descending=True, dim=-1)
                 sorted_probs = F.softmax(sorted_logits, dim=-1)
                 cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
@@ -496,9 +488,7 @@ class PrefixGenerator:
             next_logits = next_logits.masked_fill(~mask, float("-inf"))
         except Exception as e:
             logger.warning(f"KV-cache prefill failed, falling back to non-cached generation: {e}")
-            return self._generate_with_top_p(
-                input_ids, max_new_tokens, temperature, top_k, top_p, repetition_penalty
-            )
+            return self._generate_with_top_p(input_ids, max_new_tokens, temperature, top_k, top_p, repetition_penalty)
 
         for _ in range(max_new_tokens):
             # Apply repetition penalty
@@ -517,16 +507,12 @@ class PrefixGenerator:
 
             # Top-k filtering
             if top_k is not None and top_k > 0:
-                top_k_vals, _ = torch.topk(
-                    next_logits, min(top_k, next_logits.size(-1)), dim=-1
-                )
+                top_k_vals, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)), dim=-1)
                 next_logits[next_logits < top_k_vals[:, -1:]] = float("-inf")
 
             # Top-p (nucleus) filtering
             if top_p is not None and 0.0 < top_p < 1.0:
-                sorted_logits, sorted_indices = torch.sort(
-                    next_logits, descending=True, dim=-1
-                )
+                sorted_logits, sorted_indices = torch.sort(next_logits, descending=True, dim=-1)
                 sorted_probs = F.softmax(sorted_logits, dim=-1)
                 cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
                 sorted_mask = cumulative_probs - sorted_probs > top_p
@@ -633,8 +619,6 @@ class PrefixGenerator:
             self.max_new_tokens,
             max(18, prefix_count * 3) * 9,  # at least 2 full instructions worth
         )
-        import sys
-        print(f"    [PrefixGenFormula] max_new_tokens={self.max_new_tokens}, prefix_count={prefix_count}, max_new={max_new}", file=sys.stderr)
 
         # Generate with KV-cache (fast) or fallback to non-cached
         output = self.generate_with_cache(
@@ -659,15 +643,6 @@ class PrefixGenerator:
             # Append EBREAK terminator if not already present
             if hex_list and hex_list[-1].upper() != "0X00100073":
                 hex_list.append("0x00100073")
-
-            # Debug: log generation details for first batch item
-            if b == 0:
-                import sys
-                print(f"    [PrefixGenDebug] input_len={input_ids.shape[1]}, "
-                      f"max_new={max_new}, output_len={output.shape[1]}, "
-                      f"tokens_after_skip={len(tokens)}, hex_insts={len(hex_list)}, "
-                      f"hex_list={[h[:10]+'...' if len(h)>10 else h for h in hex_list[:8]]}",
-                      file=sys.stderr)
 
             # Filter: keep only completions with at least 2 instructions
             if len(hex_list) >= 2:

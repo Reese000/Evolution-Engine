@@ -8,7 +8,6 @@ Validates:
   - autonomous_runner.py: Integration with unified Config
 """
 
-import json
 import logging
 import os
 import sys
@@ -30,30 +29,31 @@ class TestLoggingConfig(unittest.TestCase):
     """Tests for logging_config.py module."""
 
     def test_import_logging_config(self):
-        from logging_config import setup_logging, get_logger
+        from logging_config import get_logger, setup_logging
+
         self.assertTrue(callable(setup_logging))
         self.assertTrue(callable(get_logger))
 
     def test_get_logger_returns_logger(self):
         from logging_config import get_logger
+
         logger = get_logger("TestComponent")
         self.assertIsInstance(logger, logging.Logger)
         self.assertEqual(logger.name, "TestComponent")
 
     def test_setup_logging_adds_handlers(self):
         from logging_config import setup_logging
+
         with tempfile.TemporaryDirectory() as tmpdir:
             setup_logging(log_dir=tmpdir)
             root = logging.getLogger()
             handler_types = [type(h).__name__ for h in root.handlers]
             # Should have at least a StreamHandler and a RotatingFileHandler
-            self.assertTrue(
-                any("Stream" in h for h in handler_types),
-                f"Expected StreamHandler, got: {handler_types}"
-            )
+            self.assertTrue(any("Stream" in h for h in handler_types), f"Expected StreamHandler, got: {handler_types}")
 
     def test_setup_logging_idempotent(self):
         from logging_config import setup_logging
+
         with tempfile.TemporaryDirectory() as tmpdir:
             setup_logging(log_dir=tmpdir)
             count_before = len(logging.getLogger().handlers)
@@ -64,16 +64,27 @@ class TestLoggingConfig(unittest.TestCase):
 
     def test_log_file_created(self):
         from logging_config import setup_logging
+
         with tempfile.TemporaryDirectory() as tmpdir:
             setup_logging(log_dir=tmpdir)
             log_path = os.path.join(tmpdir, "evolution.log")
-            # Write a test message
-            logger = logging.getLogger("TestFileOutput")
-            logger.info("test message")
-            # Force flush
-            for h in logging.getLogger().handlers:
-                h.flush()
-            self.assertTrue(os.path.isfile(log_path))
+            try:
+                # Write a test message
+                logger = logging.getLogger("TestFileOutput")
+                logger.info("test message")
+                # Force flush
+                for h in logging.getLogger().handlers:
+                    h.flush()
+                self.assertTrue(os.path.isfile(log_path))
+            finally:
+                # Close and detach any file handlers pointing into tmpdir so
+                # Windows can delete the TemporaryDirectory on context exit.
+                root = logging.getLogger()
+                for h in list(root.handlers):
+                    base = getattr(h, "baseFilename", None)
+                    if base and os.path.dirname(base) == os.path.normpath(tmpdir):
+                        h.close()
+                        root.removeHandler(h)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -90,16 +101,19 @@ class TestMetricsCollector(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_import_metrics(self):
         from metrics import MetricsCollector
+
         self.assertTrue(hasattr(MetricsCollector, "record_cycle"))
         self.assertTrue(hasattr(MetricsCollector, "get_history"))
         self.assertTrue(hasattr(MetricsCollector, "get_trend"))
 
     def test_record_and_read(self):
         from metrics import MetricsCollector
+
         mc = MetricsCollector(self.jsonl_path)
         mc.record_cycle({"cycle": 1, "fitness": 0.5, "level": 2})
         mc.record_cycle({"cycle": 2, "fitness": 0.7, "level": 3})
@@ -112,6 +126,7 @@ class TestMetricsCollector(unittest.TestCase):
 
     def test_record_adds_timestamp(self):
         from metrics import MetricsCollector
+
         mc = MetricsCollector(self.jsonl_path)
         mc.record_cycle({"cycle": 1})
         history = mc.get_history()
@@ -119,6 +134,7 @@ class TestMetricsCollector(unittest.TestCase):
 
     def test_get_history_last_n(self):
         from metrics import MetricsCollector
+
         mc = MetricsCollector(self.jsonl_path)
         for i in range(10):
             mc.record_cycle({"cycle": i + 1, "fitness": float(i)})
@@ -129,12 +145,14 @@ class TestMetricsCollector(unittest.TestCase):
 
     def test_get_history_empty(self):
         from metrics import MetricsCollector
+
         mc = MetricsCollector(self.jsonl_path)
         history = mc.get_history()
         self.assertEqual(history, [])
 
     def test_get_trend_empty(self):
         from metrics import MetricsCollector
+
         mc = MetricsCollector(self.jsonl_path)
         trend = mc.get_trend("fitness")
         self.assertEqual(trend["trend"], "unknown")
@@ -142,6 +160,7 @@ class TestMetricsCollector(unittest.TestCase):
 
     def test_get_trend_improving(self):
         from metrics import MetricsCollector
+
         mc = MetricsCollector(self.jsonl_path)
         for i in range(10):
             mc.record_cycle({"cycle": i + 1, "fitness": float(i) * 10.0})
@@ -152,6 +171,7 @@ class TestMetricsCollector(unittest.TestCase):
 
     def test_get_trend_stable(self):
         from metrics import MetricsCollector
+
         mc = MetricsCollector(self.jsonl_path)
         for i in range(10):
             mc.record_cycle({"cycle": i + 1, "fitness": 50.0})
@@ -161,6 +181,7 @@ class TestMetricsCollector(unittest.TestCase):
 
     def test_count_records(self):
         from metrics import MetricsCollector
+
         mc = MetricsCollector(self.jsonl_path)
         self.assertEqual(mc.count_records(), 0)
         mc.record_cycle({"cycle": 1})
@@ -169,6 +190,7 @@ class TestMetricsCollector(unittest.TestCase):
 
     def test_clear(self):
         from metrics import MetricsCollector
+
         mc = MetricsCollector(self.jsonl_path)
         mc.record_cycle({"cycle": 1})
         self.assertTrue(os.path.isfile(self.jsonl_path))
@@ -185,19 +207,23 @@ class TestConfig(unittest.TestCase):
     """Tests for config.py Config class."""
 
     def test_import_config(self):
-        from config import Config, load_config, add_config_args
+        from config import add_config_args, load_config
+
         self.assertTrue(callable(load_config))
         self.assertTrue(callable(add_config_args))
 
     def test_config_defaults(self):
         from config import Config
+
         cfg = Config()
         self.assertEqual(cfg.evolution.population_size, 50)
-        self.assertEqual(cfg.autonomous_runner.max_cycles, 100)
+        # max_cycles is null in engine_config.json (no-limit by default)
+        self.assertIsNone(cfg.autonomous_runner.max_cycles)
         self.assertAlmostEqual(cfg.retrain.retrain_lr, 3e-5)
 
     def test_config_loads_json(self):
         from config import Config
+
         cfg = Config()  # loads config/engine_config.json
         # Verify it loaded the file (pop=50 matches the JSON)
         self.assertEqual(cfg.evolution.population_size, 50)
@@ -205,6 +231,7 @@ class TestConfig(unittest.TestCase):
 
     def test_config_env_override(self):
         from config import Config
+
         os.environ["EE_POPULATION_SIZE"] = "123"
         try:
             cfg = Config()
@@ -214,6 +241,7 @@ class TestConfig(unittest.TestCase):
 
     def test_config_env_override_float(self):
         from config import Config
+
         os.environ["EE_RETRAIN_LR"] = "0.001"
         try:
             cfg = Config()
@@ -223,6 +251,7 @@ class TestConfig(unittest.TestCase):
 
     def test_config_env_override_bool(self):
         from config import Config
+
         os.environ["EE_USE_GPU"] = "true"
         try:
             cfg = Config()
@@ -232,6 +261,7 @@ class TestConfig(unittest.TestCase):
 
     def test_config_validation_bad_population(self):
         from config import Config
+
         os.environ["EE_POPULATION_SIZE"] = "-5"
         try:
             with self.assertRaises(ValueError):
@@ -241,6 +271,7 @@ class TestConfig(unittest.TestCase):
 
     def test_config_validation_bad_lr(self):
         from config import Config
+
         os.environ["EE_RETRAIN_LR"] = "-1"
         try:
             with self.assertRaises(ValueError):
@@ -250,6 +281,7 @@ class TestConfig(unittest.TestCase):
 
     def test_config_validation_bad_max_cycles(self):
         from config import Config
+
         os.environ["EE_MAX_CYCLES"] = "0"
         try:
             with self.assertRaises(ValueError):
@@ -259,6 +291,7 @@ class TestConfig(unittest.TestCase):
 
     def test_config_to_dict(self):
         from config import Config
+
         cfg = Config()
         d = cfg.to_dict()
         self.assertIn("evolution", d)
@@ -269,13 +302,16 @@ class TestConfig(unittest.TestCase):
 
     def test_load_config_with_overrides(self):
         from config import load_config
+
         cfg = load_config(max_cycles=50, target_fitness=100.0)
         self.assertEqual(cfg.autonomous_runner.max_cycles, 50)
         self.assertAlmostEqual(cfg.autonomous_runner.target_fitness, 100.0)
 
     def test_add_config_args(self):
         import argparse
+
         from config import add_config_args
+
         parser = argparse.ArgumentParser()
         add_config_args(parser)
         args = parser.parse_args(["--max-cycles", "25", "--target-fitness", "50.0"])
@@ -294,6 +330,7 @@ class TestAutonomousRunnerConfigIntegration(unittest.TestCase):
     def test_runner_uses_engine_config(self):
         from autonomous_runner import AutonomousRunner
         from config import Config
+
         ec = Config()
         runner = AutonomousRunner(engine_config=ec)
         self.assertEqual(runner._config["population_size"], 50)
@@ -301,6 +338,7 @@ class TestAutonomousRunnerConfigIntegration(unittest.TestCase):
     def test_runner_config_dict_backward_compat(self):
         from autonomous_runner import AutonomousRunner
         from config import Config
+
         ec = Config()
         runner = AutonomousRunner(engine_config=ec)
         # Dict-style access (backward compat) should work
@@ -311,6 +349,7 @@ class TestAutonomousRunnerConfigIntegration(unittest.TestCase):
     def test_runner_config_override_cli(self):
         from autonomous_runner import AutonomousRunner
         from config import Config
+
         ec = Config()
         runner = AutonomousRunner(engine_config=ec)
         runner._config["max_cycles"] = 5
@@ -319,6 +358,7 @@ class TestAutonomousRunnerConfigIntegration(unittest.TestCase):
     def test_runner_config_target_override(self):
         from autonomous_runner import AutonomousRunner
         from config import Config
+
         ec = Config()
         runner = AutonomousRunner(engine_config=ec)
         runner._config["target_fitness"] = 100.0
@@ -327,6 +367,7 @@ class TestAutonomousRunnerConfigIntegration(unittest.TestCase):
     def test_runner_retrain_config_from_engine(self):
         from autonomous_runner import AutonomousRunner
         from config import Config
+
         ec = Config()
         runner = AutonomousRunner(engine_config=ec)
         # Retrain config should come from EngineConfig

@@ -32,7 +32,6 @@ def train(
     max_epochs: int = 12,
     val_split: float = 0.15,
     max_per_level: int | None = None,
-    ref_high_augment: int = 0,
     model_size: str = "medium",
     amp: bool = True,
     compile_mode: str | None = None,
@@ -62,12 +61,18 @@ def train(
     sys_argv_backup = list(sys.argv)
     sys.argv = [
         "train_model.py",
-        "--data", data_path,
-        "--output", os.path.join(checkpoint_dir, "model_final.pt"),
-        "--batch-size", str(batch_size),
-        "--epochs", str(max_epochs),
-        "--lr", str(lr_override or 3e-5),
-        "--seed", "42",
+        "--data",
+        data_path,
+        "--output",
+        os.path.join(checkpoint_dir, "model_final.pt"),
+        "--batch-size",
+        str(batch_size),
+        "--epochs",
+        str(max_epochs),
+        "--lr",
+        str(lr_override or 3e-5),
+        "--seed",
+        "42",
     ]
 
     # Add resume if provided
@@ -77,6 +82,7 @@ def train(
         best_path = os.path.join(checkpoint_dir, "checkpoint_best.pt")
         try:
             import shutil
+
             shutil.copy2(resume_path, best_path)
         except OSError:
             pass
@@ -92,6 +98,7 @@ def train(
     if os.path.isfile(final_path) and final_path != best_path:
         try:
             import shutil
+
             shutil.copy2(final_path, best_path)
         except OSError:
             pass

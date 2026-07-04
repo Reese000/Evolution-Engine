@@ -42,20 +42,35 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from datetime import datetime
 from typing import Any
 
 SCHEMA_VERSION = 2
 
 # Fields that are included in checksum (excludes "checksum" itself)
-_CHECKSUMMED_KEYS = sorted([
-    "version", "current_cycle", "best_fitness", "best_level",
-    "best_checkpoint", "champion_program", "strategy_archive",
-    "diversity_score", "consecutive_stalls", "consecutive_errors",
-    "total_errors", "last_cycle_timestamp", "start_timestamp",
-    "cycles_completed", "stop_reason", "population_size",
-    "retrain_config", "metrics_summary",
-])
+_CHECKSUMMED_KEYS = sorted(
+    [
+        "version",
+        "current_cycle",
+        "best_fitness",
+        "best_level",
+        "best_checkpoint",
+        "champion_program",
+        "strategy_archive",
+        "diversity_score",
+        "consecutive_stalls",
+        "consecutive_errors",
+        "total_errors",
+        "last_cycle_timestamp",
+        "start_timestamp",
+        "cycles_completed",
+        "stop_reason",
+        "population_size",
+        "retrain_config",
+        "metrics_summary",
+    ]
+)
 
 
 def _compute_checksum(data: dict[str, Any]) -> str:
@@ -106,16 +121,27 @@ class CycleState:
     # ── Save ──────────────────────────────────────────────────────────
 
     def save(self) -> bool:
-        """Write state to disk with a fresh checksum.
+        """Write state to disk with a fresh checksum using atomic write.
 
-        Returns True on success.
+        Uses temp file + rename to prevent corruption if the process
+        crashes mid-write.  Returns True on success.
         """
         self.data["last_cycle_timestamp"] = datetime.now().isoformat()
         self.data["checksum"] = _compute_checksum(self.data)
         try:
-            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2)
+            dir_name = os.path.dirname(self.path) or "."
+            os.makedirs(dir_name, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(self.data, f, indent=2)
+                os.replace(tmp_path, self.path)
+            except (OSError, PermissionError):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
             return True
         except (OSError, PermissionError):
             return False
@@ -146,15 +172,17 @@ class CycleState:
             return False
 
         # Checksum verification
-        stored = raw.pop("checksum", None)
-        computed = _compute_checksum(raw)
+        # Use dict copy to avoid mutating the caller's dict via .pop()
+        stored = raw.get("checksum", None)
+        raw_for_checksum = {k: v for k, v in raw.items() if k != "checksum"}
+        computed = _compute_checksum(raw_for_checksum)
         if stored is not None and stored != computed:
             self.data = default_cycle_state()
             return False
 
         # Merge into our data (keeps any extra fields from file)
         result = default_cycle_state()
-        result.update(raw)
+        result.update(raw_for_checksum)
         self.data = result
         return True
 

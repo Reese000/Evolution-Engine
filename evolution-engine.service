@@ -1,0 +1,30 @@
+[Unit]
+Description=Evolution Engine — Autonomous Evolution Daemon
+After=network.target
+Documentation=file:///mnt/c/Users/reese/Projects/Evolution%20Engine/README.md
+
+[Service]
+Type=simple
+User=reese
+WorkingDirectory=/mnt/c/Users/reese/Projects/Evolution Engine/
+ExecStart=/usr/bin/python3 autonomous_runner.py --resume --no-limit
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=evolution-engine
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+# Resource limits
+MemoryMax=8G
+CPUQuota=100%
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/mnt/c/Users/reese/Projects/Evolution Engine/
+
+[Install]
+WantedBy=multi-user.target

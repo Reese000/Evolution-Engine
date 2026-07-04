@@ -1,6 +1,21 @@
 #!/bin/bash
 # Shared pre-commit hook for all Projects repos
 # Prevents committing secrets, large files, __pycache__, .pyc, .env, etc.
+# Also runs pre-commit framework hooks (ruff, black, isort) if available.
+
+# --- Run pre-commit framework hooks ---
+if command -v pre-commit &>/dev/null; then
+    pre-commit run --hook-stage pre-commit
+    PRE_COMMIT_EXIT=$?
+    if [ $PRE_COMMIT_EXIT -ne 0 ]; then
+        echo -e "\033[0;31mPre-commit hooks failed (ruff/black/isort). Fix the issues above and try again.\033[0m"
+        exit 1
+    fi
+elif [ -f ".pre-commit-config.yaml" ]; then
+    echo -e "\033[1;33mWARNING: .pre-commit-config.yaml found but pre-commit is not installed.\033[0m"
+    echo "Install it with: pip install pre-commit && pre-commit install"
+    echo ""
+fi
 
 # Colors
 RED='\033[0;31m'

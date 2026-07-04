@@ -40,6 +40,7 @@ def load_champion_traces(
         (sequences, sample_weights, raw_dicts_for_augment, entry_levels)
     """
     from rv32i_mask import decode as _default_decode
+
     if rv32i_decode is None:
         rv32i_decode = _default_decode
 
@@ -69,8 +70,19 @@ def load_champion_traces(
             is_model_generated = not is_reference and entry.get("generation", -1) >= 0
             if fitness <= 0 or (task_score > 0 and task_score < 10.0):
                 continue
-            # Reject model-generated programs that don't solve any task
-            if is_model_generated and task_score <= 0:
+            # Accept model-generated programs only if very high-fitness
+            # (model learns best from top-quality examples, not average ones)
+            if is_model_generated and task_score <= 0 and fitness < 100:
+                continue
+            # Skip Level 10 entries — nearly all have fitness < 100 (0.02% pass rate)
+            # These drag down training quality and cause model regression
+            entry_level = entry.get("level", 0)
+            if entry_level == 10 and not is_reference:
+                continue
+            # Skip short programs (< 10 instructions) — model should learn from
+            # longer programs that solve tasks better (28-30 instr have highest fitness)
+            instr_count = len(entry.get("champion_program", []))
+            if is_model_generated and instr_count < 10:
                 continue
 
             prog = entry.get("champion_program", [])

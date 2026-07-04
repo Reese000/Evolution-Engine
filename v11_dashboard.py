@@ -15,10 +15,14 @@ Usage:
   python3 v11_dashboard.py --metrics        # Show metrics/cycles.jsonl summary
   python3 v11_dashboard.py --report         # Show progress_report.json
 """
-import json, os, re, sys, time, math
+import json
+import os
+import re
+import sys
+import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 # ── Project paths ────────────────────────────────────────────────────
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -28,11 +32,17 @@ _PROGRESS_REPORT_PATH = os.path.join(_PROJECT_ROOT, "progress_report.json")
 
 
 def find_latest_log() -> Optional[str]:
-    log_dir = "/root/continuous_iteration"
-    patterns = ["run_mc_v11_*.log", "run_mc_v10_fixed2_*.log", "run_mc_v101_*.log",
-                "run_mc_v10_*.log", "run_mc_v9_*.log"]
+    log_dir = os.path.join(_PROJECT_ROOT, "continuous_iteration")
+    patterns = [
+        "run_mc_v11_*.log",
+        "run_mc_v10_fixed2_*.log",
+        "run_mc_v101_*.log",
+        "run_mc_v10_*.log",
+        "run_mc_v9_*.log",
+    ]
     best, best_mtime = None, 0
     import glob
+
     for pat in patterns:
         for f in glob.glob(os.path.join(log_dir, pat)):
             mtime = os.path.getmtime(f)
@@ -44,6 +54,7 @@ def find_latest_log() -> Optional[str]:
 # ══════════════════════════════════════════════════════════════════════
 # Phase 7.1: Read from health.json + metrics/cycles.jsonl
 # ══════════════════════════════════════════════════════════════════════
+
 
 def read_health_json(path: str = _HEALTH_PATH) -> Optional[Dict[str, Any]]:
     """Read health.json if it exists. Returns None if not found."""
@@ -78,8 +89,7 @@ def read_metrics_jsonl(path: str = _METRICS_PATH, last_n: Optional[int] = None) 
     return records
 
 
-def compute_metrics_trend(records: List[Dict[str, Any]], metric: str = "fitness",
-                          window: int = 10) -> Dict[str, Any]:
+def compute_metrics_trend(records: List[Dict[str, Any]], metric: str = "fitness", window: int = 10) -> Dict[str, Any]:
     """Compute rolling trend from metrics records."""
     values = []
     for r in records:
@@ -159,12 +169,15 @@ def show_metrics_summary() -> None:
     level_trend = compute_metrics_trend(records, "level")
     time_trend = compute_metrics_trend(records, "cycle_time_seconds")
 
-    print(f"  Fitness:  {fitness_trend.get('current', '?'):.3f} "
-          f"(avg={fitness_trend.get('avg', '?')}, trend={fitness_trend.get('trend', '?')})")
-    print(f"  Level:    {level_trend.get('current', '?')} "
-          f"(trend={level_trend.get('trend', '?')})")
-    print(f"  Cycle time: {time_trend.get('current', '?')}s "
-          f"(avg={time_trend.get('avg', '?')}s)")
+    fit_cur = fitness_trend.get("current")
+    fit_str = f"{fit_cur:.3f}" if isinstance(fit_cur, (int, float)) else "?"
+    lvl_cur = level_trend.get("current")
+    lvl_str = f"{lvl_cur}" if isinstance(lvl_cur, (int, float)) else "?"
+    time_cur = time_trend.get("current")
+    time_str = f"{time_cur:.1f}s" if isinstance(time_cur, (int, float)) else "?"
+    print(f"  Fitness:  {fit_str} " f"(avg={fitness_trend.get('avg', '?')}, trend={fitness_trend.get('trend', '?')})")
+    print(f"  Level:    {lvl_str} " f"(trend={level_trend.get('trend', '?')})")
+    print(f"  Cycle time: {time_str} " f"(avg={time_trend.get('avg', '?')}s)")
     print()
 
     # Strategy distribution
@@ -187,8 +200,10 @@ def show_metrics_summary() -> None:
     for r in recent:
         f = r.get("fitness", 0)
         fl = " *" if isinstance(f, (int, float)) and f > 0 else ""
-        print(f"    C{r.get('cycle', '?'):>3}: F={f:+.3f}{fl} "
-              f"L={r.get('level', '?'):>2} t={r.get('cycle_time_seconds', '?')}s")
+        print(
+            f"    C{r.get('cycle', '?'):>3}: F={f:+.3f}{fl} "
+            f"L={r.get('level', '?'):>2} t={r.get('cycle_time_seconds', '?')}s"
+        )
     print("=" * 60)
 
 
@@ -233,39 +248,50 @@ def parse_log(log_path: str) -> Dict[str, Any]:
             content = f.read()
         except (OSError, PermissionError):
             content = ""
-    lines = content.split('\n')
+    lines = content.split("\n")
 
-    result = {"log_path": log_path, "total_lines": os.path.getsize(log_path),
-              "cycles_completed": 0, "mc_entries": [],
-              "strategy_counts": defaultdict(int),
-              "current_cycle": None, "current_gen": None,
-              "current_level": None, "current_fitness": None,
-              "last_mc": None, "monoculture_caps": 0,
-              "cycle_completion_times": []}
+    result = {
+        "log_path": log_path,
+        "total_lines": os.path.getsize(log_path),
+        "cycles_completed": 0,
+        "mc_entries": [],
+        "strategy_counts": defaultdict(int),
+        "current_cycle": None,
+        "current_gen": None,
+        "current_level": None,
+        "current_fitness": None,
+        "last_mc": None,
+        "monoculture_caps": 0,
+        "cycle_completion_times": [],
+    }
 
     for line in lines:
-        m = re.search(r'\[MetaController\] Cycle (\d+): F=([-\d.]+) L=(\d+) val=([-\d.]+) div=([-\d.]+)', line)
+        m = re.search(r"\[MetaController\] Cycle (\d+): F=([-\d.]+) L=(\d+) val=([-\d.]+) div=([-\d.]+)", line)
         if m:
-            entry = {"cycle": int(m.group(1)), "fitness": float(m.group(2)),
-                     "level": int(m.group(3)),
-                     "val_loss": float(m.group(4)) if m.group(4) != "None" else None,
-                     "diversity": float(m.group(5)), "_timestamp": time.time()}
+            entry = {
+                "cycle": int(m.group(1)),
+                "fitness": float(m.group(2)),
+                "level": int(m.group(3)),
+                "val_loss": float(m.group(4)) if m.group(4) != "None" else None,
+                "diversity": float(m.group(5)),
+                "_timestamp": time.time(),
+            }
             result["mc_entries"].append(entry)
             result["last_mc"] = entry
 
-        m = re.search(r'CYCLE (\d+)/(\d+)', line)
+        m = re.search(r"CYCLE (\d+)/(\d+)", line)
         if m:
             result["current_cycle"] = int(m.group(1))
-        m = re.search(r'Gen\s+(\d+)\s+\|', line)
+        m = re.search(r"Gen\s+(\d+)\s+\|", line)
         if m:
             result["current_gen"] = int(m.group(1))
-        m = re.search(r'Level=(\d+)', line)
+        m = re.search(r"Level=(\d+)", line)
         if m:
             result["current_level"] = int(m.group(1))
-        m = re.search(r'Fitness=\s*([-\d.]+)', line)
+        m = re.search(r"Fitness=\s*([-\d.]+)", line)
         if m:
             result["current_fitness"] = float(m.group(1))
-        m = re.search(r'Cycle (\d+) complete.*?([\d.]+)s', line)
+        m = re.search(r"Cycle (\d+) complete.*?([\d.]+)s", line)
         if m:
             result["cycles_completed"] = int(m.group(1))
             result["last_cycle_time"] = float(m.group(2))
@@ -296,10 +322,19 @@ def format_val_loss_trajectory(mc_entries: List[Dict], width: int = 25) -> str:
 def get_gpu_info() -> str:
     try:
         import subprocess
-        r = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
-                            "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=3)
+
+        r = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
         if r.returncode == 0 and r.stdout.strip():
-            parts = r.stdout.strip().split(', ')
+            parts = r.stdout.strip().split(", ")
             if len(parts) >= 3:
                 return f"GPU: {parts[0]}% | {parts[1]}/{parts[2]}MB | {parts[3]}C"
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -325,7 +360,7 @@ def _draw_live(log_path: str) -> None:
     try:
         with open(log_path) as f:
             first = f.readline().strip()
-            m = re.match(r'\[(\d{2}):(\d{2}):(\d{2})\]', first)
+            m = re.match(r"\[(\d{2}):(\d{2}):(\d{2})\]", first)
             if m:
                 h, mm, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
                 run_start = datetime.now().replace(hour=h, minute=mm, second=s, microsecond=0)
@@ -362,7 +397,7 @@ def _draw_live(log_path: str) -> None:
             if len(mc_entries) >= 2:
                 gaps = []
                 for i in range(1, len(mc_entries)):
-                    t1 = mc_entries[i-1].get("_timestamp", 0)
+                    t1 = mc_entries[i - 1].get("_timestamp", 0)
                     t2 = mc_entries[i].get("_timestamp", 0)
                     if t1 > 0 and t2 > t1:
                         gaps.append(t2 - t1)
@@ -399,8 +434,16 @@ def _draw_live(log_path: str) -> None:
             cycle = data.get("current_cycle", "?")
             gen = data.get("current_gen", "?")
             # Prefer health.json for level/fitness if available
-            level = health.get("current_level", data.get("current_level", "?")) if health else data.get("current_level", "?")
-            fitness = data.get("current_fitness", health.get("current_fitness")) if health else data.get("current_fitness", "?")
+            level = (
+                health.get("current_level", data.get("current_level", "?"))
+                if health
+                else data.get("current_level", "?")
+            )
+            fitness = (
+                data.get("current_fitness", health.get("current_fitness"))
+                if health
+                else data.get("current_fitness", "?")
+            )
             if fitness != "?" and fitness is not None:
                 fs = f"{fitness:+.3f}" + (" *" if fitness > 0 else "")
             else:
@@ -449,8 +492,10 @@ def _draw_live(log_path: str) -> None:
                 for r in recent_m:
                     f = r.get("fitness", 0)
                     fl = " *" if isinstance(f, (int, float)) and f > 0 else ""
-                    print(f"  C{r.get('cycle', '?'):>3}: F={f:+.3f}{fl} "
-                          f"L={r.get('level', '?'):>2} t={r.get('cycle_time_seconds', '?')}s")
+                    print(
+                        f"  C{r.get('cycle', '?'):>3}: F={f:+.3f}{fl} "
+                        f"L={r.get('level', '?'):>2} t={r.get('cycle_time_seconds', '?')}s"
+                    )
             else:
                 # Fallback to log-parsed MC entries
                 recent = mc_entries[-5:] if len(mc_entries) >= 5 else mc_entries

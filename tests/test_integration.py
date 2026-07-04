@@ -18,10 +18,9 @@ import signal
 import sys
 import tempfile
 import time
-import types
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
 
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -58,7 +57,6 @@ def _make_runner(tmpdir: str):
             "retrain_val_split": 0.1,
             "retrain_weight_decay": 0.01,
             "retrain_grad_clip": 1.0,
-            "ref_high_augment": 10,
         },
         "meta_controller": {},
         "autonomous_runner": {
@@ -89,7 +87,6 @@ class TestConfigToRunnerPipeline(unittest.TestCase):
 
     def test_config_loads_into_runner(self):
         """Config values are correctly propagated to the runner."""
-        from autonomous_runner import AutonomousRunner
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runner = _make_runner(tmpdir)
@@ -349,8 +346,7 @@ class TestHealthMonitoring(unittest.TestCase):
 
             # Cycle 1
             hm.set_status("running")
-            hm.write_health({"current_cycle": 1, "best_fitness": 10.0,
-                             "best_level": 1, "error_count": 0})
+            hm.write_health({"current_cycle": 1, "best_fitness": 10.0, "best_level": 1, "error_count": 0})
             with open(os.path.join(tmpdir, "health.json")) as f:
                 h1 = json.load(f)
             self.assertEqual(h1["cycles_completed"], 1)
@@ -358,8 +354,7 @@ class TestHealthMonitoring(unittest.TestCase):
             time.sleep(0.01)
 
             # Cycle 2
-            hm.write_health({"current_cycle": 2, "best_fitness": 25.0,
-                             "best_level": 3, "error_count": 0})
+            hm.write_health({"current_cycle": 2, "best_fitness": 25.0, "best_level": 3, "error_count": 0})
             with open(os.path.join(tmpdir, "health.json")) as f:
                 h2 = json.load(f)
             self.assertEqual(h2["cycles_completed"], 2)
@@ -494,8 +489,7 @@ class TestMetaControllerRunnerIntegration(unittest.TestCase):
         from meta_controller import MetaController
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            mc = MetaController(checkpoint_dir=tmpdir,
-                                initial_val_loss=2.0)
+            mc = MetaController(checkpoint_dir=tmpdir, initial_val_loss=2.0)
 
             # Create a fake checkpoint file
             ckpt_path = os.path.join(tmpdir, "test_ckpt.pt")
@@ -519,10 +513,17 @@ class TestMetaControllerRunnerIntegration(unittest.TestCase):
         # Feed 5 cycles of telemetry
         for c in range(1, 6):
             snap = TelemetrySnapshot(
-                cycle=c, fitness=-3.0 + c * 0.5, level=min(c, 3),
-                champion_words=50, val_loss=3.0 - c * 0.3,
-                diversity=0.3, novelty_size=10, qd_occupied=5,
-                qd_total=100, traces_count=20, retrained=True,
+                cycle=c,
+                fitness=-3.0 + c * 0.5,
+                level=min(c, 3),
+                champion_words=50,
+                val_loss=3.0 - c * 0.3,
+                diversity=0.3,
+                novelty_size=10,
+                qd_occupied=5,
+                qd_total=100,
+                traces_count=20,
+                retrained=True,
                 generations_completed=50,
             )
             mc.update_cycle(snap)
@@ -538,7 +539,7 @@ class TestMetaControllerRunnerIntegration(unittest.TestCase):
 
     def test_meta_controller_state_save_load(self):
         """MetaController state persists across save/load cycle."""
-        from meta_controller import MetaController, TelemetrySnapshot
+        from meta_controller import MetaController
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mc = MetaController(checkpoint_dir=tmpdir)
@@ -559,17 +560,24 @@ class TestMetaControllerRunnerIntegration(unittest.TestCase):
 
     def test_stagnation_detection_full_lifecycle(self):
         """MetaController detects all stagnation types across a lifecycle."""
-        from meta_controller import MetaController, TelemetrySnapshot, StagnationResult
+        from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 
         mc = MetaController(checkpoint_dir="/tmp/test_lifecycle")
 
         # Phase 1: Normal improving
         for c in range(1, 4):
             snap = TelemetrySnapshot(
-                cycle=c, fitness=-3.0 + c, level=c,
-                champion_words=50, val_loss=3.0 - c * 0.5,
-                diversity=0.3, novelty_size=10, qd_occupied=5,
-                qd_total=100, traces_count=20, retrained=True,
+                cycle=c,
+                fitness=-3.0 + c,
+                level=c,
+                champion_words=50,
+                val_loss=3.0 - c * 0.5,
+                diversity=0.3,
+                novelty_size=10,
+                qd_occupied=5,
+                qd_total=100,
+                traces_count=20,
+                retrained=True,
                 generations_completed=50,
             )
             mc.update_cycle(snap)
@@ -578,17 +586,24 @@ class TestMetaControllerRunnerIntegration(unittest.TestCase):
         # Phase 2: Plateau (same fitness for 4 cycles)
         for c in range(4, 8):
             snap = TelemetrySnapshot(
-                cycle=c, fitness=0.0, level=3,
-                champion_words=50, val_loss=1.5,
-                diversity=0.3, novelty_size=10, qd_occupied=5,
-                qd_total=100, traces_count=20, retrained=True,
+                cycle=c,
+                fitness=0.0,
+                level=3,
+                champion_words=50,
+                val_loss=1.5,
+                diversity=0.3,
+                novelty_size=10,
+                qd_occupied=5,
+                qd_total=100,
+                traces_count=20,
+                retrained=True,
                 generations_completed=50,
             )
             mc.update_cycle(snap)
         state = mc.detect_stagnation()
-        self.assertIn(state, [StagnationResult.FITNESS_PLATEAU,
-                              StagnationResult.LEVEL_STALLED,
-                              StagnationResult.COMPOUND_STALL])
+        self.assertIn(
+            state, [StagnationResult.FITNESS_PLATEAU, StagnationResult.LEVEL_STALLED, StagnationResult.COMPOUND_STALL]
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -685,11 +700,13 @@ class TestFullPipelineMock(unittest.TestCase):
 
             # Record several cycles
             for i in range(5):
-                mc.record_cycle({
-                    "cycle": i + 1,
-                    "fitness": 10.0 + i * 5,
-                    "level": i + 1,
-                })
+                mc.record_cycle(
+                    {
+                        "cycle": i + 1,
+                        "fitness": 10.0 + i * 5,
+                        "level": i + 1,
+                    }
+                )
 
             # Read back
             history = mc.get_history()
@@ -712,17 +729,29 @@ class TestFullPipelineMock(unittest.TestCase):
             runner._state["cycles_completed"] = 1
 
             # Mock metrics
-            runner._metrics.record_cycle({
-                "cycle": 1, "fitness": 10.0, "level": 2,
-            })
+            runner._metrics.record_cycle(
+                {
+                    "cycle": 1,
+                    "fitness": 10.0,
+                    "level": 2,
+                }
+            )
 
-            runner._generate_progress_report(1, {
-                "cycle": 1, "fitness": 10.0, "level": 2,
-                "best_fitness": 10.0, "best_level": 2,
-                "val_loss": None, "retrained": False,
-                "population_size": 10, "cycle_time_seconds": 5.0,
-                "errors": 0,
-            })
+            runner._generate_progress_report(
+                1,
+                {
+                    "cycle": 1,
+                    "fitness": 10.0,
+                    "level": 2,
+                    "best_fitness": 10.0,
+                    "best_level": 2,
+                    "val_loss": None,
+                    "retrained": False,
+                    "population_size": 10,
+                    "cycle_time_seconds": 5.0,
+                    "errors": 0,
+                },
+            )
 
             report_path = os.path.join(str(PROJECT_ROOT), "progress_report.json")
             try:
@@ -753,9 +782,12 @@ class TestRetrainFailureRecovery(unittest.TestCase):
             original_lr = runner._retrain_config.retrain_lr
 
             # Mock _run_retrain to return NaN val_loss
-            runner._run_retrain = MagicMock(return_value={
-                "retrained": True, "val_loss": float("nan"),
-            })
+            runner._run_retrain = MagicMock(
+                return_value={
+                    "retrained": True,
+                    "val_loss": float("nan"),
+                }
+            )
 
             result = runner._run_retrain_with_recovery(1, {}, max_attempts=2)
             # After NaN, LR should have been halved
@@ -766,9 +798,7 @@ class TestRetrainFailureRecovery(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             runner = _make_runner(tmpdir)
 
-            runner._run_retrain = MagicMock(
-                side_effect=RuntimeError("CUDA out of memory")
-            )
+            runner._run_retrain = MagicMock(side_effect=RuntimeError("CUDA out of memory"))
 
             result = runner._run_retrain_with_recovery(1, {}, max_attempts=2)
             self.assertFalse(result.get("retrained"))

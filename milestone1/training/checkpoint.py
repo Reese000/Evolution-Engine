@@ -19,12 +19,12 @@ if BASE_DIR not in sys.path:
 def find_existing_checkpoint(checkpoint_dir: str) -> str | None:
     """Find an existing checkpoint file in *checkpoint_dir*.
 
-    Checks for checkpoint_best.pt first, then model_final.pt.
+    Checks for checkpoint_best.pt, then checkpoint_current.pt, then model_final.pt.
 
     Returns:
         Absolute path to the first checkpoint found, or None.
     """
-    for name in ("checkpoint_best.pt", "model_final.pt"):
+    for name in ("checkpoint_best.pt", "checkpoint_current.pt", "model_final.pt"):
         p = os.path.join(checkpoint_dir, name)
         if os.path.isfile(p):
             return p
@@ -41,7 +41,8 @@ def save_training_checkpoint(
 ) -> None:
     """Save the final + best checkpoints to *checkpoint_dir*.
 
-    Also copies final to checkpoint_best.pt for easy resume.
+    Also copies final to checkpoint_best.pt for easy resume,
+    and to checkpoint_current.pt for retrain (full checkpoint with optimizer state).
 
     Args:
         model:            The trained model (may be SWA-wrapped).
@@ -55,6 +56,7 @@ def save_training_checkpoint(
 
     final_path = os.path.join(checkpoint_dir, "model_final.pt")
     best_path = os.path.join(checkpoint_dir, "checkpoint_best.pt")
+    current_path = os.path.join(checkpoint_dir, "checkpoint_current.pt")
 
     # Unwrap SWA model if needed for saving
     save_model = model
@@ -77,5 +79,9 @@ def save_training_checkpoint(
     print(f"[Train] Saved: {os.path.basename(final_path)} (val_loss={best_val_loss:.4f}, epoch={best_epoch + 1})")
 
     import shutil
+
     shutil.copy2(final_path, best_path)
     print(f"[Train] Updated: {os.path.basename(best_path)}")
+
+    shutil.copy2(final_path, current_path)
+    print(f"[Train] Updated: {os.path.basename(current_path)}")

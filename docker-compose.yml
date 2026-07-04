@@ -1,0 +1,99 @@
+# ══════════════════════════════════════════════════════════════════════
+# Evolution Engine — Docker Compose for production deployment
+# ══════════════════════════════════════════════════════════════════════
+
+services:
+  evolution-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CUDA: "false"
+    container_name: evolution-engine
+    restart: unless-stopped
+    volumes:
+      # Persist evolution data across container restarts
+      - ./cycle_data:/app/cycle_data
+      - ./milestone1/checkpoints:/app/milestone1/checkpoints
+      - ./metrics:/app/metrics
+      - ./logs:/app/logs
+      - ./config:/app/config
+      # State files
+      - ./runner_state.json:/app/runner_state.json
+      - ./health.json:/app/health.json
+      - ./progress_report.json:/app/progress_report.json
+    environment:
+      - EE_MAX_CYCLES=${EE_MAX_CYCLES:-100}
+      - EE_TARGET_FITNESS=${EE_TARGET_FITNESS:-200.0}
+      - EE_USE_GPU=${EE_USE_GPU:-false}
+      - EE_POPULATION_SIZE=${EE_POPULATION_SIZE:-50}
+      # Alert webhooks (optional)
+      - EE_DISCORD_WEBHOOK=${EE_DISCORD_WEBHOOK:-}
+      - EE_SLACK_WEBHOOK=${EE_SLACK_WEBHOOK:-}
+      # Email alerts (optional)
+      - EE_ALERT_EMAIL_TO=${EE_ALERT_EMAIL_TO:-}
+      - EE_ALERT_EMAIL_SMTP=${EE_ALERT_EMAIL_SMTP:-}
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,os,sys; d=json.load(open('health.json')) if os.path.isfile('health.json') else {}; sys.exit(0 if d.get('status','') in ('running','idle','') else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ── GPU variant (uncomment to use) ──────────────────────────────
+  # evolution-engine-gpu:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     args:
+  #       CUDA: "true"
+  #   container_name: evolution-engine-gpu
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ./cycle_data:/app/cycle_data
+  #     - ./milestone1/checkpoints:/app/milestone1/checkpoints
+  #     - ./metrics:/app/metrics
+  #     - ./config:/app/config
+  #   environment:
+  #     - EE_USE_GPU=true
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   profiles:
+  #     - gpu
+
+  # ── Prometheus metrics exporter (optional) ────────────────────────
+  prometheus-exporter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CUDA: "false"
+    container_name: evolution-prometheus
+    restart: unless-stopped
+    command: ["python", "-m", "metrics_export"]
+    ports:
+      - "${EE_PROMETHEUS_PORT:-9100}:9100"
+    environment:
+      - EE_PROMETHEUS_PORT=9100
+    profiles:
+      - monitoring
+    depends_on:
+      evolution-engine:
+        condition: service_started
+

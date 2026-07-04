@@ -31,30 +31,30 @@ def train(
     adaptive_freeze: bool = False,
     batch_size: int = 8,
     weight_decay: float = 0.01,
-    patience: int = 5,
+    patience: int = 3,
     grad_clip: float | None = None,
     max_epochs: int = 12,
     val_split: float = 0.15,
     max_per_level: int | None = None,
-    ref_high_augment: int = 0,
     model_size: str = "large",
     amp: bool = True,
     compile_mode: str | None = None,
     swa_start: int | None = None,
     swa_lr: float | None = None,
     grad_accum_steps: int = 1,
+    augmentation_k: int = 8,
     rebuild_dataset: bool = False,
     **kwargs: Any,
 ) -> None:
     """Train the RV32ITransformer on champion program traces."""
+    from data.augmentation import inject_reference_solutions, inject_synthetic_data, register_rename_augment
+    from data.loading import apply_level_cap, load_champion_traces
+    from data.packing import pad_or_pack_sequences
     from rv32i_mask import decode as rv32i_decode
     from rv32i_model import RV32IFieldTokenizer
-    from training.model_factory import load_or_create_model
     from training.checkpoint import find_existing_checkpoint, save_training_checkpoint
+    from training.model_factory import load_or_create_model
     from training.schedule import adjust_dropout, build_optimizer_and_schedulers
-    from data.loading import load_champion_traces, apply_level_cap
-    from data.augmentation import register_rename_augment, inject_synthetic_data, inject_reference_solutions
-    from data.packing import pad_or_pack_sequences
 
     # ── Checkpoint directory ───────────────────────────────────────
     checkpoint_dir = os.path.join(BASE_DIR, "checkpoints")
@@ -77,6 +77,7 @@ def train(
     if device.type == "cuda" and compile_mode:
         try:
             import triton  # noqa: F401
+
             model = torch.compile(model, mode=compile_mode)
             print(f"[Train] torch.compile enabled (mode={compile_mode})")
         except ImportError:
@@ -88,7 +89,9 @@ def train(
     data_path = recurrent_data_path or os.path.join(BASE_DIR, "recurrent_data.jsonl")
     tokenizer = RV32IFieldTokenizer()
     sequences, sample_weights, raw_dicts_for_augment, entry_levels = load_champion_traces(
-        data_path, tokenizer, rv32i_decode=rv32i_decode,
+        data_path,
+        tokenizer,
+        rv32i_decode=rv32i_decode,
     )
 
     if not sequences:
@@ -105,7 +108,7 @@ def train(
     augmented_seqs: list = []
     augmented_weights: list[float] = []
     for _aug_i, instr_dicts in enumerate(raw_dicts_for_augment):
-        variants = register_rename_augment(instr_dicts, k=16)
+        variants = register_rename_augment(instr_dicts, k=augmentation_k)
         parent_weight = sample_weights[_aug_i]
         for variant in variants:
             aug_tokens = tokenizer.encode_trace(variant)
@@ -127,7 +130,11 @@ def train(
 
     # ── Pack or pad sequences ──────────────────────────────────────
     split = pad_or_pack_sequences(
-        sequences, sample_weights, max_seq_len=1024, val_split=val_split, device=device,
+        sequences,
+        sample_weights,
+        max_seq_len=1024,
+        val_split=val_split,
+        device=device,
     )
     train_data = split["train_data"]
     val_data = split["val_data"]
@@ -137,13 +144,18 @@ def train(
     val_weights = split["val_weights"]
 
     # ── Training setup ─────────────────────────────────────────────
-    actual_epochs = min(max_epochs, 30)
+    actual_epochs = min(max_epochs, 8)
     lr = lr_override or 3e-5
     n_train_batches = max(1, len(train_data) // batch_size)
 
     sched = build_optimizer_and_schedulers(
-        model, lr, weight_decay, actual_epochs, n_train_batches,
-        swa_start=swa_start, swa_lr=swa_lr,
+        model,
+        lr,
+        weight_decay,
+        actual_epochs,
+        n_train_batches,
+        swa_start=swa_start,
+        swa_lr=swa_lr,
     )
     optimizer = sched["optimizer"]
     scheduler = sched["scheduler"]
@@ -162,6 +174,7 @@ def train(
 
     from rv32i_model import compute_loss as weighted_compute_loss
     from rv32i_model import compute_loss_with_scheduled_sampling
+
     best_val_loss = float("inf")
     best_epoch = 0
     best_state = None
@@ -183,13 +196,14 @@ def train(
         n_batches = 0
 
         for i in range(0, len(train_data), batch_size):
-            batch = train_data[i:i + batch_size]
-            batch_mask = train_loss_mask[i:i + batch_size] if train_loss_mask is not None else None
-            batch_weights = train_weights[i:i + batch_size] if train_weights is not None else None
+            batch = train_data[i : i + batch_size]
+            batch_mask = train_loss_mask[i : i + batch_size] if train_loss_mask is not None else None
+            batch_weights = train_weights[i : i + batch_size] if train_weights is not None else None
 
             with torch.amp.autocast("cuda", enabled=use_amp):
                 loss = compute_loss_with_scheduled_sampling(
-                    model, batch,
+                    model,
+                    batch,
                     teacher_prob=teacher_prob,
                     noise_std=noise_std,
                     boundary_mask=batch_mask,
@@ -234,10 +248,12 @@ def train(
             vn_batches = 0
             with torch.no_grad():
                 for i in range(0, len(val_data), batch_size):
-                    batch = val_data[i:i + batch_size]
-                    vbatch_mask = val_loss_mask[i:i + batch_size] if val_loss_mask is not None else None
-                    val_batch_weights = val_weights[i:i + batch_size] if val_weights is not None else None
-                    vbatch_loss = weighted_compute_loss(model, batch, boundary_mask=vbatch_mask, sample_weights=val_batch_weights)
+                    batch = val_data[i : i + batch_size]
+                    vbatch_mask = val_loss_mask[i : i + batch_size] if val_loss_mask is not None else None
+                    val_batch_weights = val_weights[i : i + batch_size] if val_weights is not None else None
+                    vbatch_loss = weighted_compute_loss(
+                        model, batch, boundary_mask=vbatch_mask, sample_weights=val_batch_weights
+                    )
                     vloss += vbatch_loss.item()
                     vn_batches += 1
             val_loss = vloss / max(1, vn_batches)
@@ -250,7 +266,9 @@ def train(
         else:
             no_improve += 1
 
-        print(f"[Train] Epoch {epoch + 1}/{actual_epochs}: train={avg_loss:.4f} val={val_loss:.4f} (best={best_val_loss:.4f} @ ep{best_epoch + 1})")
+        print(
+            f"[Train] Epoch {epoch + 1}/{actual_epochs}: train={avg_loss:.4f} val={val_loss:.4f} (best={best_val_loss:.4f} @ ep{best_epoch + 1})"
+        )
 
         # Early stopping
         if no_improve >= patience:

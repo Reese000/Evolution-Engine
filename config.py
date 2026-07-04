@@ -22,11 +22,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from paths import PROJECT_ROOT
-
 
 # ══════════════════════════════════════════════════════════════════════
 # Section dataclasses
@@ -36,6 +35,7 @@ from paths import PROJECT_ROOT
 @dataclass
 class EvolutionSection:
     """Evolution engine parameters."""
+
     population_size: int = 50
     max_generations: int = 200
     mutation_rate: float = 0.3
@@ -63,6 +63,7 @@ class EvolutionSection:
     novelty_threshold: float = 0.15
     use_qd_archive: bool = True
     qd_bonus_weight: float = 0.1
+    qd_bins: int = 20
     use_gpu: bool = False
     use_strategy_archive: bool = True
 
@@ -70,24 +71,26 @@ class EvolutionSection:
 @dataclass
 class RetrainSection:
     """Retrain hyperparameters."""
+
     retrain_lr: float = 3e-5
     retrain_batch_size: int = 8
     retrain_weight_decay: float = 0.01
     retrain_grad_clip: float = 1.0
-    retrain_patience: int = 5
+    retrain_patience: int = 3
     retrain_freeze_layers: int = 0
     retrain_model_size: str = "xlarge"
-    retrain_max_epochs: int = 50
-    retrain_val_split: float = 0.05
+    retrain_max_epochs: int = 8
+    retrain_val_split: float = 0.15
     retrain_max_per_level: int = 0
     retrain_timeout: int = 3600
     retrain_min_examples: int = 5
-    ref_high_augment: int = 50
+    augmentation_k: int = 8
 
 
 @dataclass
 class MetaControllerSection:
     """MetaController tuning bounds and thresholds."""
+
     lr_min: float = 1e-6
     lr_max: float = 3e-4
     freeze_min: int = 0
@@ -104,13 +107,16 @@ class MetaControllerSection:
 @dataclass
 class AutonomousRunnerSection:
     """Autonomous runner parameters."""
-    max_cycles: int = 100
+
+    max_cycles: int | None = 100
     target_fitness: float = 200.0
     generations_per_cycle: int = 100
     health_check_interval: int = 60
     state_file: str = "runner_state.json"
     stop_file: str = "stop"
     max_errors_before_stop: int = 10
+    max_stagnation_cycles: int = 15
+    max_self_correction_attempts: int = 5
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -245,10 +251,12 @@ class Config:
             raise ValueError(f"retrain.retrain_max_epochs must be >= 1, got {r.retrain_max_epochs}")
         if not 0.0 <= r.retrain_val_split <= 1.0:
             raise ValueError(f"retrain.retrain_val_split must be in [0,1], got {r.retrain_val_split}")
+        if r.augmentation_k < 1:
+            raise ValueError(f"retrain.augmentation_k must be >= 1, got {r.augmentation_k}")
 
         # Runner validation
-        if ar.max_cycles < 1:
-            raise ValueError(f"autonomous_runner.max_cycles must be >= 1, got {ar.max_cycles}")
+        if ar.max_cycles is not None and ar.max_cycles < 1:
+            raise ValueError(f"autonomous_runner.max_cycles must be >= 1 or None (no limit), got {ar.max_cycles}")
         if ar.target_fitness < 0:
             raise ValueError(f"autonomous_runner.target_fitness must be >= 0, got {ar.target_fitness}")
 
@@ -275,13 +283,23 @@ def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
 
 
 def _apply_int_env(env_var: str, target: Any, attr: str) -> None:
-    """Apply an integer env var override to a target object."""
+    """Apply an integer env var override to a target object.
+
+    Handles float strings like "3.0" or "5.5" by rounding to the nearest
+    integer instead of silently ignoring them.  Only truly non-numeric
+    strings (e.g. "abc") are silently ignored.
+    """
     val = os.environ.get(env_var)
-    if val is not None:
+    if val is not None and val.strip() != "":
         try:
+            # First try direct int conversion
             setattr(target, attr, int(val))
         except (ValueError, TypeError):
-            pass
+            try:
+                # Try float-then-round for strings like "3.0" or "5.5"
+                setattr(target, attr, round(float(val)))
+            except (ValueError, TypeError):
+                pass
 
 
 def _apply_float_env(env_var: str, target: Any, attr: str) -> None:
@@ -320,7 +338,8 @@ def load_config(
 
     # Apply CLI-style overrides
     if "max_cycles" in overrides:
-        cfg.autonomous_runner.max_cycles = int(overrides["max_cycles"])
+        val = overrides["max_cycles"]
+        cfg.autonomous_runner.max_cycles = None if val is None else int(val)
     if "target_fitness" in overrides:
         cfg.autonomous_runner.target_fitness = float(overrides["target_fitness"])
     if "population_size" in overrides:
@@ -344,18 +363,8 @@ def add_config_args(parser: argparse.ArgumentParser) -> None:
         cfg = load_config(args.config, max_cycles=args.max_cycles)
     """
     parser.add_argument(
-        "--config", type=str, default=None,
-        help="Config file path (default: config/engine_config.json)"
+        "--config", type=str, default=None, help="Config file path (default: config/engine_config.json)"
     )
-    parser.add_argument(
-        "--max-cycles", type=int, default=None,
-        help="Override max cycles from config"
-    )
-    parser.add_argument(
-        "--target-fitness", type=float, default=None,
-        help="Override target fitness from config"
-    )
-    parser.add_argument(
-        "--population-size", type=int, default=None,
-        help="Override population size from config"
-    )
+    parser.add_argument("--max-cycles", type=int, default=None, help="Override max cycles from config")
+    parser.add_argument("--target-fitness", type=float, default=None, help="Override target fitness from config")
+    parser.add_argument("--population-size", type=int, default=None, help="Override population size from config")

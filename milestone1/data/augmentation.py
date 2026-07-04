@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import random
 import sys
-from typing import Any
 
 import torch
 
@@ -132,10 +131,12 @@ def inject_synthetic_data(
         sample_weights: mutable list of floats (extended in-place).
         seed:           RNG seed for reproducibility.
         max_sequences:  Cap on synthetic sequences (default 5000).
-                        50K was too many for 115M model (>30 min/epoch).
     """
+    # Belt-and-suspenders: hard-cap at 5000 to prevent training slowness
+    max_sequences = min(max_sequences, 5000)
     try:
         from synthetic_data import SyntheticDataGenerator
+
         synth_gen = SyntheticDataGenerator(seed=seed)
         synthetic_seqs = synth_gen.generate_all()
         synth_weight = 0.5
@@ -176,8 +177,18 @@ def inject_reference_solutions(
     """
     if ref_copies is None:
         ref_copies = {
-            0: 5, 1: 5, 2: 5, 3: 5, 4: 5, 5: 10, 6: 10, 7: 10,
-            8: 20, 9: 30, 10: 30, 11: 30,
+            0: 5,
+            1: 5,
+            2: 5,
+            3: 5,
+            4: 5,
+            5: 10,
+            6: 10,
+            7: 10,
+            8: 20,
+            9: 30,
+            10: 30,
+            11: 30,
         }
 
     if rv32i_decode is None:
@@ -185,8 +196,8 @@ def inject_reference_solutions(
 
     ref_injected = 0
     try:
-        from tasks_rv32i import LEVELS, get_task_level
         from mutation_proposer import _encode_inst
+        from tasks_rv32i import LEVELS, get_task_level
 
         inject_levels = list(sorted(LEVELS.keys()))  # ALL levels L0-L11
         for level in inject_levels:

@@ -30,8 +30,8 @@ instruction dicts compatible with rv32i_mask encode/decode.
 """
 
 import random
-from typing import Dict, List, Optional, Tuple
 from abc import ABC, abstractmethod
+from typing import Dict, List, Optional
 
 # ──────────────────────────────────────────────────────────────────────
 # RV32I constants
@@ -74,29 +74,21 @@ class TaskLevel(ABC):
         self._rng = random.Random(seed)
 
     @abstractmethod
-    def generate_instance(self) -> dict:
-        ...
+    def generate_instance(self) -> dict: ...
 
     @abstractmethod
-    def verify(self, output: dict, inst: dict) -> float:
-        ...
+    def verify(self, output: dict, inst: dict) -> float: ...
 
     @abstractmethod
-    def difficulty_metric(self) -> float:
-        ...
+    def difficulty_metric(self) -> float: ...
 
     @staticmethod
     @abstractmethod
-    def reference_solution() -> List[dict]:
-        ...
+    def reference_solution() -> List[dict]: ...
 
     def _pick_value(self) -> int:
-        """Pick a random 32-bit register value in signed i32 range."""
-        v = self._rng.randint(0, 0xFFFF_FFFF)
-        # Convert to signed i32: values > 0x7FFFFFFF become negative
-        if v >= 0x80000000:
-            v -= 0x1_0000_0000
-        return v
+        """Pick a random 32-bit register value (unsigned, matches VM representation)."""
+        return self._rng.randint(0, 0xFFFF_FFFF)
 
     def _pick_small(self) -> int:
         return self._rng.randint(1, 15)
@@ -122,6 +114,8 @@ class TaskLevel(ABC):
 def _compute_base_expected(x1_val: int, x2_val: int) -> Dict[int, int]:
     """Compute the base expected register values from L0-L6.
 
+    All values are capped to unsigned 32-bit to match what the VM stores.
+
     L0: x3 = x1
     L1: x4 = x1 + x1
     L2: x5 = x2
@@ -130,9 +124,9 @@ def _compute_base_expected(x1_val: int, x2_val: int) -> Dict[int, int]:
     L5: x8 = 1 if x4 > x6 (signed) else 0
     L6: x9 = x1 + x2
     """
-    x3 = x1_val
+    x3 = _cap32(x1_val)
     x4 = _cap32(x1_val + x1_val)
-    x5 = x2_val
+    x5 = _cap32(x2_val)
     x6 = _cap32(x2_val + x2_val)
     x7 = _cap32(x4 + x6)
     x8 = 1 if _sign32(x4) > _sign32(x6) else 0
@@ -143,13 +137,13 @@ def _compute_base_expected(x1_val: int, x2_val: int) -> Dict[int, int]:
 def _base_ref() -> List[dict]:
     """Reference instructions for cumulative L0-L6."""
     return [
-        {"name": "ADDI", "rd": 3, "rs1": 1, "imm": 0},   # L0: x3 = x1
-        {"name": "ADD", "rd": 4, "rs1": 1, "rs2": 1},    # L1: x4 = x1 + x1
-        {"name": "ADDI", "rd": 5, "rs1": 2, "imm": 0},   # L2: x5 = x2
-        {"name": "ADD", "rd": 6, "rs1": 2, "rs2": 2},    # L3: x6 = x2 + x2
-        {"name": "ADD", "rd": 7, "rs1": 4, "rs2": 6},    # L4: x7 = x4 + x6
-        {"name": "SLT", "rd": 8, "rs1": 6, "rs2": 4},    # L5: x8 = (x4 > x6) i.e. x6 < x4
-        {"name": "ADD", "rd": 9, "rs1": 1, "rs2": 2},    # L6: x9 = x1 + x2
+        {"name": "ADDI", "rd": 3, "rs1": 1, "imm": 0},  # L0: x3 = x1
+        {"name": "ADD", "rd": 4, "rs1": 1, "rs2": 1},  # L1: x4 = x1 + x1
+        {"name": "ADDI", "rd": 5, "rs1": 2, "imm": 0},  # L2: x5 = x2
+        {"name": "ADD", "rd": 6, "rs1": 2, "rs2": 2},  # L3: x6 = x2 + x2
+        {"name": "ADD", "rd": 7, "rs1": 4, "rs2": 6},  # L4: x7 = x4 + x6
+        {"name": "SLT", "rd": 8, "rs1": 6, "rs2": 4},  # L5: x8 = (x4 > x6) i.e. x6 < x4
+        {"name": "ADD", "rd": 9, "rs1": 1, "rs2": 2},  # L6: x9 = x1 + x2
     ]
 
 
@@ -164,7 +158,8 @@ class Level0(TaskLevel):
     def generate_instance(self) -> dict:
         v = self._pick_value()
         return {
-            "level": 0, "difficulty": self.difficulty_metric(),
+            "level": 0,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: v}, "memory": {}},
             "expected_output": {"registers": {3: v}, "memory": {}},
         }
@@ -194,7 +189,8 @@ class Level1(TaskLevel):
         v = self._pick_value()
         d1 = _cap32(v + v)
         return {
-            "level": 1, "difficulty": self.difficulty_metric(),
+            "level": 1,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: v}, "memory": {}},
             "expected_output": {"registers": {3: v, 4: d1}, "memory": {}},
         }
@@ -202,8 +198,11 @@ class Level1(TaskLevel):
     def verify(self, output: dict, inst: dict) -> float:
         exp = inst["expected_output"]
         regs = output.get("registers", {})
-        return 1.0 if (regs.get(3, 0) == exp["registers"].get(3, 0)
-                       and regs.get(4, 0) == exp["registers"].get(4, 0)) else 0.0
+        return (
+            1.0
+            if (regs.get(3, 0) == exp["registers"].get(3, 0) and regs.get(4, 0) == exp["registers"].get(4, 0))
+            else 0.0
+        )
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(2, 1, 1)
@@ -229,7 +228,8 @@ class Level2(TaskLevel):
         v2 = self._pick_value()
         base = _compute_base_expected(v1, v2)
         return {
-            "level": 2, "difficulty": self.difficulty_metric(),
+            "level": 2,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
             "expected_output": {"registers": {3: base[3], 4: base[4], 5: base[5]}, "memory": {}},
         }
@@ -263,7 +263,8 @@ class Level3(TaskLevel):
         v2 = self._pick_value()
         base = _compute_base_expected(v1, v2)
         return {
-            "level": 3, "difficulty": self.difficulty_metric(),
+            "level": 3,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
             "expected_output": {
                 "registers": {3: base[3], 4: base[4], 5: base[5], 6: base[6]},
@@ -300,11 +301,11 @@ class Level4(TaskLevel):
         v2 = self._pick_value()
         base = _compute_base_expected(v1, v2)
         return {
-            "level": 4, "difficulty": self.difficulty_metric(),
+            "level": 4,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
             "expected_output": {
-                "registers": {3: base[3], 4: base[4], 5: base[5],
-                              6: base[6], 7: base[7]},
+                "registers": {3: base[3], 4: base[4], 5: base[5], 6: base[6], 7: base[7]},
                 "memory": {},
             },
         }
@@ -338,11 +339,11 @@ class Level5(TaskLevel):
         v2 = self._pick_value()
         base = _compute_base_expected(v1, v2)
         return {
-            "level": 5, "difficulty": self.difficulty_metric(),
+            "level": 5,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
             "expected_output": {
-                "registers": {3: base[3], 4: base[4], 5: base[5],
-                              6: base[6], 7: base[7], 8: base[8]},
+                "registers": {3: base[3], 4: base[4], 5: base[5], 6: base[6], 7: base[7], 8: base[8]},
                 "memory": {},
             },
         }
@@ -376,11 +377,11 @@ class Level6(TaskLevel):
         v2 = self._pick_value()
         base = _compute_base_expected(v1, v2)
         return {
-            "level": 6, "difficulty": self.difficulty_metric(),
+            "level": 6,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
             "expected_output": {
-                "registers": {3: base[3], 4: base[4], 5: base[5],
-                              6: base[6], 7: base[7], 8: base[8], 9: base[9]},
+                "registers": {3: base[3], 4: base[4], 5: base[5], 6: base[6], 7: base[7], 8: base[8], 9: base[9]},
                 "memory": {},
             },
         }
@@ -417,7 +418,8 @@ class Level7(TaskLevel):
         base[10] = val1
         memory = {addr1: val1}
         return {
-            "level": 7, "difficulty": self.difficulty_metric(),
+            "level": 7,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: addr1, 2: v2}, "memory": memory},
             "expected_output": {"registers": base, "memory": memory},
         }
@@ -460,7 +462,8 @@ class Level8(TaskLevel):
         base[11] = _cap32(val1 + val2)
         memory = {addr1: val1, addr2: val2}
         return {
-            "level": 8, "difficulty": self.difficulty_metric(),
+            "level": 8,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: addr1, 2: addr2}, "memory": memory},
             "expected_output": {"registers": base, "memory": memory},
         }
@@ -513,7 +516,8 @@ class Level9(TaskLevel):
         base[12] = total
 
         return {
-            "level": 9, "difficulty": self.difficulty_metric(),
+            "level": 9,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: base_addr, 2: count}, "memory": mem_dict},
             "expected_output": {"registers": base, "memory": mem_dict},
         }
@@ -545,11 +549,11 @@ class Level9(TaskLevel):
             {"name": "LW", "rd": 15, "rs1": 2, "imm": 0},
             {"name": "ADD", "rd": 11, "rs1": 10, "rs2": 15},
             # L9 loop: sum mem[x1..x1+x2-1] -> x12
-            {"name": "ADDI", "rd": 15, "rs1": 0, "imm": 0},   # x15 = 0 (sum)
-            {"name": "ADDI", "rd": 16, "rs1": 0, "imm": 0},   # x16 = 0 (i)
+            {"name": "ADDI", "rd": 15, "rs1": 0, "imm": 0},  # x15 = 0 (sum)
+            {"name": "ADDI", "rd": 16, "rs1": 0, "imm": 0},  # x16 = 0 (i)
             {"name": "SLLI", "rd": 20, "rs1": 16, "imm": 2},  # x20 = i * 4
-            {"name": "ADD", "rd": 17, "rs1": 1, "rs2": 20},   # x17 = base + i*4
-            {"name": "LW", "rd": 18, "rs1": 17, "imm": 0},    # x18 = mem[base+i*4]
+            {"name": "ADD", "rd": 17, "rs1": 1, "rs2": 20},  # x17 = base + i*4
+            {"name": "LW", "rd": 18, "rs1": 17, "imm": 0},  # x18 = mem[base+i*4]
             {"name": "ADD", "rd": 15, "rs1": 15, "rs2": 18},  # sum += val
             {"name": "ADDI", "rd": 16, "rs1": 16, "imm": 1},  # i++
             {"name": "BLT", "rd": 0, "rs1": 16, "rs2": 2, "imm": -20},
@@ -583,7 +587,8 @@ class Level10(TaskLevel):
         base[13] = max_val
 
         return {
-            "level": 10, "difficulty": self.difficulty_metric(),
+            "level": 10,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": {1: base_addr, 2: count}, "memory": mem_dict},
             "expected_output": {"registers": base, "memory": mem_dict},
         }
@@ -624,11 +629,11 @@ class Level10(TaskLevel):
             {"name": "BLT", "rd": 0, "rs1": 16, "rs2": 2, "imm": -20},
             {"name": "ADDI", "rd": 12, "rs1": 15, "imm": 0},
             # L10: max loop
-            {"name": "LW", "rd": 13, "rs1": 1, "imm": 0},     # x13 = mem[x1] (init max)
-            {"name": "ADDI", "rd": 16, "rs1": 0, "imm": 1},   # i = 1
+            {"name": "LW", "rd": 13, "rs1": 1, "imm": 0},  # x13 = mem[x1] (init max)
+            {"name": "ADDI", "rd": 16, "rs1": 0, "imm": 1},  # i = 1
             {"name": "SLLI", "rd": 20, "rs1": 16, "imm": 2},  # x20 = i * 4
-            {"name": "ADD", "rd": 17, "rs1": 1, "rs2": 20},   # addr = base + i*4
-            {"name": "LW", "rd": 18, "rs1": 17, "imm": 0},    # val
+            {"name": "ADD", "rd": 17, "rs1": 1, "rs2": 20},  # addr = base + i*4
+            {"name": "LW", "rd": 18, "rs1": 17, "imm": 0},  # val
             {"name": "SLT", "rd": 19, "rs1": 13, "rs2": 18},  # x19 = 1 if x13 < x18 (SIGNED)
             {"name": "BEQ", "rd": 0, "rs1": 19, "rs2": 0, "imm": 8},  # skip if x13 >= val
             {"name": "ADDI", "rd": 13, "rs1": 18, "imm": 0},  # x13 = val (new max)
@@ -658,7 +663,8 @@ class Level11(TaskLevel):
         base[14] = fib_n
         inputs = {1: n, 2: v2}
         return {
-            "level": 11, "difficulty": self.difficulty_metric(),
+            "level": 11,
+            "difficulty": self.difficulty_metric(),
             "inputs": {"registers": inputs, "memory": {}},
             "expected_output": {"registers": base, "memory": {}},
         }
@@ -683,9 +689,9 @@ class Level11(TaskLevel):
         BLT jumps -16 bytes back to loop body.
         """
         return _base_ref() + [
-            {"name": "ADDI", "rd": 15, "rs1": 0, "imm": 0},   # a = 0
-            {"name": "ADDI", "rd": 16, "rs1": 0, "imm": 1},   # b = 1
-            {"name": "ADDI", "rd": 17, "rs1": 0, "imm": 0},   # i = 0
+            {"name": "ADDI", "rd": 15, "rs1": 0, "imm": 0},  # a = 0
+            {"name": "ADDI", "rd": 16, "rs1": 0, "imm": 1},  # b = 1
+            {"name": "ADDI", "rd": 17, "rs1": 0, "imm": 0},  # i = 0
             {"name": "BEQ", "rd": 0, "rs1": 1, "rs2": 0, "imm": 20},  # if n==0 skip loop
             {"name": "ADD", "rd": 18, "rs1": 15, "rs2": 16},  # temp = a+b
             {"name": "ADDI", "rd": 15, "rs1": 16, "imm": 0},  # a = b
@@ -694,6 +700,150 @@ class Level11(TaskLevel):
             {"name": "BLT", "rd": 0, "rs1": 17, "rs2": 1, "imm": -16},  # if i<n: loop
             {"name": "ADDI", "rd": 14, "rs1": 15, "imm": 0},  # x14 = a = F(n)
         ]
+
+
+# ===========================================================================
+# Secondary tasks (multi-task fitness extension)
+# ===========================================================================
+
+
+class BitManipulationTask(TaskLevel):
+    """Bitwise ops: x15 = x1 | mask, x16 = x1 & mask, x17 = x1 ^ mask.
+
+    Tests OR, AND, XOR on a random 32-bit value. Each operation uses a
+    different mask to exercise distinct bit patterns.
+    """
+
+    def generate_instance(self) -> dict:
+        v = self._pick_value()
+        mask_or = 0xFF00FF00
+        mask_and = 0x00FFFF00
+        mask_xor = 0xAAAAAAAA
+        return {
+            "level": -1,
+            "difficulty": 1.0,
+            "inputs": {"registers": {1: v}, "memory": {}},
+            "expected_output": {
+                "registers": {
+                    15: _cap32(v | mask_or),
+                    16: _cap32(v & mask_and),
+                    17: _cap32(v ^ mask_xor),
+                },
+                "memory": {},
+            },
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]["registers"]
+        regs = output.get("registers", {})
+        for r in [15, 16, 17]:
+            if regs.get(r, 0) != exp.get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(3, 1, 1)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        return [
+            {"name": "ORI", "rd": 15, "rs1": 1, "imm": 0xFF00},
+            {"name": "ANDI", "rd": 16, "rs1": 1, "imm": 0xFF00},
+            {"name": "XORI", "rd": 17, "rs1": 1, "imm": 0xAA},
+        ]
+
+
+class ArithmeticTask(TaskLevel):
+    """Arithmetic: x15 = x1 + x2, x16 = x1 - x2, x17 = (x1 << 2) + x2.
+
+    Tests ADD, SUB (via ADDI + SUB pseudo), and shift+add in a single
+    evaluation. Uses only RV32I base instructions.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_value()
+        v2 = self._pick_value()
+        return {
+            "level": -1,
+            "difficulty": 1.0,
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {
+                "registers": {
+                    15: _cap32(v1 + v2),
+                    16: _cap32(v1 - v2),
+                    17: _cap32((v1 << 2) + v2),
+                },
+                "memory": {},
+            },
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]["registers"]
+        regs = output.get("registers", {})
+        for r in [15, 16, 17]:
+            if regs.get(r, 0) != exp.get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(3, 1, 2)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        return [
+            {"name": "ADD", "rd": 15, "rs1": 1, "rs2": 2},
+            {"name": "SUB", "rd": 16, "rs1": 1, "rs2": 2},
+            {"name": "SLLI", "rd": 18, "rs1": 1, "imm": 2},
+            {"name": "ADD", "rd": 17, "rs1": 18, "rs2": 2},
+        ]
+
+
+class MemoryAccessTask(TaskLevel):
+    """Memory store/load: store x2 at mem[x1], load into x15;
+    store (x2+1) at mem[x1+4], load into x16.
+
+    Tests SW and LW with word-aligned addressing.
+    """
+
+    def generate_instance(self) -> dict:
+        addr = self._pick_addr()
+        val = self._pick_value()
+        val_plus_1 = _cap32(val + 1)
+        return {
+            "level": -1,
+            "difficulty": 1.0,
+            "inputs": {"registers": {1: addr, 2: val}, "memory": {}},
+            "expected_output": {
+                "registers": {15: val, 16: val_plus_1},
+                "memory": {addr: val, _cap32(addr + 4): val_plus_1},
+            },
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        exp_regs = exp.get("registers", {})
+        for r in [15, 16]:
+            if regs.get(r, 0) != exp_regs.get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(4, 1, 2)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        return [
+            {"name": "SW", "rd": 0, "rs1": 1, "rs2": 2, "imm": 0},
+            {"name": "ADDI", "rd": 19, "rs1": 2, "imm": 1},
+            {"name": "ADDI", "rd": 20, "rs1": 1, "imm": 4},
+            {"name": "SW", "rd": 0, "rs1": 20, "rs2": 19, "imm": 0},
+            {"name": "LW", "rd": 15, "rs1": 1, "imm": 0},
+            {"name": "LW", "rd": 16, "rs1": 20, "imm": 0},
+        ]
+
+
+SECONDARY_TASKS = [BitManipulationTask, ArithmeticTask, MemoryAccessTask]
 
 
 # ===========================================================================
@@ -740,10 +890,7 @@ def reference_solution(level: int, **kwargs) -> list[dict]:
 
 def generate_all_tasks(seed: int = 42):
     rng = random.Random(seed)
-    return [
-        LEVELS[l](seed=rng.randint(0, 2**31)).generate_instance()
-        for l in sorted(LEVELS.keys())
-    ]
+    return [LEVELS[l](seed=rng.randint(0, 2**31)).generate_instance() for l in sorted(LEVELS.keys())]
 
 
 # ===========================================================================
@@ -752,10 +899,13 @@ def generate_all_tasks(seed: int = 42):
 
 if __name__ == "__main__":
     import sys
+
     HAVE_ENCODE = False
     try:
         sys.path.insert(0, "../milestone0/logit-masking")
-        from rv32i_mask import encode as rv32_encode, decode as rv32_decode
+        from rv32i_mask import decode as rv32_decode
+        from rv32i_mask import encode as rv32_encode
+
         HAVE_ENCODE = True
     except ImportError:
         pass
@@ -780,8 +930,10 @@ if __name__ == "__main__":
         }
         score = task.verify(perfect_output, inst)
         ok = "PASS" if score >= 1.0 else "FAIL"
-        print(f"  Level {lvl_num:2d}: diff={inst['difficulty']:6.0f}, "
-              f"regs={n_regs}, mem={n_mem}, score={score:.1f} ({ok})")
+        print(
+            f"  Level {lvl_num:2d}: diff={inst['difficulty']:6.0f}, "
+            f"regs={n_regs}, mem={n_mem}, score={score:.1f} ({ok})"
+        )
         if score < 1.0:
             all_pass = False
 
@@ -792,8 +944,9 @@ if __name__ == "__main__":
                 for i, instr_dict in enumerate(ref):
                     encoded = rv32_encode(**instr_dict)
                     decoded = rv32_decode(encoded)
-                    assert decoded["name"] == instr_dict["name"].upper(), \
-                        f"Round-trip mismatch: got {decoded['name']} expected {instr_dict['name']}"
+                    assert (
+                        decoded["name"] == instr_dict["name"].upper()
+                    ), f"Round-trip mismatch: got {decoded['name']} expected {instr_dict['name']}"
                 print(f"    All {len(ref)} instructions encode/decode OK")
             except Exception as e:
                 print(f"    REF ENCODE ERROR: {e}")
