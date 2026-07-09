@@ -67,6 +67,18 @@ class EvolutionSection:
     use_gpu: bool = False
     use_strategy_archive: bool = True
 
+    # Mutation rate scheduling
+    use_mutation_scheduler: bool = True
+    mutation_rate_start: float = 0.5
+    mutation_rate_end: float = 0.1
+    mutation_schedule_generations: int = 200
+
+    # Temperature annealing
+    use_temperature_annealing: bool = True
+    temperature_start: float = 2.0
+    temperature_end: float = 0.5
+    temperature_schedule_generations: int = 200
+
 
 @dataclass
 class RetrainSection:
@@ -212,6 +224,12 @@ class Config:
         _apply_int_env("EE_SEED", self.evolution, "seed")
         _apply_int_env("EE_MAX_LEVEL", self.evolution, "max_level")
         _apply_bool_env("EE_USE_GPU", self.evolution, "use_gpu")
+        _apply_float_env("EE_MUTATION_RATE_START", self.evolution, "mutation_rate_start")
+        _apply_float_env("EE_MUTATION_RATE_END", self.evolution, "mutation_rate_end")
+        _apply_int_env("EE_MUTATION_SCHEDULE_GENERATIONS", self.evolution, "mutation_schedule_generations")
+        _apply_float_env("EE_TEMPERATURE_START", self.evolution, "temperature_start")
+        _apply_float_env("EE_TEMPERATURE_END", self.evolution, "temperature_end")
+        _apply_int_env("EE_TEMPERATURE_SCHEDULE_GENERATIONS", self.evolution, "temperature_schedule_generations")
 
         # Retrain overrides
         _apply_float_env("EE_RETRAIN_LR", self.retrain, "retrain_lr")
@@ -241,6 +259,22 @@ class Config:
             raise ValueError(f"evolution.elite_ratio must be in [0,1], got {e.elite_ratio}")
         if e.max_level < 1:
             raise ValueError(f"evolution.max_level must be >= 1, got {e.max_level}")
+        if not 0.0 <= e.mutation_rate_start <= 1.0:
+            raise ValueError(f"evolution.mutation_rate_start must be in [0,1], got {e.mutation_rate_start}")
+        if not 0.0 <= e.mutation_rate_end <= 1.0:
+            raise ValueError(f"evolution.mutation_rate_end must be in [0,1], got {e.mutation_rate_end}")
+        if e.mutation_schedule_generations < 1:
+            raise ValueError(
+                f"evolution.mutation_schedule_generations must be >= 1, got {e.mutation_schedule_generations}"
+            )
+        if not 0.0 <= e.temperature_start <= 5.0:
+            raise ValueError(f"evolution.temperature_start must be in [0,5], got {e.temperature_start}")
+        if not 0.0 <= e.temperature_end <= 5.0:
+            raise ValueError(f"evolution.temperature_end must be in [0,5], got {e.temperature_end}")
+        if e.temperature_schedule_generations < 1:
+            raise ValueError(
+                f"evolution.temperature_schedule_generations must be >= 1, got {e.temperature_schedule_generations}"
+            )
 
         # Retrain validation
         if r.retrain_lr <= 0:

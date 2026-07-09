@@ -687,6 +687,23 @@ class EvolutionConfig:
     # Model-guided generation — boosted after torch.compile removal
     # (inference now 300ms per call, can afford higher MG ratios)
     model_guided_ratio: float | None = None
+
+    # Mutation rate scheduling — decay from high to low over generations
+    # to enable broad exploration early and fine-grained exploitation later.
+    # Works alongside adaptive mutation: scheduler sets the base rate, adaptive
+    # adjusts around it based on fitness velocity.
+    use_mutation_scheduler: bool = True
+    mutation_rate_start: float = 0.5
+    mutation_rate_end: float = 0.1
+    mutation_schedule_generations: int = 200
+
+    # Temperature annealing for model-guided generation — smooth decay from
+    # high temperature (exploration) to low temperature (exploitation) over
+    # the evolution run. Replaces the stepped hard-coded gen ranges.
+    use_temperature_annealing: bool = True
+    temperature_start: float = 2.0
+    temperature_end: float = 0.5
+    temperature_schedule_generations: int = 200
     model_guided_ratio_low: float = 0.2
     model_guided_ratio_mid: float = 0.5
     model_guided_ratio_high: float = 0.6
@@ -713,6 +730,20 @@ class EvolutionConfig:
             raise ValueError(f"crossover_rate must be in [0.0, 1.0], got {self.crossover_rate}")
         if not 0.0 <= self.elite_ratio <= 0.5:
             raise ValueError(f"elite_ratio must be in [0.0, 0.5], got {self.elite_ratio}")
+        if not 0.0 <= self.mutation_rate_start <= 1.0:
+            raise ValueError(f"mutation_rate_start must be in [0.0, 1.0], got {self.mutation_rate_start}")
+        if not 0.0 <= self.mutation_rate_end <= 1.0:
+            raise ValueError(f"mutation_rate_end must be in [0.0, 1.0], got {self.mutation_rate_end}")
+        if self.mutation_schedule_generations < 1:
+            raise ValueError(f"mutation_schedule_generations must be >= 1, got {self.mutation_schedule_generations}")
+        if not 0.0 <= self.temperature_start <= 5.0:
+            raise ValueError(f"temperature_start must be in [0.0, 5.0], got {self.temperature_start}")
+        if not 0.0 <= self.temperature_end <= 5.0:
+            raise ValueError(f"temperature_end must be in [0.0, 5.0], got {self.temperature_end}")
+        if self.temperature_schedule_generations < 1:
+            raise ValueError(
+                f"temperature_schedule_generations must be >= 1, got {self.temperature_schedule_generations}"
+            )
         if self.tournament_size < 2:
             raise ValueError(f"tournament_size must be >= 2, got {self.tournament_size}")
         if self.tournament_size > self.population_size:
@@ -1064,6 +1095,12 @@ class EvolutionEngine:
         adaptive adjustments. This prevents progressive drift where each
         generation's adaptation stacks on top of the last.
 
+        R42: When mutation scheduler is active, the scheduler updates
+        _original_mutation_rate each generation to linearly decay from
+        mutation_rate_start → mutation_rate_end. The adaptive system then
+        adjusts around the scheduled base based on fitness velocity,
+        combining broad exploration schedule with velocity-responsive tuning.
+
         Returns an effective mutation rate in [_adaptive_mutation_floor, _adaptive_mutation_ceil].
         """
         vel = self._fitness_velocity
@@ -1300,13 +1337,26 @@ class EvolutionEngine:
                 _precomputed_bonus_threshold = max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1)))
                 self._bonus_threshold_cache = (lvl, _precomputed_bonus_threshold)
 
-                # R28: Apply adaptive mutation rate based on fitness velocity.
-                # Only when external params haven't explicitly set mutation_rate.
-                # R33: Store original config mutation_rate to prevent progressive
-                # drift -- without this, each generation's adaptive value becomes
-                # the base for the next, causing the rate to diverge from the
-                # originally configured value over time.
-                if gen > 5:  # let velocity accumulate a few data points first
+                # R42: Mutation rate scheduler — decays base rate from
+                # mutation_rate_start (0.5) → mutation_rate_end (0.1) over
+                # mutation_schedule_generations. This enables broad exploration
+                # early and fine-grained exploitation later in the run.
+                # The scheduled base feeds into the adaptive mutation system
+                # which adjusts around it based on fitness velocity.
+                if self.config.use_mutation_scheduler:
+                    sched_progress = gen / max(1, self.config.mutation_schedule_generations)
+                    sched_progress = min(1.0, sched_progress)
+                    scheduled_base = (
+                        self.config.mutation_rate_start
+                        + (self.config.mutation_rate_end - self.config.mutation_rate_start) * sched_progress
+                    )
+                    # Update original rate so adaptive system tracks the new base
+                    self._original_mutation_rate = scheduled_base
+                    if gen > 5:  # let velocity accumulate a few data points first
+                        self.config.mutation_rate = self._compute_adaptive_mutation_rate()
+                    else:
+                        self.config.mutation_rate = scheduled_base
+                elif gen > 5:  # fallback: adaptive-only (no scheduler)
                     self.config.mutation_rate = self._compute_adaptive_mutation_rate()
 
                 # 1. Generate challengers
@@ -2753,16 +2803,27 @@ class EvolutionEngine:
         num_replace = max(1, int(len(challengers) * model_ratio))
         replacements = 0
 
-        # R34: Hoist generation-dependent temperature scheduling out of the
-        # prefix_counts loop -- temperature depends only on generation number,
-        # not prefix_count, so computing it N times is redundant.
+        # R42: Temperature annealing — smoothly decay model temperature from
+        # temperature_start (2.0) to temperature_end (0.5) over the generation
+        # schedule. This provides broad exploration early (diverse completions)
+        # and focused exploitation late (high-quality completions).
+        # Replaces the old stepped approach (1.2→0.9→0.6) with continuous decay.
         gen = getattr(self, "current_generation", 0)
-        if gen < 10:
-            model_temp = 1.2
-        elif gen < 30:
-            model_temp = 0.9
+        if self.config.use_temperature_annealing:
+            anneal_progress = gen / max(1, self.config.temperature_schedule_generations)
+            anneal_progress = min(1.0, anneal_progress)
+            model_temp = (
+                self.config.temperature_start
+                + (self.config.temperature_end - self.config.temperature_start) * anneal_progress
+            )
         else:
-            model_temp = 0.6
+            # Fallback: old stepped approach
+            if gen < 10:
+                model_temp = 1.2
+            elif gen < 30:
+                model_temp = 0.9
+            else:
+                model_temp = 0.6
 
         # R34: CUDA sync once before the entire loop (was inside per-prefix
         # iteration). Prevents driver race conditions on CUDA 13.0.
@@ -3123,6 +3184,18 @@ class EvolutionEngine:
         results: list[dict[str, Any]],
     ) -> tuple[list[list[int]], list[float]]:
         """Select elite challengers for detailed evaluation.
+
+        Implements tournament selection with elitism:
+        1. ELITISM: Top elite_ratio (default 10%) by stage-1 fitness are
+           preserved — guaranteed to get detailed evaluation. This prevents
+           the best candidates from being lost due to stochastic effects.
+        2. TOURNAMENT SELECTION: Remaining slots are filled via adaptive
+           tournament selection (tournament_size adjusted by population
+           diversity). Each tournament draws k random candidates and picks
+           the best, applying selection pressure while maintaining diversity.
+        3. DEDUP: Tournament winners are deduplicated against elites via
+           lightweight fingerprint (length + first/last word hash) to
+           prevent redundant evaluations.
 
         Uses heapq.nsmallest for O(N log k) top-k selection instead of
         full O(N log N) sort. For population=50, elite_size=5, this
