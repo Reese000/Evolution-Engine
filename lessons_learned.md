@@ -144,3 +144,15 @@
 - **Hardcoded paths**: `/root/` paths exist in legacy files (v9_monitor, v9_to_v10_watcher, run_multi_cycle.py) but these are Docker/container fallbacks. The core pipeline (paths.py → autonomous_runner.py → evolution_engine.py) uses centralized path resolution.
 - **Cleanup**: Removed unused `setup_logging` import from autonomous_runner.py. The `from __future__ import annotations` is required for type hint syntax.
 - **Lesson**: Always verify import usage with grep before removing — some "unused" imports like `Path` may be used in inline comments or docstrings.
+
+## 2026-07-09 — Phase 8 Continuation: 42 New Integration Tests + Finalization
+
+- **Problem**: The Phase 8 work was stalled with modified files and untracked new modules (champion_archive.py, checkpoint_manager.py, progression_tracker.py) lacking dedicated integration tests. 39 test files existed but the new modules had only unit-level coverage in test_champion_archive_training.py.
+- **Solution**: Created 42 new integration tests across 3 new test files:
+  1. **test_champion_archive_integration.py** (12 tests): Add/persist lifecycle, dedup, eviction, tiered/weighted sampling, recurrent data export, stats reporting.
+  2. **test_checkpoint_manager_integration.py** (8 tests): Save/load roundtrip, config mismatch detection, allow_mismatch override, backup/exists, atomic write integrity.
+  3. **test_progression_tracker_integration.py** (22 tests): Metrics persistence, fitness/val_loss/words trends, stagnation detection, MG ratio calculation, TuningPolicy adjustment pipeline (fitness plateau, val_loss increasing/decreasing, cooldown, eligibility), ParameterActuator application with bounds clamping.
+- **Code quality pass**: Verified all core modules use structured logging (`get_logger()` from `logging_config`), no `print()` in core pipeline files. Hardcoded `/root/` paths exist only in legacy/watcher scripts (v9_monitor, v9_to_v10_watcher). All new modules have comprehensive docstrings.
+- **Documentation**: Updated README.md (test count 238→1400+, new modules in project structure, expanded tests listing). Updated lessons_learned.md with this entry.
+- **Total**: 1373/1373 tests passing across 42 test files.
+- **Lesson**: When creating fresh ProgressionTracker instances in tests, always use a temp directory path — the default path (`champions/progression.jsonl`) may pick up stale data from the filesystem, causing spurious failures. TuningPolicy._eligible() checks same-param-block BEFORE cooldown, so tests that verify cooldown must first adjust a different parameter. val_loss_trend with None values is handled correctly by filtering cycles with None val_loss. Compute_adjustments fires on any actionable signal (including decreasing val_loss), so nominal-tests must use flat metric values.`

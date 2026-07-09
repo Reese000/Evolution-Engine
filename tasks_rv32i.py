@@ -703,6 +703,481 @@ class Level11(TaskLevel):
 
 
 # ===========================================================================
+# Level 12 — Self-Modifying Addition: x15 = x1 + x2
+# ===========================================================================
+#
+# The champion must construct an ADDI x15, x1, imm instruction word at
+# runtime, store it to R/W memory, and jump to execute it.  x2 provides
+# the immediate constant.  This is the first level where the program
+# modifies its own code at runtime.
+#
+# Reference solution mechanics (build ADDI x15, x1, x2):
+#   word = (x2 << 20) | (rs1=1 << 15) | (rd=15 << 7) | opcode=0x13
+#        = (x2 << 20) | 0x8000 | 0x780 | 0x13
+#        = (x2 << 20) | 0x8793
+#
+# The lower 20 bits (0x08793) are built via LUI + ORI, then OR'd with
+# the shifted immediate.  The resulting word is SW'd to scratch memory
+# and JALR'd to execute, placing x1 + x2 into x15.
+
+
+class Level12(TaskLevel):
+    """Self-modifying code: construct ADDI x15, x1, x2 and execute it.
+
+    The program must compute the encoding of ``ADDI x15, x1, x2``,
+    store it to writable scratch memory, and jump there with JALR.
+    After execution x15 == value(x1) + value(x2).
+
+    Requires 7+ instructions for instruction-word construction alone,
+    plus L0-L6 base.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()  # keeps expected regs predictable
+        v2 = self._rng.randint(1, 127)  # constant small enough for ADDI imm
+        base = _compute_base_expected(v1, v2)
+        base[15] = _cap32(v1 + v2)
+        inputs = {1: v1, 2: v2}
+        return {
+            "level": 12,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": inputs, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        for r in range(3, 10):  # L0-L6
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        if regs.get(15, 0) != exp["registers"].get(15, 0):  # L12
+            return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(30, 4, 16)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        """L0-L6 base + self-modifying ADDI construct-and-execute.
+
+        Instruction word for ADDI x15, x1, x2:
+          word = (x2 << 20) | 0x8793
+
+        The lower constant 0x00008793 is built from:
+          LUI  x20, 2     -> x20 = 0x2000
+          SLLI x20, x20, 2 -> x20 = 0x8000
+          ORI  x20, x20, 0x793 -> x20 = 0x8793
+
+        Then OR'd with (x2 << 20) and stored at a safe scratch address.
+        """
+        return _base_ref() + [
+            # ---- Build the instruction-word constant 0x8793 ----
+            # 0x8793 = 0b1000_0111_1001_0011 = bits 19:0 of ADDI x15, x1, imm
+            # Approach: LUI + SLLI + ORI
+            {"name": "LUI", "rd": 20, "imm": 2},  # x20 = 0x2000
+            {"name": "SLLI", "rd": 20, "rs1": 20, "imm": 2},  # x20 = 0x8000
+            {"name": "ORI", "rd": 20, "rs1": 20, "imm": 0x793},  # x20 = 0x8793
+            # ---- Shift x2 to bits 31:20 ----
+            {"name": "SLLI", "rd": 21, "rs1": 2, "imm": 20},  # x21 = x2 << 20
+            # ---- Combine: word = (x2 << 20) | 0x8793 ----
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 20},  # x21 = instruction word
+            # ---- Store to scratch (address 0x40, word-aligned) ----
+            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x40},  # x22 = scratch addr
+            {"name": "SW", "rd": 0, "rs1": 22, "rs2": 21, "imm": 0},  # mem[0x40] = instr
+            # ---- Jump to execute ----
+            {"name": "JALR", "rd": 0, "rs1": 22, "imm": 0},
+            # After JALR, the stored ADDI x15, x1, x2 runs. The VM
+            # sequential executes until EBREAK or timeout, so the frame
+            # does NOT need an explicit EBREAK here — the VM halts after
+            # the modified instruction (which terminates normally).
+        ]
+
+
+# ===========================================================================
+# Level 13 — Self-Modifying Multi-Instruction: x16 = x1 + 100 + x2
+# ===========================================================================
+#
+# The champion writes TWO instructions to consecutive memory locations and
+# executes both sequentially: first an ADDI that computes an intermediate
+# result, then a second ADDI that computes the final output from it.
+# This tests the ability to construct and execute multi-instruction
+# self-modifying code sequences.
+
+
+class Level13(TaskLevel):
+    """Dual self-modifying code: write two instructions, execute in sequence.
+
+    The program writes:
+      1. ADDI x16, x1, 100   (compute intermediate)
+      2. ADDI x16, x16, x2   (add x2 to intermediate, reusing x16)
+
+    to consecutive memory addresses, then jumps to the first one.
+    After execution x16 == x1 + 100 + x2.
+
+    Note: the second instruction's rs1 is x16 (output of the first), so
+    the immediate for the second instruction includes rs1=16 as part of
+    the encoding.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 63)  # keep small for reliable ADDI
+        base = _compute_base_expected(v1, v2)
+        base[15] = _cap32(v1 + v2)  # L12 output (needed if L12 verified)
+        base[16] = _cap32(v1 + 100 + v2)  # L13 output
+        inputs = {1: v1, 2: v2}
+        return {
+            "level": 13,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": inputs, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        for r in range(3, 10):  # L0-L6
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        if regs.get(16, 0) != exp["registers"].get(16, 0):  # L13
+            return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(40, 5, 20)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        """L0-L6 base + dual self-modifying instruction construct-and-execute.
+
+        Instruction 1: ADDI x16, x1, 100
+          word1 = (100 << 20) | (1 << 15) | (16 << 7) | 0x13
+                = 0x06400000 | 0x8000 | 0x800 | 0x13
+                = 0x06408813
+
+        Instruction 2: ADDI x16, x16, x2
+          word2 = (x2 << 20) | (16 << 15) | (16 << 7) | 0x13
+                = (x2 << 20) | 0x80000 | 0x800 | 0x13
+                = (x2 << 20) | 0x80813
+
+        Both are built via LUI/SLLI/ORI patterns and stored at consecutive
+        word-aligned addresses.  After the first instruction runs (setting
+        x16 = x1 + 100), the second instruction adds x2 (x16 += x2).
+        """
+        return _base_ref() + [
+            # === Instruction 1: ADDI x16, x1, 100 = 0x06408813 ===
+            # Build 0x06408813:
+            #   0x06400000  (imm=100 << 20)
+            #   0x00008813  (rs1=1, rd=16, opcode=0x13)
+            # Constant 0x00008813 = 0b0000_0000_0000_1000_1000_0000_0001_0011
+            # LUI 0x00008 -> 0x8000, then ORI and shift
+            {"name": "ADDI", "rd": 20, "rs1": 0, "imm": 100},  # x20 = 100
+            {"name": "SLLI", "rd": 20, "rs1": 20, "imm": 20},  # x20 = 100 << 20 = 0x06400000
+            {"name": "LUI", "rd": 21, "imm": 0x00008},  # x21 = 0x8000
+            {"name": "SLLI", "rd": 21, "rs1": 21, "imm": 4},  # x21 = 0x80000 (rs1=16<<15)
+            {"name": "ORI", "rd": 21, "rs1": 21, "imm": 0x813},  # x21 = 0x80813
+            {"name": "OR", "rd": 20, "rs1": 20, "rs2": 21},  # x20 = 0x06408813
+            # === Instruction 2: ADDI x16, x16, x2 ===
+            # word2 = (x2 << 20) | (16 << 15) | (16 << 7) | 0x13
+            #       = (x2 << 20) | 0x80813
+            {"name": "SLLI", "rd": 21, "rs1": 2, "imm": 20},  # x21 = x2 << 20
+            {"name": "ORI", "rd": 22, "rs1": 0, "imm": 0x813},  # x22 = 0x813
+            {"name": "ADDI", "rd": 22, "rs1": 22, "imm": 0x80000},  # x22 = 0x80813
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 22},  # x21 = word2
+            # === Store both instructions at consecutive scratch addresses ===
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x50},  # x23 = scratch base (0x50)
+            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 20, "imm": 0},  # mem[0x50] = instr1
+            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 21, "imm": 4},  # mem[0x54] = instr2
+            # === Execute both ===
+            {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
+            # instr1 (ADDI x16, x1, 100) runs, then instr2 (ADDI x16, x16, x2)
+            # runs at 0x54, then sequential execution continues until EBREAK
+            # or timeout.
+        ]
+
+
+# ===========================================================================
+# Level 14 — Multi-Program Composition: x17 = 2*x1 + x2 + 100
+# ===========================================================================
+#
+# Two independent programs share a data region in memory.
+# Program A stores x1 + x2 to shared data; Program B reads it, doubles
+# x1 contribution, and adds 100.
+#
+# Reference approach (direct, no self-modifying code):
+#   Store x1 to shared[0], x2 to shared[1].
+#   Program A: load x1 from shared, compute 2*x1 + x2, store back.
+#   Program B: load from shared, add 100 → x17.
+#
+# Expected: x17 = 2*x1 + x2 + 100
+
+
+class Level14(TaskLevel):
+    """Multi-Program Composition: two programs share a data region.
+
+    Program A computes 2*x1 + x2 and writes to shared memory.
+    Program B reads from shared memory and adds 100.
+    Output: x17 = 2*x1 + x2 + 100.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 63)
+        base = _compute_base_expected(v1, v2)
+        base[17] = _cap32(2 * v1 + v2 + 100)
+        return {
+            "level": 14,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        for r in range(3, 10):  # L0-L6
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        if regs.get(17, 0) != exp["registers"].get(17, 0):
+            return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(50, 5, 22)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        """L0-L6 base + multi-program composition via shared memory.
+
+        Stores x1 and x2 to shared data, then Program A computes
+        2*x1 + x2 and stores back.  Program B reads, adds 100.
+        """
+        return _base_ref() + [
+            # ---- Store inputs to shared data region at 0x40 ----
+            {"name": "ADDI", "rd": 20, "rs1": 0, "imm": 0x40},  # x20 = 0x40
+            {"name": "SW", "rd": 0, "rs1": 20, "rs2": 1, "imm": 0},  # mem[0x40] = x1
+            {"name": "ADDI", "rd": 20, "rs1": 0, "imm": 0x44},  # x20 = 0x44
+            {"name": "SW", "rd": 0, "rs1": 20, "rs2": 2, "imm": 0},  # mem[0x44] = x2
+            # ---- Program A: compute 2*x1 + x2, store to shared ----
+            {"name": "ADDI", "rd": 20, "rs1": 0, "imm": 0x40},  # x20 = 0x40
+            {"name": "LW", "rd": 17, "rs1": 20, "imm": 0},  # x17 = mem[0x40] = x1
+            {"name": "ADD", "rd": 17, "rs1": 17, "rs2": 17},  # x17 = 2*x1
+            {"name": "ADD", "rd": 17, "rs1": 17, "rs2": 2},  # x17 = 2*x1 + x2
+            {"name": "ADDI", "rd": 20, "rs1": 0, "imm": 0x48},  # x20 = 0x48
+            {"name": "SW", "rd": 0, "rs1": 20, "rs2": 17, "imm": 0},  # mem[0x48] = 2*x1+x2
+            # ---- Program B: read shared, add 100 → x17 ----
+            {"name": "LW", "rd": 17, "rs1": 20, "imm": 0},  # x17 = mem[0x48]
+            {"name": "ADDI", "rd": 17, "rs1": 17, "imm": 100},  # x17 = 2*x1 + x2 + 100
+        ]
+
+
+# ===========================================================================
+# Level 15 — Adaptive Self-Modification: x18 = x1+x2 if x2<=x1, else 0
+# ===========================================================================
+#
+# Program conditionally modifies its own behavior based on input comparison.
+# If x2 <= x1 (signed), x18 = x1 + x2; otherwise x18 = 0.
+#
+# Reference approach: SLT + BEQ conditional branching.
+#   SLT x20, x1, x2    → x20 = 1 if x1 < x2 (signed)
+#   BEQ x20, x0, +12   → skip to "x18 = x1 + x2" if x1 >= x2
+#   ADDI x18, x0, 0     → x18 = 0 (x1 < x2 case)
+#   BEQ x0, x0, +8      → unconditional jump to end
+#   ADD  x18, x1, x2    → x18 = x1 + x2 (x1 >= x2 case)
+
+
+class Level15(TaskLevel):
+    """Adaptive Self-Modification: conditional behavior based on input.
+
+    If x2 <= x1 (signed comparison), output x18 = x1 + x2.
+    Otherwise x18 = 0.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(0, 15)
+        base = _compute_base_expected(v1, v2)
+        base[18] = _cap32(v1 + v2) if _sign32(v2) <= _sign32(v1) else 0
+        return {
+            "level": 15,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        for r in range(3, 10):  # L0-L6
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        if regs.get(18, 0) != exp["registers"].get(18, 0):
+            return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(55, 6, 24)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        """L0-L6 base + conditional self-modification.
+
+        SLT determines which branch to take; BEQ x0,x0 is an
+        unconditional forward jump (the standard RV32I idiom).
+        """
+        return _base_ref() + [
+            # x20 = 1 if x1 < x2 (signed), else 0
+            {"name": "SLT", "rd": 20, "rs1": 1, "rs2": 2},
+            # If x1 >= x2 (x20 == 0), jump to "x18 = x1 + x2"
+            {"name": "BEQ", "rd": 0, "rs1": 20, "rs2": 0, "imm": 12},
+            # x1 < x2: x18 = 0
+            {"name": "ADDI", "rd": 18, "rs1": 0, "imm": 0},
+            # Unconditional jump to end (skip "x18 = x1 + x2")
+            {"name": "BEQ", "rd": 0, "rs1": 0, "rs2": 0, "imm": 8},
+            # x1 >= x2: x18 = x1 + x2
+            {"name": "ADD", "rd": 18, "rs1": 1, "rs2": 2},
+        ]
+
+
+# ===========================================================================
+# Level 16 — Evolutionary Self-Reference: x19 = (x1 << 2) + (x2 << 3)
+# ===========================================================================
+#
+# Program applies multiple shift-and-add operations to combine inputs
+# in a non-trivial way, testing that the organism can reason about
+# its own computation structure (self-referential bit manipulation).
+#
+# Reference: SLLI + ADD chain.
+
+
+class Level16(TaskLevel):
+    """Evolutionary Self-Reference: complex bit manipulation.
+
+    x19 = (x1 << 2) + (x2 << 3) = 4*x1 + 8*x2
+    Tests multi-step shift-and-add computation.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 15)
+        base = _compute_base_expected(v1, v2)
+        base[19] = _cap32((v1 << 2) + (v2 << 3))
+        return {
+            "level": 16,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        for r in range(3, 10):  # L0-L6
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        if regs.get(19, 0) != exp["registers"].get(19, 0):
+            return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(60, 6, 26)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        """L0-L6 base + shift-and-add: x19 = 4*x1 + 8*x2."""
+        return _base_ref() + [
+            {"name": "SLLI", "rd": 20, "rs1": 1, "imm": 2},  # x20 = x1 << 2
+            {"name": "SLLI", "rd": 21, "rs1": 2, "imm": 3},  # x21 = x2 << 3
+            {"name": "ADD", "rd": 19, "rs1": 20, "rs2": 21},  # x19 = 4*x1 + 8*x2
+        ]
+
+
+# ===========================================================================
+# Level 17 — Meta-Evolution: x20 = x1 + x2 (via self-modifying code)
+# ===========================================================================
+#
+# Program generates a shorter sub-program that computes x1 + x2,
+# writes it to memory, and executes via JALR.  This tests the
+# organism's ability to create and invoke code at runtime.
+#
+# Reference approach: build ADDI x20, x1, x2 instruction word,
+# store to scratch memory, JALR to execute.
+#
+# ADDI x20, x1, x2:
+#   word = (x2 << 20) | (1 << 15) | (20 << 7) | 0x13
+#        = (x2 << 20) | 0x8A13
+#
+# 0x8A13 is built from:
+#   0x8000 (LUI 8, SLLI 15) + 0x800 (1 << 11) + 0x213 (ORI/ADDI)
+
+
+class Level17(TaskLevel):
+    """Meta-Evolution: generate a sub-program and execute it.
+
+    The organism writes an ADDI x20, x1, x2 instruction to scratch
+    memory, then jumps to it with JALR.  After execution, x20 = x1 + x2.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 127)
+        base = _compute_base_expected(v1, v2)
+        base[20] = _cap32(v1 + v2)
+        return {
+            "level": 17,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        for r in range(3, 10):  # L0-L6
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        if regs.get(20, 0) != exp["registers"].get(20, 0):
+            return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(70, 7, 28)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        """L0-L6 base + meta-evolution: generate and execute sub-program.
+
+        Builds ADDI x20, x1, x2 = (x2 << 20) | 0x8A13.
+
+        0x8A13 construction:
+          0x8000: ADDI x21, x0, 1; SLLI x21, x21, 15
+          0x0800: ADDI x22, x0, 1; SLLI x22, x22, 11
+          0x0213: ADDI x23, x0, 0x213
+          0x8A13: x21 | x22 | x23
+        """
+        return _base_ref() + [
+            # ---- Build constant 0x8A13 ----
+            {"name": "ADDI", "rd": 21, "rs1": 0, "imm": 1},  # x21 = 1
+            {"name": "SLLI", "rd": 21, "rs1": 21, "imm": 15},  # x21 = 0x8000
+            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 1},  # x22 = 1
+            {"name": "SLLI", "rd": 22, "rs1": 22, "imm": 11},  # x22 = 0x800
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x213},  # x23 = 0x213
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 22},  # x21 = 0x8800
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 23},  # x21 = 0x8A13
+            # ---- Shift x2 into bits 31:20 ----
+            {"name": "SLLI", "rd": 22, "rs1": 2, "imm": 20},  # x22 = x2 << 20
+            # ---- Combine to form instruction word ----
+            {"name": "OR", "rd": 22, "rs1": 22, "rs2": 21},  # x22 = ADDI x20,x1,x2
+            # ---- Store to scratch and execute ----
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x40},  # x23 = scratch addr
+            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 22, "imm": 0},  # mem[0x40] = instr
+            {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},  # jump → execute
+        ]
+
+
+# ===========================================================================
 # Secondary tasks (multi-task fitness extension)
 # ===========================================================================
 
@@ -863,6 +1338,12 @@ LEVELS = {
     9: Level9,
     10: Level10,
     11: Level11,
+    12: Level12,
+    13: Level13,
+    14: Level14,
+    15: Level15,
+    16: Level16,
+    17: Level17,
 }
 
 

@@ -684,11 +684,12 @@ class EvolutionConfig:
     crossover_dedicated_prob: float = 0.05
     max_consecutive_same_strategy: int = 30
 
-    # Model-guided generation
+    # Model-guided generation — boosted after torch.compile removal
+    # (inference now 300ms per call, can afford higher MG ratios)
     model_guided_ratio: float | None = None
-    model_guided_ratio_low: float = 0.1
-    model_guided_ratio_mid: float = 0.3
-    model_guided_ratio_high: float = 0.4
+    model_guided_ratio_low: float = 0.2
+    model_guided_ratio_mid: float = 0.5
+    model_guided_ratio_high: float = 0.6
 
     # PERTURBATION_CAPPED configuration
     perturbation_capped_unsolved_levels: tuple[int, ...] = (9, 10, 11)
@@ -877,6 +878,13 @@ class EvolutionEngine:
 
         # Prefix generator for model-guided completions (lazy init)
         self._prefix_generator: Any = None
+
+        # Champion archive — persistent training data across cycles
+        from champion_archive import ChampionArchive
+
+        archive_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "champions", "archive.jsonl")
+        self.champion_archive = ChampionArchive(path=archive_path, max_size=500)
+        self._cycle_number: int = 1  # set externally by run_multi_cycle.py
 
         # External evolution params (from BarrierTuner)
         self._external_evolution_params: dict[str, Any] = {}
@@ -1453,6 +1461,22 @@ class EvolutionEngine:
         hof = getattr(self, "_hall_of_fame", None)
         summary["hall_of_fame_size"] = hof.size if hof is not None else 0
 
+        # Save champion to archive for persistent training data
+        if self.champion is not None and self.champion_fitness > 0 and hasattr(self, "champion_archive"):
+            cycle_num = getattr(self, "_cycle_number", 1)
+            added = self.champion_archive.add(
+                program=self.champion,
+                level=self.champion_level,
+                fitness=self.champion_fitness,
+                cycle=cycle_num,
+                generation=self.current_generation,
+                trace_status=self.champion_trace.get("status", "ok") if self.champion_trace else "ok",
+                task_score=getattr(self, "_raw_task_score", 0.0),
+            )
+            if added:
+                self.champion_archive.save()
+                summary["archive_size"] = self.champion_archive.size
+
         return summary
 
     # ------------------------------------------------------------------
@@ -1714,7 +1738,8 @@ class EvolutionEngine:
         base_score = reg_match * 100.0 - bloat_penalty + exec_credit + solved_bonus
 
         # ── Efficiency scoring (+15 points max) ──────────────────────────
-        # Rewards fewer instructions, fewer unique values, fewer NOPs.
+        # At high levels (L8+), REWARD instruction diversity (SMC needs
+        # LUI/SLLI/ORI/SW/JALR). At low levels, reward compact programs.
         eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
         if eff_weight > 0 and instr_count > 0 and status == "ok":
             # NOP = ADDI x0, x0, 0 = 0x00000013
@@ -1729,19 +1754,35 @@ class EvolutionEngine:
             if useful < 1:
                 useful = 1
 
-            # Score useful instructions: 1-5 = best, 5-10 = declining
-            if useful <= 5:
-                instr_eff = 1.0
-            elif useful <= 10:
-                instr_eff = 1.0 - (useful - 5) * 0.1
+            if self.champion_level >= 8:
+                # HIGH LEVELS: reward diversity and complexity
+                # Useful programs get best score (8+ instructions = good)
+                if useful >= 8:
+                    instr_eff = 1.0
+                elif useful >= 5:
+                    instr_eff = 0.7 + (useful - 5) * 0.1
+                else:
+                    instr_eff = useful / 5.0
+
+                # Bonus for MORE unique opcodes (diversity = exploration)
+                unique_ratio = len(unique_vals) / total_instr if total_instr > 0 else 1.0
+                opcode_bonus = unique_ratio * 0.5  # up to 0.25 (INVERTED from low levels)
+
+                efficiency_score = (instr_eff + opcode_bonus) * 30.0 * eff_weight
             else:
-                instr_eff = max(0.0, 0.5 - (useful - 10) * 0.05)
+                # LOW LEVELS: reward compact programs
+                if useful <= 5:
+                    instr_eff = 1.0
+                elif useful <= 10:
+                    instr_eff = 1.0 - (useful - 5) * 0.1
+                else:
+                    instr_eff = max(0.0, 0.5 - (useful - 10) * 0.05)
 
-            # Bonus for fewer unique opcodes (more focused programs)
-            unique_ratio = len(unique_vals) / total_instr if total_instr > 0 else 1.0
-            opcode_bonus = (1.0 - unique_ratio) * 0.5  # up to 0.25
+                unique_ratio = len(unique_vals) / total_instr if total_instr > 0 else 1.0
+                opcode_bonus = (1.0 - unique_ratio) * 0.5
 
-            efficiency_score = (instr_eff + opcode_bonus) * 30.0 * eff_weight
+                efficiency_score = (instr_eff + opcode_bonus) * 30.0 * eff_weight
+
             base_score += efficiency_score
 
         # ── Multi-task scoring (+15 points max) ──────────────────────────
@@ -1788,6 +1829,23 @@ class EvolutionEngine:
             else:
                 time_credit = max(0.0, 10.0 - (instr_count - 15) * 0.2)
             base_score += time_credit
+
+        # ── SMC pattern bonus (+25 points max) ──────────────────────────
+        # At L12-L13, reward programs containing self-modifying code
+        # instruction patterns (LUI, SLLI, ORI, OR, SW, JALR, FENCE.I).
+        # This prevents the system from regressing to 4-word programs that
+        # get high fitness through partial credit on fewer registers.
+        if status == "ok" and self.champion_level >= 12 and instr_count > 0:
+            smc_opcodes = {0x37, 0x13, 0x33, 0x23, 0x67, 0x0F}  # LUI, OP-IMM, OP, STORE, JALR, FENCE
+            smc_count = 0
+            for word in program:
+                opcode = word & 0x7F
+                if opcode in smc_opcodes:
+                    smc_count += 1
+            if smc_count >= 3:
+                # Bonus: 5 points per SMC instruction, up to 25
+                smc_bonus = min(25.0, smc_count * 5.0)
+                base_score += smc_bonus
 
         # Level-aware graduated bonus -- use cached threshold if available
         # R16: Skip len(LEVELS) lookup on cache hit (hot path: 50x per gen)
@@ -1904,6 +1962,302 @@ class EvolutionEngine:
         return fitness
 
     # ------------------------------------------------------------------
+    # Vectorized batch fitness evaluation
+    # ------------------------------------------------------------------
+
+    def batch_compute_fitness(
+        self,
+        programs: list[list[int]],
+        traces: list[dict[str, Any]],
+        eval_budget: int | None = None,
+    ) -> tuple[list[float], list[float]]:
+        """Vectorized batch fitness computation using numpy arrays.
+
+        Evaluates all programs in a single vectorized pass for ~5-10x
+        speedup over individual _compute_fitness calls.  The inner loops
+        (per-register scoring, efficiency metrics, SMC opcode counting)
+        are replaced by numpy array operations.
+
+        Returns (fitnesses, raw_task_scores) where:
+          - fitnesses: final blended fitness values
+          - raw_task_scores: base scores before novelty/QD blending
+        """
+        import numpy as np
+
+        n = len(programs)
+        if n == 0:
+            return [], []
+
+        if self.task_instance is None:
+            return [0.0] * n, [0.0] * n
+
+        budget = eval_budget if eval_budget is not None else self._cached_eval_budget
+
+        # ── Expected output (same for all programs in this gen) ──────
+        expected = self.task_instance.get("expected_output", {})
+        expected_regs = expected.get("registers", {})
+        expected_total = len(expected_regs)
+        expected_keys = list(expected_regs.keys()) if expected_regs else []
+        expected_vals = (
+            np.array([expected_regs[k] for k in expected_keys], dtype=np.float64)
+            if expected_keys
+            else np.array([], dtype=np.float64)
+        )
+
+        # ── Classify programs by status (vectorised string ops) ──────
+        statuses = [t.get("status", "") for t in traces]
+        instr_counts = np.array([t.get("instructions_count", 0) for t in traces], dtype=np.int64)
+        trap_causes = [t.get("trap_cause", "") for t in traces]
+
+        crash_mask = np.zeros(n, dtype=bool)
+        illegal_mask = np.zeros(n, dtype=bool)
+        timeout_mask = np.zeros(n, dtype=bool)
+        for i in range(n):
+            s = statuses[i]
+            if s in ("crash", "trap", "exception"):
+                crash_mask[i] = True
+                tc = trap_causes[i]
+                if "illegal" in tc or "invalid" in tc:
+                    illegal_mask[i] = True
+            elif s == "timeout" or instr_counts[i] >= budget:
+                timeout_mask[i] = True
+
+        # ── Fitness array ───────────────────────────────────────────
+        fitnesses = np.zeros(n, dtype=np.float64)
+        raw_scores = np.zeros(n, dtype=np.float64)
+
+        # Crash/timeout penalties
+        fitnesses[illegal_mask] = -100.0
+        fitnesses[crash_mask & ~illegal_mask] = -50.0
+        fitnesses[timeout_mask] = -25.0
+
+        ok_mask = ~crash_mask & ~timeout_mask
+        ok_indices = np.where(ok_mask)[0]
+        n_ok = len(ok_indices)
+
+        if n_ok == 0:
+            return fitnesses.tolist(), raw_scores.tolist()
+
+        # ── Gather ok-program data ──────────────────────────────────
+        ok_programs = [programs[i] for i in ok_indices]
+        ok_traces = [traces[i] for i in ok_indices]
+        ok_instr = instr_counts[ok_indices]
+
+        # ── Register scoring (vectorised) ───────────────────────────
+        if expected_total == 0:
+            reg_matches = np.ones(n_ok, dtype=np.float64)
+        else:
+            actual_vals = np.zeros((n_ok, len(expected_keys)), dtype=np.float64)
+            for j, trace in enumerate(ok_traces):
+                fr = trace.get("final_regs", {})
+                if isinstance(fr, dict):
+                    for k, key in enumerate(expected_keys):
+                        actual_vals[j, k] = fr.get(key, 0)
+                # else: fr is not a dict -> row stays 0
+
+            exact_match = actual_vals == expected_vals
+            diff = np.abs(actual_vals - expected_vals)
+            max_diff = np.maximum(np.abs(expected_vals), 1.0)
+            scores = np.where(exact_match, 1.0, 1.0 / (1.0 + diff / max_diff))
+            reg_matches = scores.mean(axis=1)
+
+        # ── Bloat penalty (vectorised) ──────────────────────────────
+        bloat = np.maximum(0.0, (ok_instr - 10).astype(np.float64) * 0.2)
+
+        # ── Execution progress credit (vectorised) ──────────────────
+        exec_credit = np.zeros(n_ok, dtype=np.float64)
+        pos = reg_matches > 0.0
+        if budget > 0:
+            exec_credit[pos] = np.minimum(10.0, (ok_instr[pos].astype(np.float64) / budget) * 10.0)
+
+        # ── Solved-task bonus (vectorised) ──────────────────────────
+        solved_bonus = np.where(reg_matches >= 0.99, 50.0, 0.0)
+
+        # ── Base score ──────────────────────────────────────────────
+        base = reg_matches * 100.0 - bloat + exec_credit + solved_bonus
+
+        # ── Efficiency scoring (vectorised) ─────────────────────────
+        eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
+        if eff_weight > 0:
+            max_prog_len = max((len(p) for p in ok_programs), default=0)
+            if max_prog_len > 0:
+                padded = np.zeros((n_ok, max_prog_len), dtype=np.int64)
+                prog_lengths = np.zeros(n_ok, dtype=np.int64)
+                for j, prog in enumerate(ok_programs):
+                    pl = len(prog)
+                    prog_lengths[j] = pl
+                    padded[j, :pl] = prog
+
+                nop_counts = np.sum(padded == 0x00000013, axis=1)
+                useful = np.maximum(1, prog_lengths - nop_counts)
+
+                # Unique values per program (small per-program loop, but
+                # avoids the Python set() overhead in the original by
+                # reusing the padded array for NOP detection above).
+                unique_ratios = np.zeros(n_ok, dtype=np.float64)
+                for j in range(n_ok):
+                    total_i = int(prog_lengths[j]) or 1
+                    unique_ratios[j] = len(set(ok_programs[j])) / total_i
+
+                if self.champion_level >= 8:
+                    instr_eff = np.where(
+                        useful >= 8,
+                        1.0,
+                        np.where(useful >= 5, 0.7 + (useful - 5) * 0.1, useful / 5.0),
+                    )
+                    opcode_bonus = unique_ratios * 0.5
+                    base += (instr_eff + opcode_bonus) * 30.0 * eff_weight
+                else:
+                    instr_eff = np.where(
+                        useful <= 5,
+                        1.0,
+                        np.where(
+                            useful <= 10,
+                            1.0 - (useful - 5) * 0.1,
+                            np.maximum(0.0, 0.5 - (useful - 10) * 0.05),
+                        ),
+                    )
+                    opcode_bonus = (1.0 - unique_ratios) * 0.5
+                    base += (instr_eff + opcode_bonus) * 30.0 * eff_weight
+
+        # ── Multi-task scoring (vectorised per-secondary-task) ───────
+        mt_weight = getattr(self.config, "secondary_task_weight", 1.0)
+        if mt_weight > 0:
+            for j, idx in enumerate(ok_indices):
+                sec_results = getattr(self, "_secondary_task_results_per_program", None)
+                if sec_results is not None and idx in sec_results:
+                    secondary = sec_results[idx]
+                    task_count = 0
+                    task_total = 0.0
+                    for sec_task, sec_trace in secondary:
+                        sec_status = sec_trace.get("status", "")
+                        if sec_status in ("crash", "trap", "exception", "timeout"):
+                            continue
+                        task_count += 1
+                        sec_exp = sec_task.get("expected_output", {}).get("registers", {})
+                        sec_fin = sec_trace.get("final_regs", {})
+                        sec_total = len(sec_exp)
+                        if sec_total == 0:
+                            task_total += 1.0
+                            continue
+                        sec_score = 0.0
+                        for ri, ev in sec_exp.items():
+                            av = sec_fin.get(ri, 0)
+                            if av == ev:
+                                sec_score += 1.0
+                            else:
+                                sec_score += 1.0 / (1.0 + abs(av - ev) / max(abs(ev), 1))
+                        task_total += sec_score / sec_total
+                    if task_count > 0:
+                        base[j] += (task_total / task_count) * 5.0 * min(task_count, 3) * mt_weight
+
+        # ── Time-to-solution credit (vectorised) ────────────────────
+        solved_ok = reg_matches >= 0.99
+        instr_pos = ok_instr > 0
+        can_credit = solved_ok & instr_pos
+        tc = np.zeros(n_ok, dtype=np.float64)
+        can5 = can_credit & (ok_instr <= 5)
+        can15 = can_credit & (ok_instr > 5) & (ok_instr <= 15)
+        can_slow = can_credit & (ok_instr > 15)
+        tc[can5] = 20.0
+        tc[can15] = 20.0 * (1.0 - (ok_instr[can15].astype(np.float64) - 5) / 10.0)
+        tc[can_slow] = np.maximum(0.0, 10.0 - (ok_instr[can_slow].astype(np.float64) - 15) * 0.2)
+        base += tc
+
+        # ── SMC pattern bonus (vectorised) ──────────────────────────
+        lvl = self.champion_level
+        if lvl >= 12:
+            smc_mask = np.zeros((n_ok, max_prog_len if max_prog_len > 0 else 1), dtype=bool)
+            for j, prog in enumerate(ok_programs):
+                for wi, word in enumerate(prog):
+                    if (word & 0x7F) in (0x37, 0x13, 0x33, 0x23, 0x67, 0x0F):
+                        smc_mask[j, wi] = True
+            smc_counts = smc_mask.sum(axis=1)
+            smc_ok = smc_counts >= 3
+            base[smc_ok] += np.minimum(25.0, smc_counts[smc_ok].astype(np.float64) * 5.0)
+
+        # ── Level-aware graduated bonus (vectorised) ────────────────
+        cached = self._bonus_threshold_cache
+        if cached is not None and cached[0] == lvl:
+            bonus_threshold = cached[1]
+        else:
+            n_levels = len(LEVELS)
+            bonus_threshold = max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1)))
+            self._bonus_threshold_cache = (lvl, bonus_threshold)
+
+        above = reg_matches >= bonus_threshold
+        denom = 1.0 - bonus_threshold
+        grad_bonus = np.where(
+            above,
+            50.0 * (reg_matches - bonus_threshold) / denom if denom > 0 else 0.0,
+            0.0,
+        )
+        base += grad_bonus
+
+        # ── Raw task scores ─────────────────────────────────────────
+        raw_scores[ok_indices] = base
+
+        # ── Novelty / QD blending (per-program, archive lookups) ────
+        # These involve archive lookups that are hard to vectorise but
+        # are fast (O(1) per program).  Done here so the returned
+        # fitnesses are fully blended.
+        nw = self._novelty_weight_cache
+        if self._current_diversity < 0.2 and nw > 0.0:
+            diversity_boost = 1.0 + (1.0 - self._current_diversity / 0.2)
+            nw = min(nw * diversity_boost, 0.8)
+        _extract_fn = self._extract_behavioral_descriptor
+        _qd_fn = self._compute_qd_axes_fn
+
+        for j, idx in enumerate(ok_indices):
+            fj = float(base[j])
+            prog = programs[idx]
+            trace = traces[idx]
+            max_score_val = float(expected_total) if expected_total > 0 else 1.0
+
+            # Novelty
+            if nw > 0.0 and self.novelty_archive is not None and _extract_fn is not None:
+                try:
+                    descriptor = _extract_fn(trace, prog, budget=self.config.eval_budget)
+                    novelty_val = self.novelty_archive.novelty_score(descriptor)
+                    norm = max_score_val / 10.0
+                    fj = fj * (1.0 - nw) + novelty_val * norm * nw
+                except (TypeError, ValueError, RuntimeError):
+                    pass
+
+            # QD bonus + niche penalty
+            if self.config.qd_bonus_weight > 0.0 and self.qd_archive is not None and _qd_fn is not None:
+                try:
+                    prog_desc = _qd_fn(prog, trace)
+                    if prog_desc is not None:
+                        qd_bonus = self.qd_archive.selection_bias(prog_desc)
+                        qd_w = self.config.qd_bonus_weight
+                        stall = self.generations_stalled
+                        if stall > 10:
+                            qd_w *= min(2.5, 1.0 + 0.0375 * (stall - 10))
+                        cov = self._qd_coverage
+                        if cov < 0.20:
+                            qd_w *= 1.0 + 2.5 * (0.20 - cov)
+                        fj += qd_bonus * qd_w
+                        # Niche penalty
+                        if self.champion is not None and self.champion_trace is not None:
+                            if self._champion_qd_valid and self._cached_champion_qd_desc is not None:
+                                champ_desc = self._cached_champion_qd_desc
+                            else:
+                                champ_desc = _qd_fn(self.champion, self.champion_trace)
+                                self._cached_champion_qd_desc = champ_desc
+                                self._champion_qd_valid = True
+                            if champ_desc is not None:
+                                dist = abs(prog_desc[0] - champ_desc[0]) + abs(prog_desc[1] - champ_desc[1])
+                                if dist < 2.0:
+                                    fj *= 1.0 - 0.10 * (1.0 - dist / 2.0)
+                except (TypeError, ValueError, RuntimeError):
+                    pass
+
+            fitnesses[idx] = fj
+
+        return fitnesses.tolist(), raw_scores.tolist()
+
+    # ------------------------------------------------------------------
     # Champion / Challenger management
     # ------------------------------------------------------------------
 
@@ -1956,6 +2310,10 @@ class EvolutionEngine:
 
         R28: Uses adaptive mutation rate based on fitness velocity to
         dynamically balance exploration vs exploitation.
+
+        v14.5: Dedicated MODEL_GUIDED slots — at L2+, reserves a fraction
+        of challenger slots for prefix-guided completions, bypassing the
+        strategy archive's GROW bias that suppressed model guidance.
         """
         pop_size = self.config.population_size
         if self.champion is None:
@@ -1980,7 +2338,24 @@ class EvolutionEngine:
         _propose = propose_mutation  # hoist module function to local
         _choose = self._choose_mutation_strategy
 
+        # v14.5: Dedicated MODEL_GUIDED reserved slots at L2+
+        # Reserve n_mg_slots for model-guided completions. This ensures
+        # the model contributes even when the archive favors GROW/HYBRID.
+        # At low levels only 1-2 slots; at L8+ up to 25% of population.
+        model_ratio = self._get_model_guided_ratio()
+        if model_ratio > 0 and level >= 2:
+            n_mg = max(1, int(pop_size * min(model_ratio, 0.25)))
+            mg_indices = self._replace_with_model_guided(challengers, model_ratio)
+            for idx in mg_indices[:n_mg]:
+                if 0 <= idx < len(strategies):
+                    strategies[idx] = "MODEL_GUIDED"
+        else:
+            n_mg = 0
+
         for i in range(pop_size):
+            # Skip slots already filled by MODEL_GUIDED
+            if strategies[i] == "MODEL_GUIDED":
+                continue
             # Choose strategy
             strategy = _choose(i)
             strategies[i] = strategy.value
@@ -1997,10 +2372,6 @@ class EvolutionEngine:
                 strategy_archive=sa,
             )
             challengers[i] = mutated
-            # R41: Removed redundant _last_challenger_programs population.
-            # This list was a duplicate of `challengers` but never read by
-            # any consumer. Removing it eliminates pop_size list-copy
-            # operations per generation (~50 * 8 bytes/word * avg_len).
 
         # v13: Adaptive diversity injection
         # When population diversity is too low, replace least-diverse
@@ -2369,7 +2740,7 @@ class EvolutionEngine:
                 ckpt = self._seed_model_path or ""
                 if not ckpt or not os.path.isfile(ckpt):
                     base = os.path.dirname(os.path.abspath(__file__))
-                    ckpt = os.path.join(base, "..", "milestone1", "checkpoints", "checkpoint_best.pt")
+                    ckpt = os.path.join(base, "milestone1", "checkpoints", "checkpoint_best.pt")
                 if os.path.isfile(ckpt):
                     self._prefix_generator = PrefixGenerator(ckpt, temperature=0.9, max_new_tokens=256, device=None)
             except Exception as e:
@@ -2403,21 +2774,21 @@ class EvolutionEngine:
         except Exception:
             pass
 
-        # Use stall-adaptive prefix_counts for APS
+        # Use stall-adaptive prefix_counts for APS — single count to limit inference cost
         if champion_level >= 8:
             if stalled >= 50:
-                prefix_counts = [8, 10, 12, min(16, max(1, len(prefix_source) // 2))]
+                prefix_counts = [12]
             elif stalled >= 20:
-                prefix_counts = [6, 8, min(10, max(1, len(prefix_source) // 2))]
+                prefix_counts = [8]
             else:
-                prefix_counts = [4, 6, min(8, max(1, len(prefix_source) // 3))]
+                prefix_counts = [6]
         else:
             if stalled >= 50:
-                prefix_counts = [4, 6, min(8, max(1, len(prefix_source) // 2))]
+                prefix_counts = [6]
             elif stalled >= 20:
-                prefix_counts = [3, 5, min(6, max(1, len(prefix_source) // 2))]
+                prefix_counts = [4]
             else:
-                prefix_counts = [2, 4, min(6, max(1, len(prefix_source) // 3))]
+                prefix_counts = [2]
 
         for pc in prefix_counts:
             if replacements >= num_replace:
@@ -2433,7 +2804,7 @@ class EvolutionEngine:
                         _completions = self._prefix_generator.complete(
                             prefix_source,
                             prefix_count=pc,
-                            num_samples=max(1, num_replace // len(prefix_counts)),
+                            num_samples=min(3, max(1, num_replace // len(prefix_counts))),
                             temperature=model_temp,
                             top_k=40,
                             top_p=0.9,
@@ -2485,19 +2856,10 @@ class EvolutionEngine:
                 f"temp={model_temp:.1f})"
             )
 
-        # Free GPU memory used by PrefixGenerator before retrain.
-        # Delete the entire instance — it re-initializes fresh each cycle
-        # via lazy init, so this avoids CPU/CUDA device mismatch bugs.
-        if self._prefix_generator is not None:
-            try:
-                del self._prefix_generator
-                self._prefix_generator = None
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
+        # NOTE: PrefixGenerator instance is intentionally NOT deleted here.
+        # It stays in GPU memory across generations within a single run(),
+        # saving ~3s per generation of model re-initialization. Cleanup
+        # happens when the EvolutionEngine goes out of scope at cycle end.
 
         return replaced_indices
 
@@ -2780,34 +3142,52 @@ class EvolutionEngine:
         scored: list[tuple[float, list[int], dict[str, Any]]] = [None] * n_challengers  # type: ignore[list-item]
         fitness_cache: list[float] = [0.0] * n_challengers
         _compute = self._compute_fitness  # hoist to local for hot loop
-        # R32: Fast-path crash/timeout skip -- programs that crashed or
-        # timed out at half-budget will never beat the champion at full
-        # budget. Assign a guaranteed-low fitness without calling the
-        # full _compute_fitness path (avoids expected_regs dict lookup,
-        # per-register scoring loop, and bonus threshold computation).
-        # R36: Use frozenset membership test (O(1)) instead of tuple
-        # comparison; hoist .get to local for hot loop.
-        _status_get = dict.get
         _use_sec = self.config.use_secondary_tasks
-        for idx in range(n_challengers):
-            trace = results[idx]
-            status = _status_get(trace, "status", "")
-            if status in _CRASH_STATUSES:
-                fit = -100.0
-            elif status == "timeout" or _status_get(trace, "instructions_count", 0) >= stage1_budget:
-                fit = -25.0
-            else:
-                # Evaluate secondary tasks before computing fitness so that
-                # _compute_fitness can include multi-task scoring (worth up to
-                # 15 points). Without this, elite selection ignores secondary
-                # task performance entirely.
-                if _use_sec:
-                    self._secondary_task_results = self._evaluate_secondary_tasks(challengers[idx])
+
+        # ── Vectorized batch fitness (fast path) ────────────────────
+        # Evaluate secondary tasks for non-crashed programs first so
+        # batch_compute_fitness can include multi-task scoring.
+        if _use_sec:
+            sec_per_prog: dict[int, list] = {}
+            for idx in range(n_challengers):
+                trace = results[idx]
+                status = trace.get("status", "")
+                if status not in _CRASH_STATUSES and status != "timeout":
+                    sec_per_prog[idx] = self._evaluate_secondary_tasks(challengers[idx])
+            self._secondary_task_results_per_program = sec_per_prog
+        else:
+            self._secondary_task_results_per_program = None
+
+        try:
+            batch_fitnesses, batch_raw = self.batch_compute_fitness(
+                challengers,
+                results,
+                eval_budget=stage1_budget,
+            )
+            for idx in range(n_challengers):
+                scored[idx] = (batch_fitnesses[idx], challengers[idx], results[idx])
+                fitness_cache[idx] = batch_fitnesses[idx]
+        except Exception:
+            # Fallback to per-program evaluation on any batch failure
+            _status_get = dict.get
+            for idx in range(n_challengers):
+                trace = results[idx]
+                status = _status_get(trace, "status", "")
+                if status in _CRASH_STATUSES:
+                    fit = -100.0
+                elif status == "timeout" or _status_get(trace, "instructions_count", 0) >= stage1_budget:
+                    fit = -25.0
                 else:
-                    self._secondary_task_results = None
-                fit = _compute(challengers[idx], trace, eval_budget=stage1_budget)
-            scored[idx] = (fit, challengers[idx], trace)
-            fitness_cache[idx] = fit
+                    if _use_sec:
+                        self._secondary_task_results = self._evaluate_secondary_tasks(challengers[idx])
+                    else:
+                        self._secondary_task_results = None
+                    fit = _compute(challengers[idx], trace, eval_budget=stage1_budget)
+                scored[idx] = (fit, challengers[idx], results[idx])
+                fitness_cache[idx] = fit
+        finally:
+            self._secondary_task_results_per_program = None
+
         self._last_challenger_fitnesses = fitness_cache
 
         elite_size = max(1, int(self.config.population_size * self.config.elite_ratio))

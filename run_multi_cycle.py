@@ -90,6 +90,16 @@ except ImportError:
     CycleMetrics = None  # type: ignore
     BarrierType = None  # type: ignore
 
+# ProgressionTracker auto-tuning
+try:
+    from progression_tracker import ParameterActuator, TuningPolicy
+
+    _HAS_TUNING_POLICY = True
+except ImportError:
+    _HAS_TUNING_POLICY = False
+    TuningPolicy = None  # type: ignore
+    ParameterActuator = None  # type: ignore
+
 
 # Runtime GPU check with result caching (GPU availability doesn't change
 # during a run, but avoids repeated torch.cuda imports on every cycle).
@@ -246,12 +256,13 @@ def run_evolution(
             if hasattr(config, key):
                 setattr(config, key, val)
 
-    # Re-enable model-guided generation (PrefixGenerator now on GPU)
-    # 20% of challengers come from model, 80% from mutation
-    config.model_guided_ratio = 0.2
+    # Let adaptive MG ratios work (L0-L5: 0.2, L6-L7: 0.5, L8+: 0.6)
+    # Previously hardcoded to 0.2 which defeated the adaptive system.
+    config.model_guided_ratio = None
 
     # Set the seed model path to our current cycle's checkpoint
     engine = EvolutionEngine(config=config)
+    engine._cycle_number = cycle  # set for archive tracking
 
     # Override the seed model path to use our trained checkpoint
     engine._seed_model_path = os.path.relpath(checkpoint_path, SCRIPT_DIR)
@@ -353,6 +364,82 @@ def run_evolution(
     return metrics
 
 
+def merge_archive_to_recurrent(cycle: int) -> int:
+    """Merge ChampionArchive entries into recurrent_data.jsonl for training.
+
+    The archive accumulates champion programs across cycles with rich metadata
+    (level, fitness, cycle). This function exports archive entries into the
+    training data file, deduplicating by champion_sha256.
+
+    Returns the number of new entries added.
+    """
+    try:
+        from champion_archive import ChampionArchive
+    except ImportError:
+        log(f"  Cycle {cycle}: ChampionArchive not available, skipping merge")
+        return 0
+
+    archive_path = os.path.join(PROJECT_ROOT, "champions", "archive.jsonl")
+    if not os.path.isfile(archive_path):
+        return 0
+
+    archive = ChampionArchive(path=archive_path, max_size=500)
+    if archive.size == 0:
+        return 0
+
+    recurrent_data = os.path.join(M1_RECURRENT, "recurrent_data.jsonl")
+    os.makedirs(M1_RECURRENT, exist_ok=True)
+
+    # Load existing sha256 hashes to deduplicate
+    existing_hashes: set = set()
+    if os.path.isfile(recurrent_data):
+        try:
+            with open(recurrent_data) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        h = entry.get("champion_sha256", "")
+                        if h:
+                            existing_hashes.add(h)
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+        except Exception:
+            pass
+
+    # Append new archive entries (deduped by sha256)
+    added = 0
+    with open(recurrent_data, "a") as f:
+        for entry in archive.entries:
+            if entry.sha256 in existing_hashes:
+                continue
+            example = {
+                "level": entry.level,
+                "generation": entry.generation,
+                "fitness": entry.fitness,
+                "champion_sha256": entry.sha256,
+                "champion_words": entry.instructions_count,
+                "champion_program": entry.program_hex,
+                "trace_status": entry.trace_status,
+                "trace_instr_count": entry.instructions_count,
+                "task_score": entry.task_score,
+                "save_reason": "champion_archive",
+                "cycle": entry.cycle,
+            }
+            f.write(json.dumps(example) + "\n")
+            existing_hashes.add(entry.sha256)
+            added += 1
+
+    if added > 0:
+        log(
+            f"  Cycle {cycle}: Merged {added} archive champions into recurrent_data.jsonl "
+            f"(archive={archive.size}, existing={len(existing_hashes) - added})"
+        )
+    return added
+
+
 def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_level: int = 0) -> dict[str, Any]:
     """Retrain the seed model on accumulated recurrent data.
 
@@ -409,7 +496,7 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     device = "cuda" if has_gpu() else "cpu"
     log(f"  Cycle {cycle}: Training device: {device.upper()}")
 
-    train_script = os.path.join(SCRIPT_DIR, "..", "milestone1", "train_model.py")
+    train_script = os.path.join(SCRIPT_DIR, "milestone1", "train_model.py")
     retrain_log = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
 
     # -- Build command with parameterized retrain hyperparameters ------
@@ -1393,6 +1480,16 @@ def main() -> None:
     # evolution cycle needs higher diversity to rediscover good programs.
     post_retrain_boost_cycles: int = 0  # >0 means boost active for this many more cycles
 
+    # -- ProgressionTracker auto-tuning -------------------------------
+    tuning_policy = None
+    tuning_actuator = None
+    if _HAS_TUNING_POLICY:
+        tuning_policy = TuningPolicy(cooldown=2)
+        tuning_actuator = ParameterActuator()
+        log("  TuningPolicy: Initialized (cooldown=2 cycles)")
+    else:
+        log("  TuningPolicy: Not available -- running without auto-tuning")
+
     # Main loop
     prev_cycle_metrics: dict[str, Any] = {}
     prev_archive_state: dict[str, Any] | None = None  # cross-cycle archive persistence
@@ -1495,6 +1592,72 @@ def main() -> None:
                     )
                 except Exception as e:
                     log(f"  Cycle {cycle}: Meta-evolution failed: {e}")
+
+        # -- ProgressionTracker auto-tuning ---------------------------
+        # TuningPolicy analyzes tracker trends and applies one
+        # parameter change per cycle.  Rate-limited by cooldown.
+        if tuning_policy is not None:
+            # Build current config snapshot from accumulated params
+            current_cfg_snapshot: dict[str, Any] = {
+                "mutation_rate": evo_meta_params.get("mutation_rate", 0.3),
+                "crossover_rate": evo_meta_params.get("crossover_rate", 0.2),
+                "elite_ratio": evo_meta_params.get("elite_ratio", 0.1),
+                "novelty_weight": evo_meta_params.get("novelty_weight", 0.3),
+                "qd_bonus_weight": evo_meta_params.get("qd_bonus_weight", 0.1),
+                "diversity_threshold": evo_meta_params.get("diversity_threshold", 0.3),
+                "diversity_inject_ratio": evo_meta_params.get("diversity_inject_ratio", 0.1),
+                "tournament_size": evo_meta_params.get("tournament_size", 3),
+                "retrain_max_epochs": retrain_meta_params.get("retrain_max_epochs", 50),
+                "retrain_lr": retrain_meta_params.get("retrain_lr", 3e-5),
+                "curriculum_stall_threshold": evo_meta_params.get("curriculum_stall_threshold", 3),
+            }
+            # Use ProgressionTracker from BarrierTuner if available,
+            # otherwise use a tracker from the module
+            _tracker = None
+            if barrier_tuner is not None and hasattr(barrier_tuner, "_tracker"):
+                _tracker = barrier_tuner._tracker
+            else:
+                try:
+                    from progression_tracker import ProgressionTracker
+
+                    _tracker = ProgressionTracker()
+                except Exception:
+                    pass
+            if _tracker is not None:
+                adjustments = tuning_policy.compute_adjustments(
+                    _tracker,
+                    cycle,
+                    current_cfg_snapshot,
+                )
+                if adjustments:
+                    adj = adjustments[0]
+
+                    # Apply to a dummy config to validate, then merge
+                    # into evo_meta_params / retrain_meta_params
+                    # (the actuator validates the param exists)
+                    class _Proxy:
+                        pass
+
+                    proxy = _Proxy()
+                    for k, v in current_cfg_snapshot.items():
+                        setattr(proxy, k, v)
+                    if tuning_actuator.apply(adj, proxy):
+                        # Merge the adjusted param into the meta params
+                        if adj.parameter in evo_meta_params or adj.parameter in {
+                            "mutation_rate",
+                            "crossover_rate",
+                            "elite_ratio",
+                            "novelty_weight",
+                            "qd_bonus_weight",
+                            "diversity_threshold",
+                            "diversity_inject_ratio",
+                            "tournament_size",
+                        }:
+                            evo_meta_params[adj.parameter] = adj.value
+                        else:
+                            retrain_meta_params[adj.parameter] = adj.value
+                        tuning_policy.record_applied(adj, cycle)
+                        log(f"  Cycle {cycle}: TuningPolicy applied: " f"{adj.parameter}={adj.value} ({adj.reason})")
 
         # Pass previous cycle's self-calibrate state for continuity
         if cycle > 1 and prev_cycle_metrics:
@@ -1711,6 +1874,11 @@ def main() -> None:
                                 setattr(mc_cfg, attr, cli_val)
 
                     merged_retrain_config = mc_cfg
+
+                # -- Merge ChampionArchive into recurrent_data.jsonl ----
+                # Ensures accumulated champion programs across cycles are
+                # available as training data (deduped by sha256).
+                merge_archive_to_recurrent(cycle)
 
                 retrain_result = retrain_model(
                     cycle, checkpoint, config=merged_retrain_config, best_level=current_level

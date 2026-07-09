@@ -17,15 +17,16 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 # Add paths
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'milestone0', 'logit-masking'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "milestone0", "logit-masking"))
 
-from rv32i_model import RV32ITransformer, RV32IFieldTokenizer as RV32ITokenizer
-from rv32i_mask import encode, decode, get_valid_combinations
+from rv32i_mask import decode, encode, get_valid_combinations
+from rv32i_model import RV32IFieldTokenizer as RV32ITokenizer
+from rv32i_model import RV32ITransformer
 
-CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'checkpoints')
+CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
 
 
 def set_seed(seed: int = 42):
@@ -43,7 +44,7 @@ tok = RV32ITokenizer()
 def trace_to_tokens(trace_data):
     """Convert a trace entry (program instructions) to token sequence."""
     tokens = []
-    for inst in trace_data['instructions']:
+    for inst in trace_data["instructions"]:
         tokens.extend(tok.encode_instruction(inst))
     return tokens
 
@@ -75,49 +76,84 @@ def collate_fn(batch):
     batch_inp = torch.zeros(len(inputs), max_len, dtype=torch.long)
     batch_tgt = torch.zeros(len(targets), max_len, dtype=torch.long)
     for i, (inp, tgt) in enumerate(zip(inputs, targets)):
-        batch_inp[i, :len(inp)] = inp
-        batch_tgt[i, :len(tgt)] = tgt
+        batch_inp[i, : len(inp)] = inp
+        batch_tgt[i, : len(tgt)] = tgt
     return batch_inp, batch_tgt
 
 
 def parse_args(argv=None):
     """Parse CLI args. Accept argv list for testing; defaults to sys.argv[1:]."""
-    parser = argparse.ArgumentParser(description='Train RV32I seed model')
-    parser.add_argument('--layers', type=int, default=8, help='Number of transformer layers')
-    parser.add_argument('--d-model', type=int, default=256, help='Model dimension')
-    parser.add_argument('--n-heads', type=int, default=8, help='Number of attention heads')
-    parser.add_argument('--d-ff', type=int, default=1024, help='Feed-forward dimension')
-    parser.add_argument('--epochs', type=int, default=5, help='Number of training epochs')
-    parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
-    parser.add_argument('--weight-decay', type=float, default=1e-4, help='Weight decay')
-    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
-    parser.add_argument('--max-len', type=int, default=1024, help='Max sequence length')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed')
-    parser.add_argument('--data', type=str, default=None,
-                        help='Path to training_data.jsonl (default: milestone1/training_data.jsonl)')
-    parser.add_argument('--output', type=str, default=None,
-                        help='Save path for final model checkpoint (default: checkpoints/model_final.pt)')
-    parser.add_argument('--resume', type=str, default=None,
-                        help='Resume from a checkpoint path')
-    parser.add_argument('--no-cuda', action='store_true', help='Force CPU even if CUDA available')
+    parser = argparse.ArgumentParser(description="Train RV32I seed model")
+    parser.add_argument("--layers", type=int, default=8, help="Number of transformer layers")
+    parser.add_argument("--d-model", type=int, default=256, help="Model dimension")
+    parser.add_argument("--n-heads", type=int, default=8, help="Number of attention heads")
+    parser.add_argument("--d-ff", type=int, default=1024, help="Feed-forward dimension")
+    parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay")
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
+    parser.add_argument("--max-len", type=int, default=1024, help="Max sequence length")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--data", type=str, default=None, help="Path to training_data.jsonl (default: milestone1/training_data.jsonl)"
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Save path for final model checkpoint (default: checkpoints/model_final.pt)",
+    )
+    parser.add_argument("--resume", type=str, default=None, help="Resume from a checkpoint path")
+    parser.add_argument("--no-cuda", action="store_true", help="Force CPU even if CUDA available")
+    parser.add_argument(
+        "--reset-checkpoint", action="store_true", help="Delete existing checkpoint and train from scratch"
+    )
+    parser.add_argument(
+        "--migrate", action="store_true", help="Allow loading checkpoint with different model architecture"
+    )
     return parser.parse_args(argv)
 
 
-def save_checkpoint(model, optimizer, epoch, stats, path):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'stats': stats,
-        'config': {
-            'vocab_size': 2048,
-            'd_model': model.d_model if hasattr(model, 'd_model') else 256,
-            'n_layers': len(model.layers) if hasattr(model, 'layers') else 8,
-            'n_heads': model.n_heads if hasattr(model, 'n_heads') else 8,
-            'd_ff': model.d_ff if hasattr(model, 'd_ff') else 1024,
-        }
-    }, path)
+import tempfile
+
+
+def _atomic_save_torch(obj, dest_path):
+    """Atomically save using tempfile + os.replace."""
+    dest_dir = os.path.dirname(dest_path)
+    os.makedirs(dest_dir, exist_ok=True)
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=dest_dir, prefix=".ckpt_tmp_", suffix=".pt")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                torch.save(obj, f)
+            os.replace(tmp_path, dest_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        torch.save(obj, dest_path)
+
+
+def save_checkpoint(model, optimizer, epoch, stats, path, config_name=None):
+    """Save checkpoint atomically with config_name tagging."""
+    ckpt_data = {
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "stats": stats,
+        "config": {
+            "vocab_size": 2048,
+            "d_model": model.d_model if hasattr(model, "d_model") else 256,
+            "n_layers": len(model.layers) if hasattr(model, "layers") else 8,
+            "n_heads": model.n_heads if hasattr(model, "n_heads") else 8,
+            "d_ff": model.d_ff if hasattr(model, "d_ff") else 1024,
+        },
+        "config_name": config_name or "unknown",
+    }
+    _atomic_save_torch(ckpt_data, path)
     return path
 
 
@@ -127,9 +163,9 @@ def main():
 
     # Paths
     base_dir = os.path.dirname(__file__)
-    data_path = args.data or os.path.join(base_dir, 'training_data.jsonl')
-    output_path = args.output or os.path.join(base_dir, 'checkpoints', 'model_final.pt')
-    os.makedirs(os.path.join(base_dir, 'checkpoints'), exist_ok=True)
+    data_path = args.data or os.path.join(base_dir, "training_data.jsonl")
+    output_path = args.output or os.path.join(base_dir, "checkpoints", "model_final.pt")
+    os.makedirs(os.path.join(base_dir, "checkpoints"), exist_ok=True)
 
     # --- Load training data ---
     print(f"Loading training data from {data_path}...")
@@ -172,17 +208,17 @@ def main():
     # --- Resume from checkpoint ---
     if args.resume:
         print(f"Resuming from {args.resume}...")
-        checkpoint = torch.load(args.resume, map_location='cpu')
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        start_epoch = checkpoint.get('epoch', 0)
-        best_acc = checkpoint.get('stats', {}).get('best_acc', 0.0)
+        checkpoint = torch.load(args.resume, map_location="cpu")
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        start_epoch = checkpoint.get("epoch", 0)
+        best_acc = checkpoint.get("stats", {}).get("best_acc", 0.0)
         print(f"  Resumed at epoch {start_epoch}, best accuracy {best_acc:.4f}")
 
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params:,}")
 
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     model.to(device)
     print(f"Training on {device}")
 
@@ -200,11 +236,7 @@ def main():
             optimizer.zero_grad()
             logits = model(batch_inp)
 
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                batch_tgt.view(-1),
-                ignore_index=0
-            )
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch_tgt.view(-1), ignore_index=0)
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -227,11 +259,7 @@ def main():
 
                 logits = model(batch_inp)
 
-                loss = F.cross_entropy(
-                    logits.view(-1, logits.size(-1)),
-                    batch_tgt.view(-1),
-                    ignore_index=0
-                )
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch_tgt.view(-1), ignore_index=0)
                 test_loss += loss.item() * (batch_tgt != 0).sum().item()
 
                 # Raw accuracy
@@ -250,32 +278,40 @@ def main():
         best_acc = max(best_acc, accuracy)
         elapsed = time.time() - start
 
-        print(f"  Epoch {epoch+1}: loss={total_loss/total_tokens:.4f}, "
-              f"test_loss={test_loss/total:.4f}, "
-              f"acc={accuracy:.4f}, masked_acc={masked_accuracy:.4f}, "
-              f"{elapsed:.1f}s")
+        print(
+            f"  Epoch {epoch+1}: loss={total_loss/total_tokens:.4f}, "
+            f"test_loss={test_loss/total:.4f}, "
+            f"acc={accuracy:.4f}, masked_acc={masked_accuracy:.4f}, "
+            f"{elapsed:.1f}s"
+        )
 
         # Save epoch checkpoint
-        epoch_path = os.path.join(base_dir, 'checkpoints', f'epoch_{epoch+1}.pt')
-        save_checkpoint(model, optimizer, epoch + 1,
-                        {'loss': total_loss / total_tokens, 'acc': accuracy,
-                         'masked_acc': masked_accuracy, 'best_acc': best_acc},
-                        epoch_path)
+        epoch_path = os.path.join(base_dir, "checkpoints", f"epoch_{epoch+1}.pt")
+        save_checkpoint(
+            model,
+            optimizer,
+            epoch + 1,
+            {"loss": total_loss / total_tokens, "acc": accuracy, "masked_acc": masked_accuracy, "best_acc": best_acc},
+            epoch_path,
+        )
         print(f"    Checkpoint saved: {epoch_path}")
 
     # Save final model
-    final_path = save_checkpoint(model, optimizer, args.epochs,
-                                  {'loss': total_loss / total_tokens, 'acc': accuracy,
-                                   'masked_acc': masked_accuracy, 'best_acc': best_acc},
-                                  output_path)
+    final_path = save_checkpoint(
+        model,
+        optimizer,
+        args.epochs,
+        {"loss": total_loss / total_tokens, "acc": accuracy, "masked_acc": masked_accuracy, "best_acc": best_acc},
+        output_path,
+    )
     print(f"\nFinal model saved: {final_path}")
 
     print(f"\nFinal raw accuracy: {accuracy:.4f}")
     print(f"Final masked accuracy: {masked_accuracy:.4f}")
     print(f"Best accuracy: {best_acc:.4f}")
     print(f"Model: {total_params:,} params")
-    print(f"DONE")
+    print("DONE")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

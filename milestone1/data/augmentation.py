@@ -189,6 +189,8 @@ def inject_reference_solutions(
             9: 30,
             10: 30,
             11: 30,
+            12: 40,
+            13: 50,
         }
 
     if rv32i_decode is None:

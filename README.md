@@ -23,7 +23,11 @@ Evolution Engine/
 ├── evolution_engine.py          # Core evolution: population, selection, fitness eval
 ├── meta_controller.py           # Cross-cycle orchestration, checkpoint gating, telemetry
 ├── mutation_proposer.py         # Mutation strategies + trace-guided directed mutation
-├── champion_anchor.py           # Champion preservation and restart logic
+| champion_anchor.py           # Champion preservation and restart logic
+├── champion_archive.py         # Persistent champion archive with tier sampling
+├── checkpoint_manager.py       # Atomic config-tagged checkpoint management
+├── progression_tracker.py      # Cross-cycle metrics tracking and auto-tuning
+├── cron_evolution_loop.py      # Cron-driven evolution loop / saturation detector
 ├── run_multi_cycle.py           # Multi-cycle evolution + retrain orchestrator
 ├── prefix_generator.py          # Prefix-guided generation for MODEL_GUIDED strategy
 ├── strategy_archive.py          # Strategy success tracking and selection
@@ -53,9 +57,22 @@ Evolution Engine/
 │   ├── engine_config.json       # Default engine configuration
 │   └── tool_library.json        # Tool definitions
 ├── tests/
-│   ├── test_audit_fixes.py      # Audit test suite
-│   ├── test_deployment_scripts.py  # Deployment verification
-│   └── test_meta_evolution_engine.py  # Meta-controller tests
+│   ├── test_integration.py             # Full pipeline integration tests (40 tests)
+│   ├── test_e2e_smoke.py               # End-to-end smoke test
+│   ├── test_phase8_production.py       # Production hardening tests
+│   ├── test_champion_archive_integration.py  # Champion archive lifecycle tests
+│   ├── test_checkpoint_manager_integration.py  # Checkpoint manager tests
+│   ├── test_progression_tracker_integration.py  # Progression/auto-tuning tests
+│   ├── test_scale_integration.py       # Model scaling integration tests
+│   ├── test_scale_validator.py         # Scale validator tests
+│   ├── test_scaling_types.py           # Scaling type dataclass tests
+│   ├── test_warm_start.py              # Warm-start training tests
+│   ├── test_model_migrator.py          # Weight migration tests
+│   ├── test_batch_evaluation.py        # Batch evaluation tests
+│   ├── test_batch_prefix.py            # Batch prefix tests
+│   ├── test_recurrent_data_filter.py   # Recurrent data filtering tests
+│   ├── test_progression_snapshot.py    # Progression snapshot tests
+│   └── test_round*.py                  # Round-specific improvement tests
 └── lessons_learned.md           # Post-mortem analysis of failure modes
 ```
 
@@ -113,7 +130,7 @@ python milestone1/train_model.py             # Train model on accumulated traces
 python milestone1/build_recurrent_dataset.py # Build dataset from champion traces
 
 # Testing
-python -m pytest tests/ -v                   # Run full test suite (238 tests)
+python -m pytest tests/ -v                   # Run full test suite (1400+ tests)
 
 # Deployment
 ./deploy.sh                                  # Deploy via Docker

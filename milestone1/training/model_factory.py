@@ -21,19 +21,95 @@ if os.path.isdir(_LOGIT_MASK_DIR) and _LOGIT_MASK_DIR not in sys.path:
     sys.path.insert(0, _LOGIT_MASK_DIR)
 
 
+class CheckpointMismatchError(Exception):
+    """Raised when a checkpoint's config_name does not match the target model.
+
+    This prevents accidentally loading weights from one architecture
+    (e.g. 8L/256d) into another (e.g. 14L/512d), which would silently
+    produce garbage output or crash with dimension errors.
+    """
+
+    pass
+
+
 # ── Model size configs ──────────────────────────────────────────────────────
 MODEL_SIZE_CONFIGS: dict[str, dict] = {
-    "small":  dict(d_model=256, n_layers=6,  n_heads=8,  d_ff=683),
-    "medium": dict(d_model=256, n_layers=8,  n_heads=8,  d_ff=1024),
-    "large":  dict(d_model=512, n_layers=14, n_heads=8,  d_ff=1365),
+    "small": dict(d_model=256, n_layers=6, n_heads=8, d_ff=683),
+    "medium": dict(d_model=256, n_layers=8, n_heads=8, d_ff=1024),
+    "large": dict(d_model=512, n_layers=14, n_heads=8, d_ff=1365),
     "xlarge": dict(d_model=768, n_layers=16, n_heads=12, d_ff=2048),
 }
+
+
+def from_config(config: dict, device: torch.device | None = None) -> torch.nn.Module:
+    """Create an RV32ITransformer from a config dict.
+
+    The config dict may contain:
+        - Any key from RV32ITransformer.__init__ (d_model, n_layers, etc.)
+        - 'size' key: lookup in MODEL_SIZE_CONFIGS to fill missing fields
+        - 'vocab_size': defaults to RV32IVocab.VOCAB_SIZE (2048)
+        - 'max_seq_len': defaults to 2048
+        - 'dropout': defaults to 0.1
+        - 'tie_weights': defaults to True
+        - 'use_rope': defaults to True
+        - 'use_checkpointing': defaults to False
+
+    Args:
+        config: configuration dictionary
+        device: target device (defaults to cuda if available)
+
+    Returns:
+        Instantiated RV32ITransformer on the target device
+    """
+    from rv32i_model import RV32IFieldTokenizer, RV32ITransformer, RV32IVocab
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Start from size preset if provided, then overlay explicit config
+    cfg = dict(config)
+    size_key = cfg.pop("size", None)
+    if size_key and size_key in MODEL_SIZE_CONFIGS:
+        base = dict(MODEL_SIZE_CONFIGS[size_key])
+        base.update({k: v for k, v in cfg.items() if v is not None})
+        cfg = base
+
+    # Filter to only RV32ITransformer constructor kwargs
+    valid_kwargs = {
+        "vocab_size",
+        "d_model",
+        "n_layers",
+        "n_heads",
+        "d_ff",
+        "max_seq_len",
+        "dropout",
+        "tie_weights",
+        "use_rope",
+        "use_checkpointing",
+    }
+    filtered = {k: v for k, v in cfg.items() if k in valid_kwargs}
+
+    # Defaults
+    filtered.setdefault("vocab_size", RV32IVocab.VOCAB_SIZE)
+    filtered.setdefault("d_model", 256)
+    filtered.setdefault("n_layers", 8)
+    filtered.setdefault("n_heads", 8)
+    filtered.setdefault("d_ff", 1024)
+    filtered.setdefault("max_seq_len", 2048)
+    filtered.setdefault("dropout", 0.1)
+    filtered.setdefault("tie_weights", True)
+    filtered.setdefault("use_rope", True)
+    filtered.setdefault("use_checkpointing", False)
+
+    model = RV32ITransformer(**filtered)
+    return model.to(device)
 
 
 def load_or_create_model(
     resume_path: str | None,
     model_size: str = "large",
     device: torch.device | None = None,
+    allow_mismatch: bool = False,
 ) -> tuple[torch.nn.Module, dict]:
     """Load a model from checkpoint or create a fresh one.
 
@@ -41,15 +117,24 @@ def load_or_create_model(
       - Architecture inference from stripped checkpoints (empty config).
       - GELU -> SwiGLU weight migration for old checkpoints.
       - Size mismatch: creates a fresh model if checkpoint dimensions differ.
+      - Config_name validation: prevents loading checkpoints saved with a
+        different model_size (e.g. 'small' checkpoint into 'large' target).
 
     Args:
         resume_path: Path to a .pt checkpoint, or None for a fresh model.
         model_size:  Target model size key (small/medium/large/xlarge).
         device:      Target device (defaults to cuda if available).
+        allow_mismatch: If True, skip config_name validation and proceed
+            even when the checkpoint's config_name differs from model_size.
+            Used by --reset-checkpoint / --migrate flags.
 
     Returns:
         (model, ckpt_config) where ckpt_config is the config dict from the
         checkpoint (may be empty for stripped checkpoints).
+
+    Raises:
+        CheckpointMismatchError: If the checkpoint's config_name does not
+            match model_size and allow_mismatch is False.
     """
     from rv32i_model import RV32ITransformer
 
@@ -68,6 +153,18 @@ def load_or_create_model(
         ckpt_cfg = ckpt.get("config", {})
         ckpt_sd = ckpt.get("model_state_dict", ckpt)
 
+        # ── Config-name validation (prevents wrong-model loading) ──
+        ckpt_config_name = ckpt_cfg.get("config_name", "")
+        if ckpt_config_name and not allow_mismatch:
+            if ckpt_config_name != model_size:
+                raise CheckpointMismatchError(
+                    f"Checkpoint was saved with config_name={ckpt_config_name!r} "
+                    f"but target model_size={model_size!r}. "
+                    f"Use --reset-checkpoint to discard the old checkpoint "
+                    f"or --migrate to load with architecture mismatch."
+                )
+            print(f"[Train] Config-name validated: {ckpt_config_name!r}")
+
         # When config is empty (stripped checkpoint), infer size from actual weights
         if not ckpt_cfg:
             if ckpt_sd and isinstance(ckpt_sd, dict) and any(k.startswith("blocks.") for k in ckpt_sd):
@@ -82,7 +179,7 @@ def load_or_create_model(
             ckpt_d = ckpt_cfg.get("d_model", 256)
             ckpt_l = ckpt_cfg.get("n_layers", 8)
 
-        size_compatible = (ckpt_d == target_cfg["d_model"] and ckpt_l == target_cfg["n_layers"])
+        size_compatible = ckpt_d == target_cfg["d_model"] and ckpt_l == target_cfg["n_layers"]
 
         if size_compatible:
             print(f"[Train] Checkpoint matches target: {ckpt_l}L/d={ckpt_d}")
@@ -96,7 +193,9 @@ def load_or_create_model(
                 use_checkpointing=(device.type == "cuda"),
             )
         else:
-            print(f"[Train] Checkpoint ({ckpt_l}L/d={ckpt_d}) != target ({target_cfg['n_layers']}L/d={target_cfg['d_model']})")
+            print(
+                f"[Train] Checkpoint ({ckpt_l}L/d={ckpt_d}) != target ({target_cfg['n_layers']}L/d={target_cfg['d_model']})"
+            )
             print(f"[Train] Creating fresh model ({model_size}): {target_cfg['n_layers']}L, d={target_cfg['d_model']}")
             model = RV32ITransformer(
                 vocab_size=2048,

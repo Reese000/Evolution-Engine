@@ -44,6 +44,9 @@ def train(
     grad_accum_steps: int = 1,
     augmentation_k: int = 8,
     rebuild_dataset: bool = False,
+    reset_checkpoint: bool = False,
+    migrate: bool = False,
+    use_grad_checkpointing: bool = False,
     **kwargs: Any,
 ) -> None:
     """Train the RV32ITransformer on champion program traces."""
@@ -67,11 +70,37 @@ def train(
         if found:
             ckpt_path = found
 
+    # ── Handle reset/migrate flags ─────────────────────────────────
+    if reset_checkpoint and ckpt_path and os.path.isfile(ckpt_path):
+        from training.checkpoint import save_training_checkpoint  # noqa: F811
+
+        print(f"[Train] --reset-checkpoint: deleting {os.path.basename(ckpt_path)}")
+        os.remove(ckpt_path)
+        # Also clear any sibling checkpoints
+        for name in ("checkpoint_best.pt", "checkpoint_current.pt", "model_final.pt"):
+            p = os.path.join(checkpoint_dir, name)
+            if os.path.isfile(p) and p != ckpt_path:
+                os.remove(p)
+                print(f"[Train] --reset-checkpoint: deleted {name}")
+        ckpt_path = None
+
     # ── Device ─────────────────────────────────────────────────────
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # ── Load or create model ───────────────────────────────────────
-    model, _ckpt_config = load_or_create_model(ckpt_path, model_size=model_size, device=device)
+    model, _ckpt_config = load_or_create_model(
+        ckpt_path,
+        model_size=model_size,
+        device=device,
+        allow_mismatch=migrate,
+    )
+
+    # ── Gradient checkpointing for larger models ──────────────────
+    if use_grad_checkpointing:
+        model.use_checkpointing = True
+        print(
+            f"[Train] Gradient checkpointing enabled (saves ~{sum(p.numel() for p in model.parameters()) // 1000}K params worth of activation memory)"
+        )
 
     # ── torch.compile for faster training ──────────────────────────
     if device.type == "cuda" and compile_mode:
@@ -144,7 +173,7 @@ def train(
     val_weights = split["val_weights"]
 
     # ── Training setup ─────────────────────────────────────────────
-    actual_epochs = min(max_epochs, 8)
+    actual_epochs = max_epochs
     lr = lr_override or 3e-5
     n_train_batches = max(1, len(train_data) // batch_size)
 
@@ -286,7 +315,9 @@ def train(
         print(f"[Train] Restored best model from epoch {best_epoch + 1} (val_loss={best_val_loss:.4f})")
 
     # ── Save checkpoint ────────────────────────────────────────────
-    save_training_checkpoint(model, best_val_loss, best_epoch, epoch, len(sequences), checkpoint_dir)
+    save_training_checkpoint(
+        model, best_val_loss, best_epoch, epoch, len(sequences), checkpoint_dir, config_name=model_size
+    )
 
     # Cleanup
     del model, optimizer
