@@ -248,7 +248,7 @@ def run_evolution(
         use_novelty_archive=True,
         use_qd_archive=True,
         qd_bonus_weight=0.1,
-        use_gpu=True,  # GPU VM farm for fast evolution; CuPy cleanup before retrain
+        use_gpu=os.environ.get("EE_USE_GPU", "1") != "0",  # Set EE_USE_GPU=0 to disable GPU eval
     )
 
     # Apply MetaController-tuned evolution params if provided

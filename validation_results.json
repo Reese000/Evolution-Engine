@@ -1,67 +1,159 @@
 {
-  "run": "20-cycle validation (truncated at cycle 4 by SIGSEGV)",
-  "fixes_active": [
-    "val_loss_propagation",
-    "force_retrain",
-    "rebalance_weights",
-    "level_aware_filter"
-  ],
-  "cuda": "torch=2.5.1+cu121, RTX 4070 Ti",
-  "cycles_completed": 4,
-  "trajectory": [
+  "runs": [
     {
-      "cycle": 1,
-      "fitness": 339.891,
-      "val_loss": 0.0823,
-      "gate": "ACCEPT",
-      "retrain": true
+      "run": 1,
+      "model": "8L/d=256 (medium)",
+      "gpu_eval": true,
+      "amp": true,
+      "crash_at": 5,
+      "crash_error": "CUDA indexing assertion (srcIndex < srcSelectDimSize)",
+      "trajectory": [
+        {
+          "cycle": 1,
+          "fitness": 339.891,
+          "val_loss": 0.0823,
+          "gate": "ACCEPT",
+          "retrain": true
+        },
+        {
+          "cycle": 2,
+          "fitness": 339.891,
+          "val_loss": 0.1169,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 3,
+          "fitness": 339.891,
+          "val_loss": 0.1298,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 4,
+          "fitness": 339.891,
+          "val_loss": 0.1394,
+          "gate": "REJECT",
+          "retrain": true
+        }
+      ]
     },
     {
-      "cycle": 2,
-      "fitness": 339.891,
-      "val_loss": 0.1169,
-      "gate": "REJECT",
-      "retrain": true
+      "run": 2,
+      "model": "8L/d=256 (medium)",
+      "gpu_eval": true,
+      "amp": true,
+      "crash_at": 5,
+      "crash_error": "CUDA indexing assertion",
+      "trajectory": [
+        {
+          "cycle": 1,
+          "fitness": 339.891,
+          "val_loss": 0.1356,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 2,
+          "fitness": 339.891,
+          "val_loss": 0.1223,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 3,
+          "fitness": 339.891,
+          "val_loss": 0.1192,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 4,
+          "fitness": 0.0,
+          "val_loss": 0.1182,
+          "gate": "REJECT",
+          "retrain": true
+        }
+      ]
     },
     {
-      "cycle": 3,
-      "fitness": 339.891,
-      "val_loss": 0.1298,
-      "gate": "REJECT",
-      "retrain": true
-    },
-    {
-      "cycle": 4,
-      "fitness": 339.891,
-      "val_loss": 0.1394,
-      "gate": "REJECT",
-      "retrain": true
+      "run": 3,
+      "model": "8L/d=256 (medium)",
+      "gpu_eval": false,
+      "amp": false,
+      "crash_at": 8,
+      "crash_error": "SIGSEGV (exit 139)",
+      "trajectory": [
+        {
+          "cycle": 1,
+          "fitness": 339.891,
+          "val_loss": 0.213,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 2,
+          "fitness": 339.891,
+          "val_loss": 0.112,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 3,
+          "fitness": 339.891,
+          "val_loss": 0.1233,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 4,
+          "fitness": 0.0,
+          "val_loss": 0.2417,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 5,
+          "fitness": 339.891,
+          "val_loss": 0.1253,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 6,
+          "fitness": 339.891,
+          "val_loss": 0.1236,
+          "gate": "REJECT",
+          "retrain": true
+        },
+        {
+          "cycle": 7,
+          "fitness": 0.0,
+          "val_loss": 0.1227,
+          "gate": "REJECT",
+          "retrain": true
+        }
+      ]
     }
   ],
-  "vs_baseline": {
-    "best_fitness": {
-      "old": 275.87,
-      "new": 339.891,
-      "delta": "+23%"
+  "summary": {
+    "best_val_loss": 0.0823,
+    "best_fitness": 339.891,
+    "vs_baseline": {
+      "fitness": "+23% (275.87 -> 339.891)",
+      "val_loss": "-44% (0.1463 -> 0.0823)",
+      "retrain_active": true,
+      "rollback_events_new_runs": 0,
+      "checkpoint_gating": "working (1 ACCEPT, 14 REJECT)"
     },
-    "best_val_loss": {
-      "old": 0.1463,
-      "new": 0.0823,
-      "delta": "-44%"
-    },
-    "retrain_active": {
-      "old": false,
-      "new": true
-    },
-    "rollback_events": {
-      "old": "10+ per 10 cycles",
-      "new": 0
-    }
-  },
-  "findings": [
-    "val_loss regression across cycles (0.0823->0.1394) \u2014 tuning issue",
-    "SIGSEGV at cycle 5 \u2014 CUDA memory fragmentation",
-    "MetaController correctly detects val_loss regression and tunes params",
-    "Checkpoint gating works: accepts/rejects based on val_loss threshold"
-  ]
+    "blocker": "SIGSEGV/CUDA assertion at cycle 4-8 (non-deterministic, torch 2.5.1+cu121)",
+    "fixes_applied": [
+      "val_loss propagation (6ec0eb1)",
+      "force_retrain safety net (925a91f)",
+      "training data rebalance (a49c370)",
+      "level-aware short-program filter (49b13d1)",
+      "CUDA memory diagnostics (0487396)",
+      "configurable GPU eval via EE_USE_GPU env var (uncommitted)"
+    ]
+  }
 }
