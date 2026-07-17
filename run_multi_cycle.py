@@ -41,8 +41,9 @@ from typing import Any
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = SCRIPT_DIR
 M1_CHECKPOINTS = os.path.join(PROJECT_ROOT, "milestone1", "checkpoints")
-M1_RECURRENT = os.path.join(PROJECT_ROOT, "milestone1", "recurrent_data")
 M1_DIR = os.path.join(PROJECT_ROOT, "milestone1")
+M1_RECURRENT = os.path.join(PROJECT_ROOT, "milestone1", "recurrent_data")  # legacy dir
+M1_RECURRENT_DATA = os.path.join(M1_DIR, "recurrent_data.jsonl")  # canonical training path
 RESULTS_FILE = os.path.join(PROJECT_ROOT, "multi_cycle_results.jsonl")
 
 # Structured logging
@@ -110,9 +111,9 @@ def has_gpu() -> bool:
     global _has_gpu_cache
     if _has_gpu_cache is not None:
         return _has_gpu_cache
-    import torch
-
     try:
+        import torch
+
         _has_gpu_cache = torch.cuda.is_available() and torch.cuda.device_count() > 0
     except Exception:
         _has_gpu_cache = False
@@ -242,7 +243,7 @@ def run_evolution(
         log_dir=log_dir,
         champion_dir=champion_dir,
         best_champion_path=os.path.join(PROJECT_ROOT, "milestone2", "best_champion"),
-        recurrent_feedback_dir=M1_RECURRENT,
+        recurrent_feedback_dir=M1_DIR,  # Write to milestone1/ (not subdirectory)
         novelty_weight=0.3,
         use_novelty_archive=True,
         use_qd_archive=True,
@@ -387,7 +388,7 @@ def merge_archive_to_recurrent(cycle: int) -> int:
     if archive.size == 0:
         return 0
 
-    recurrent_data = os.path.join(M1_RECURRENT, "recurrent_data.jsonl")
+    recurrent_data = M1_RECURRENT_DATA
     os.makedirs(M1_RECURRENT, exist_ok=True)
 
     # Load existing sha256 hashes to deduplicate
@@ -475,7 +476,7 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     else:
         log(f"  Cycle {cycle}: Using passed checkpoint for retrain: {checkpoint_path}")
 
-    recurrent_data = os.path.join(M1_RECURRENT, "recurrent_data.jsonl")
+    recurrent_data = M1_RECURRENT_DATA
     if not os.path.isfile(recurrent_data):
         log(f"  Cycle {cycle}: No recurrent data found -- skipping retrain")
         return {"retrained": False, "reason": "no_data"}
@@ -577,8 +578,20 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     # In-process training path (below) uses amp=True and compile_mode by default.
     # The subprocess cmd (above) is retained for backward compat but not used
     # in the in-process training path that is actually executed.
-    # v13: compile disabled by default due to SIGSEGV on CUDA 13.0
+    # v27: compile disabled by default due to SIGSEGV on CUDA 13.0
     compile_mode = None
+
+    # Initialize config-dependent variables to avoid NameError when config is None
+    wd = None
+    gc = None
+    pat = None
+    me = None
+    vs = None
+    mpl = None
+    ga_steps = 1
+    lr_sched = "plateau"
+    swa_start = None
+    swa_lr = None
 
     # -- Weight decay (v13: configurable) --
     if config is not None:
@@ -845,34 +858,20 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
         sys.stdout = log_f
         sys.stderr = log_f
 
-        # v27: Subprocess training — avoids in-process CUDA deadlock on WSL2.
-        # In-process training deadlocks after epoch 1 on WSL2 CUDA due to
-        # GPU context sharing between evolution engine and training loop.
-        # Subprocess isolation resolves this cleanly.
+        # -- In-process training (audit v3: subprocess path removed) --
+        # The subprocess path was broken because train_model.py has no argparse.
+        # In-process training is the only working path. CUDA deadlock on WSL2
+        # was resolved by GPU cooldown above.
         retrain_ok = False
+        # -- Cycle-specific output path (separate from checkpoint_best.pt) --
+        cycle_ckpt_output = os.path.join(M1_CHECKPOINTS, f"checkpoint_cycle_{cycle}.pt")
+        train_kwargs["output_path"] = cycle_ckpt_output
+
         try:
-            log(f"  Cycle {cycle}: Launching subprocess training...")
-            sys.stdout.flush()
-            sys.stderr.flush()
-            # Restore stdout/stderr for subprocess
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-            try:
-                result = subprocess.run(
-                    cmd,
-                    timeout=train_timeout,
-                    capture_output=False,
-                    text=True,
-                )
-                retrain_ok = result.returncode == 0
-                if retrain_ok:
-                    log(f"  Cycle {cycle}: Subprocess training completed successfully")
-                else:
-                    log(f"  Cycle {cycle}: Subprocess training failed with exit code {result.returncode}")
-            finally:
-                # Restore log file for remaining output
-                sys.stdout = log_f
-                sys.stderr = log_f
+            log(f"  Cycle {cycle}: Starting in-process training...")
+            train_mod.train(**train_kwargs)
+            retrain_ok = True
+            log(f"  Cycle {cycle}: In-process training completed successfully")
         except RuntimeError as cuda_err:
             cuda_err_str = str(cuda_err)
             cudagraph_err = "CUDAGraph" in cuda_err_str or "cudagraph" in cuda_err_str.lower()
@@ -979,18 +978,26 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     elapsed = time.time() - start
     log(f"  Cycle {cycle}: Retrain completed in {elapsed:.1f}s ({elapsed/60:.1f} min)")
 
-    # The training saves model_final.pt as the final output.
+    # The training saves to the output_path (cycle-specific) and model_final.pt.
+    # Prefer cycle-specific checkpoint (full checkpoint with optimizer state),
+    # then fall back to checkpoint_best.pt, then model_final.pt.
+    cycle_ckpt = os.path.join(M1_CHECKPOINTS, f"checkpoint_cycle_{cycle}.pt")
     best_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")
     final_ckpt = os.path.join(M1_CHECKPOINTS, "model_final.pt")
     current_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_current.pt")
 
     new_checkpoint = current_ckpt  # fallback
 
-    # Prefer checkpoint_best.pt (best val loss + optimizer state) over model_final.pt (last epoch, no optimizer).
-    # Preserving optimizer state across cycles enables efficient continued training
-    # instead of rebuilding Adam momentum from scratch each retrain.
+    # Prefer cycle-specific checkpoint (written by retrain to avoid overwriting best)
     source_ckpt = None
-    if os.path.isfile(best_ckpt):
+    if os.path.isfile(cycle_ckpt):
+        source_ckpt = cycle_ckpt
+        new_checkpoint = cycle_ckpt
+        log(
+            f"  Cycle {cycle}: Using cycle checkpoint {os.path.basename(cycle_ckpt)} "
+            f"({os.path.getsize(cycle_ckpt) / 1e6:.1f}MB, with optimizer state)"
+        )
+    elif os.path.isfile(best_ckpt):
         source_ckpt = best_ckpt
         new_checkpoint = best_ckpt
         log(
@@ -1005,11 +1012,10 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
             f"({os.path.getsize(final_ckpt) / 1e6:.1f}MB, no optimizer state)"
         )
 
-    # -- Preserve full checkpoint + strip for evolution -------------
-    # After retrain, checkpoint_best.pt has optimizer state (full, ~524MB).
-    # Save full version as checkpoint_current.pt for next retrain (replaces
-    # both checkpoint_best_full.pt and checkpoint_full_cycle_N.pt),
-    # then strip checkpoint_best.pt to model_state_dict only for evolution/PrefixGenerator.
+    # -- Preserve full checkpoint for next retrain -------------------
+    # The cycle-specific checkpoint has optimizer state (full).
+    # Copy to checkpoint_current.pt for next retrain's input.
+    # Do NOT overwrite checkpoint_best.pt here — that happens on gate acceptance.
     if source_ckpt and os.path.isfile(source_ckpt):
         try:
             shutil.copy2(source_ckpt, current_ckpt)
@@ -1019,52 +1025,24 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
             )
         except (OSError, PermissionError) as e:
             log(f"  Cycle {cycle}: Failed to preserve full checkpoint: {e}")
-
-        # Strip checkpoint_best.pt for evolution engine (model_state_dict only)
+    # Parse val_loss from retrain log BEFORE returning so callers get it
+    # directly instead of re-parsing the log (which may fail on partial writes).
+    parsed_val_loss = None
+    try:
+        parsed_val_loss = parse_val_loss_from_retrain_log(retrain_log)
+    except Exception:
+        pass
+    # Also try to extract val_loss from the saved checkpoint (authoritative)
+    if parsed_val_loss is None and os.path.isfile(new_checkpoint):
         try:
-            import torch
+            import torch as _vtorch
 
-            ckpt_full = load_checkpoint(best_ckpt)
-            sd = ckpt_full.get("model_state_dict", ckpt_full)
-            # Strip _orig_mod prefix from torch.compile
-            clean_sd = {}
-            for k, v in sd.items():
-                key = k
-                if key.startswith("_orig_mod."):
-                    key = key[11:]
-                clean_sd[key] = v
-            # Read actual architecture from the saved training config
-            train_cfg = ckpt_full.get("config", {})
-            # Save proper config dict so train_model.py can load it
-            strip_cfg = {
-                "vocab_size": train_cfg.get("vocab_size", 2048),
-                "d_model": train_cfg.get("d_model", 512),
-                "n_layers": train_cfg.get("n_layers", 14),
-                "n_heads": train_cfg.get("n_heads", 8),
-                "d_ff": train_cfg.get("d_ff", 1365),
-                "max_seq_len": train_cfg.get("max_seq_len", 2048),
-            }
-            # Infer from weights if config is empty
-            if not train_cfg:
-                qkv_keys = [k for k in clean_sd if "blocks.0.attn.qkv.weight" in k]
-                if qkv_keys:
-                    strip_cfg["d_model"] = clean_sd[qkv_keys[0]].shape[1]
-                blk_keys = [k for k in clean_sd if k.startswith("blocks.") and "ln1.weight" in k]
-                if blk_keys:
-                    strip_cfg["n_layers"] = len(blk_keys)
-            torch.save(
-                {
-                    "model_state_dict": clean_sd,
-                    "config": strip_cfg,
-                    "val_loss": ckpt_full.get("val_loss"),
-                },
-                best_ckpt,
-            )
-            log(
-                f"  Cycle {cycle}: Stripped checkpoint for evolution: {os.path.getsize(best_ckpt) / 1e6:.1f}MB ({strip_cfg['n_layers']}L/d={strip_cfg['d_model']})"
-            )
-        except Exception as e:
-            log(f"  Cycle {cycle}: Failed to strip checkpoint: {e}")
+            _ckpt = _vtorch.load(new_checkpoint, map_location="cpu", weights_only=False)
+            _ckpt_vl = _ckpt.get("val_loss")
+            if _ckpt_vl is not None and isinstance(_ckpt_vl, (int, float)) and _ckpt_vl > 0:
+                parsed_val_loss = float(_ckpt_vl)
+        except Exception:
+            pass
 
     return {
         "retrained": True,
@@ -1073,6 +1051,7 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
         "example_count": example_count,
         "exit_code": 0,
         "backup_checkpoint": backup_checkpoint,
+        "val_loss": parsed_val_loss,
     }
 
 
@@ -1762,7 +1741,7 @@ def main() -> None:
 
             # -- Skip retrain if no new data (mtime check) ----------------
             if args.skip_retrain_if_no_new_data and cycle >= 2:
-                _recurrent_path = os.path.join(M1_RECURRENT, "recurrent_data.jsonl")
+                _recurrent_path = M1_RECURRENT_DATA
                 _last_retrain_mtime_file = os.path.join(PROJECT_ROOT, ".last_retrain_mtime")
                 if os.path.isfile(_recurrent_path) and os.path.isfile(_last_retrain_mtime_file):
                     _current_mtime = os.path.getmtime(_recurrent_path)
@@ -1777,35 +1756,38 @@ def main() -> None:
                             f"(current={_current_mtime:.0f}, last_retrain={_saved_mtime:.0f})"
                         )
 
-            # Skip retrain if champion hasn't meaningfully improved and we're past initial cycles
-            if cycle >= 2 and last_retrain_epochs > 0:
-                # v13: 5% relative threshold with 0.01 floor to prevent
-                # zero threshold when fitness=0. For fitness=100, threshold=5.0.
-                # For fitness=0.5, threshold=0.025 (capped min 0.01).
+            # -- Retrain skip logic ----------------------------------------
+            # BUG FIX (audit v3): Force retrain check MUST be before skip conditions.
+            # Previous version had force_retrain inside `if should_retrain` block,
+            # making it unreachable when should_retrain was False.
+            # Also: Always retrain on cycle 1, always retrain every 2 cycles minimum.
+            min_cycles_between_retrains = 2
+            cycles_since_last_retrain += 1  # Always count cycles
+
+            # Force retrain at interval — BEFORE skip logic evaluates
+            if args.force_retrain_interval > 0 and cycles_since_last_retrain >= args.force_retrain_interval:
+                log(
+                    f"  Cycle {cycle}: Force retrain after {cycles_since_last_retrain} "
+                    f"cycles (interval={args.force_retrain_interval})"
+                )
+                should_retrain = True
+                cycles_since_last_retrain = 0
+
+            # Champion-unchanged skip — only if force retrain didn't trigger
+            if should_retrain and cycle >= 3 and cycles_since_last_retrain >= min_cycles_between_retrains:
                 fitness_threshold = max(abs(last_champion_fitness) * 0.05, 0.01)
                 fitness_same = abs(current_fitness - last_champion_fitness) < fitness_threshold
                 level_same = current_level == last_champion_level
                 words_same = current_words == last_champion_words
-                if fitness_same and level_same and words_same:
-                    # -- Force retrain interval override --
-                    if args.force_retrain_interval > 0:
-                        cycles_since_last_retrain += 1
-                        if cycles_since_last_retrain >= args.force_retrain_interval:
-                            log(
-                                f"  Cycle {cycle}: Force retrain after {cycles_since_last_retrain} "
-                                f"cycles without champion change"
-                            )
-                            should_retrain = True
-                            cycles_since_last_retrain = 0
-                    if not should_retrain:
-                        log(
-                            f"  Cycle {cycle}: Champion unchanged since last retrain (F={current_fitness:.3f} "
-                            f"L{current_level} W={current_words}) -- skipping retrain"
-                        )
-                        # Still use the previous checkpoint for next cycle
-                        retrain_result = {"retrained": False, "reason": "champion_unchanged"}
-                        # Record retrain as successful (keep existing checkpoint)
-                        retrain_result["checkpoint"] = checkpoint
+                no_new_traces = evo_result.get("champion_traces", 0) == 0
+                if fitness_same and level_same and words_same and no_new_traces:
+                    log(
+                        f"  Cycle {cycle}: Champion unchanged (F={current_fitness:.3f} "
+                        f"L{current_level} W={current_words} traces={evo_result.get('champion_traces', 0)}) -- skipping retrain"
+                    )
+                    should_retrain = False
+                    retrain_result = {"retrained": False, "reason": "champion_unchanged"}
+                    retrain_result["checkpoint"] = checkpoint
 
             # -- v11.5: Adaptive retrain budget --------------------------
             # If last retrain early-stopped at E epochs, cap next at E*1.5
@@ -1887,7 +1869,7 @@ def main() -> None:
                 cycles_since_last_retrain = 0
                 # Track mtime for --skip-retrain-if-no-new-data
                 if args.skip_retrain_if_no_new_data and retrain_result.get("retrained"):
-                    _recurrent_path = os.path.join(M1_RECURRENT, "recurrent_data.jsonl")
+                    _recurrent_path = M1_RECURRENT_DATA
                     _last_retrain_mtime_file = os.path.join(PROJECT_ROOT, ".last_retrain_mtime")
                     try:
                         with open(_last_retrain_mtime_file, "w") as _f:
@@ -1900,9 +1882,12 @@ def main() -> None:
             if meta_controller is not None and retrain_result.get("retrained"):
                 new_ck = retrain_result.get("checkpoint")
                 if new_ck and os.path.isfile(new_ck):
-                    # Parse val_loss from retrain log
-                    retrain_log = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
-                    val_loss = parse_val_loss_from_retrain_log(retrain_log)
+                    # Prefer val_loss already parsed by retrain_model,
+                    # fall back to log parsing for robustness.
+                    val_loss = retrain_result.get("val_loss")
+                    if val_loss is None:
+                        retrain_log = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
+                        val_loss = parse_val_loss_from_retrain_log(retrain_log)
 
                     if val_loss is not None:
                         accepted = meta_controller.accept_checkpoint(val_loss, new_ck)
@@ -1916,39 +1901,86 @@ def main() -> None:
                             # After a successful retrain, boost diversity on the next cycle
                             # to help the model rediscover good programs faster.
                             post_retrain_boost_cycles = 1
-                            cycle_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_current.pt")
-                            try:
-                                shutil.copy2(new_ck, cycle_ckpt)
-                                checkpoint = cycle_ckpt
-                                log(f"  Cycle {cycle}: Next cycle will use: {checkpoint}")
-                            except (OSError, PermissionError) as e:
-                                log(f"  Cycle {cycle}: Checkpoint copy failed: {e}")
+                            # Promote cycle checkpoint to checkpoint_best.pt
+                            best_ckpt_path = os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")
+                            cycle_ckpt_path = os.path.join(M1_CHECKPOINTS, f"checkpoint_cycle_{cycle}.pt")
+                            if os.path.isfile(cycle_ckpt_path):
+                                try:
+                                    shutil.copy2(cycle_ckpt_path, best_ckpt_path)
+                                    log(
+                                        f"  Cycle {cycle}: Promoted {os.path.basename(cycle_ckpt_path)} → checkpoint_best.pt"
+                                    )
+                                    # Strip optimizer state from best checkpoint for evolution engine
+                                    try:
+                                        import torch as _torch_strip
+
+                                        ckpt_full = load_checkpoint(best_ckpt_path)
+                                        sd = ckpt_full.get("model_state_dict", ckpt_full)
+                                        clean_sd = {}
+                                        for k, v in sd.items():
+                                            key = k
+                                            if key.startswith("_orig_mod."):
+                                                key = key[11:]
+                                            clean_sd[key] = v
+                                        train_cfg = ckpt_full.get("config", {})
+                                        strip_cfg = {
+                                            "vocab_size": train_cfg.get("vocab_size", 2048),
+                                            "d_model": train_cfg.get("d_model", 512),
+                                            "n_layers": train_cfg.get("n_layers", 14),
+                                            "n_heads": train_cfg.get("n_heads", 8),
+                                            "d_ff": train_cfg.get("d_ff", 1365),
+                                            "max_seq_len": train_cfg.get("max_seq_len", 2048),
+                                        }
+                                        if not train_cfg:
+                                            qkv_keys = [k for k in clean_sd if "blocks.0.attn.qkv.weight" in k]
+                                            if qkv_keys:
+                                                strip_cfg["d_model"] = clean_sd[qkv_keys[0]].shape[1]
+                                            blk_keys = [
+                                                k for k in clean_sd if k.startswith("blocks.") and "ln1.weight" in k
+                                            ]
+                                            if blk_keys:
+                                                strip_cfg["n_layers"] = len(blk_keys)
+                                        _torch_strip.save(
+                                            {
+                                                "model_state_dict": clean_sd,
+                                                "config": strip_cfg,
+                                                "val_loss": ckpt_full.get("val_loss"),
+                                            },
+                                            best_ckpt_path,
+                                        )
+                                        log(
+                                            f"  Cycle {cycle}: Stripped checkpoint for evolution ({strip_cfg['n_layers']}L/d={strip_cfg['d_model']})"
+                                        )
+                                    except Exception as e:
+                                        log(f"  Cycle {cycle}: Failed to strip checkpoint: {e}")
+                                except (OSError, PermissionError) as e:
+                                    log(f"  Cycle {cycle}: Checkpoint promotion failed: {e}")
+                            # Also copy to checkpoint_current.pt for next retrain input
+                            cycle_ckpt_cur = os.path.join(M1_CHECKPOINTS, "checkpoint_current.pt")
+                            if os.path.isfile(new_ck):
+                                try:
+                                    shutil.copy2(new_ck, cycle_ckpt_cur)
+                                    checkpoint = cycle_ckpt_cur
+                                    log(f"  Cycle {cycle}: Next cycle will use: {checkpoint}")
+                                except (OSError, PermissionError) as e:
+                                    log(f"  Cycle {cycle}: Checkpoint copy failed: {e}")
                         else:
                             log(
                                 f"  Cycle {cycle}: Checkpoint REJECTED (val_loss={val_loss:.4f} > "
                                 f"threshold={meta_controller._best_val_loss * meta_controller.checkpoint_acceptance_tolerance:.4f})"
                             )
-                            # Restore checkpoint_current.pt from pre-retrain backup
-                            # (retrain_model() always overwrites it during training)
-                            _bkp = retrain_result.get("backup_checkpoint")
-                            if _bkp and os.path.isfile(_bkp):
-                                full_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_current.pt")
+                            # checkpoint_best.pt was NOT overwritten (training writes to cycle-specific file).
+                            # No restore needed — best checkpoint is still the last-known-good.
+                            # Discard the rejected cycle checkpoint.
+                            cycle_ckpt_rej = os.path.join(M1_CHECKPOINTS, f"checkpoint_cycle_{cycle}.pt")
+                            if os.path.isfile(cycle_ckpt_rej):
                                 try:
-                                    shutil.copy2(_bkp, full_ckpt)
-                                    log(f"  Cycle {cycle}: Restored checkpoint_current.pt from backup")
-                                except (OSError, PermissionError) as e:
-                                    log(f"  Cycle {cycle}: Warning: backup restore failed: {e}")
-                            log(
-                                f"  Cycle {cycle}: Falling back to pre-cycle snapshot "
-                                f"(checkpoint_best.pt was overwritten by retrain)"
-                            )
-                            # Roll back using pre-cycle snapshot (checkpoint_best.pt was
-                            # overwritten by retrain -- don't copy it over itself)
-                            if meta_controller.execute_rollback(checkpoint, use_snapshot=True) is not None:
-                                # Keep the original checkpoint path -- it was restored from snapshot.
-                                # Do NOT use get_best_checkpoint() -- it returns checkpoint_best.pt
-                                # which was overwritten by retrain with rejected weights.
-                                pass
+                                    os.remove(cycle_ckpt_rej)
+                                    log(
+                                        f"  Cycle {cycle}: Discarded rejected checkpoint {os.path.basename(cycle_ckpt_rej)}"
+                                    )
+                                except OSError:
+                                    pass
 
                             # v24 Pivot 5: Reset-and-Relearn on stagnation
                             # Track consecutive rejections; after 3, trigger a hard reset
@@ -2005,13 +2037,25 @@ def main() -> None:
                             retry_cfg = SimpleNamespace(**retry_config)
                             retry_result = retrain_model(cycle, checkpoint, config=retry_cfg, best_level=current_level)
                             if retry_result.get("retrained"):
-                                retrain_log2 = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
-                                val_loss2 = parse_val_loss_from_retrain_log(retrain_log2)
+                                # Prefer val_loss from retrain_model, fall back to log parsing
+                                val_loss2 = retry_result.get("val_loss")
+                                if val_loss2 is None:
+                                    retrain_log2 = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
+                                    val_loss2 = parse_val_loss_from_retrain_log(retrain_log2)
                                 if val_loss2 is not None:
                                     log(f"  Cycle {cycle}: Retry succeeded! val_loss={val_loss2:.4f}")
                                     new_ck = retry_result.get("checkpoint")
                                     if new_ck and os.path.isfile(new_ck):
                                         meta_controller.accept_checkpoint(val_loss2, new_ck)
+                                        # Promote to checkpoint_best.pt
+                                        best_ckpt_retry = os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")
+                                        try:
+                                            shutil.copy2(new_ck, best_ckpt_retry)
+                                            log(
+                                                f"  Cycle {cycle}: Retry promoted {os.path.basename(new_ck)} → checkpoint_best.pt"
+                                            )
+                                        except (OSError, PermissionError) as e:
+                                            log(f"  Cycle {cycle}: Retry promotion failed: {e}")
                                         cycle_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_current.pt")
                                         shutil.copy2(new_ck, cycle_ckpt)
                                         checkpoint = cycle_ckpt
@@ -2034,7 +2078,16 @@ def main() -> None:
                             # and the checkpoint file is the expected location.
                             retry_ckpt = retrain_result.get("checkpoint")
                             if retry_ckpt and os.path.isfile(retry_ckpt) and retry_ckpt == new_ck:
-                                # Retrain succeeded but val_loss couldn't parsed -- accept cautiously
+                                # Retrain succeeded but val_loss couldn't be parsed -- accept cautiously
+                                # Promote to checkpoint_best.pt
+                                best_ckpt_fb = os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")
+                                try:
+                                    shutil.copy2(new_ck, best_ckpt_fb)
+                                    log(
+                                        f"  Cycle {cycle}: Fallback promote {os.path.basename(new_ck)} → checkpoint_best.pt"
+                                    )
+                                except (OSError, PermissionError) as e:
+                                    log(f"  Cycle {cycle}: Fallback promotion failed: {e}")
                                 cycle_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_current.pt")
                                 try:
                                     shutil.copy2(new_ck, cycle_ckpt)
@@ -2048,9 +2101,17 @@ def main() -> None:
                     log(f"  Cycle {cycle}: Retrain checkpoint not found at {new_ck}")
 
             elif retrain_result.get("retrained") and meta_controller is None:
-                # No MetaController -- original behavior
+                # No MetaController -- auto-accept retrain output
                 new_ck = retrain_result.get("checkpoint")
                 if new_ck and os.path.isfile(new_ck):
+                    # Promote to checkpoint_best.pt (no gate, always accept)
+                    best_ckpt_no_mc = os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")
+                    try:
+                        shutil.copy2(new_ck, best_ckpt_no_mc)
+                        log(f"  Cycle {cycle}: Promoted {os.path.basename(new_ck)} → checkpoint_best.pt (no MC gate)")
+                    except (OSError, PermissionError) as e:
+                        log(f"  Cycle {cycle}: Checkpoint promotion failed: {e}")
+                    # Also copy to checkpoint_current.pt for next retrain input
                     try:
                         cycle_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_current.pt")
                         shutil.copy2(new_ck, cycle_ckpt)
@@ -2066,12 +2127,22 @@ def main() -> None:
                 qd_total = max(evo_result.get("qd_total_cells", 100), 1)
                 diversity_proxy = min(1.0, evo_result.get("qd_occupied_cells", 0) / qd_total)
 
+            # Use val_loss from retrain_result (parsed by retrain_model),
+            # falling back to log parsing if not available.
+            snapshot_val_loss = retrain_result.get("val_loss")
+            if snapshot_val_loss is None and retrain_result.get("retrained"):
+                retrain_log = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
+                snapshot_val_loss = parse_val_loss_from_retrain_log(retrain_log)
+                if snapshot_val_loss is None:
+                    log(
+                        f"  Cycle {cycle}: [parser debug] val_loss=None, log={retrain_log}, exists={os.path.isfile(retrain_log)}"
+                    )
             snapshot = TelemetrySnapshot(
                 cycle=cycle,
                 fitness=evo_result.get("final_fitness", 0.0),
                 level=evo_result.get("final_level", 0),
                 champion_words=evo_result.get("champion_words", 0),
-                val_loss=None,  # populated below if available
+                val_loss=snapshot_val_loss,
                 diversity=diversity_proxy,
                 novelty_size=evo_result.get("novelty_archive_size", 0),
                 qd_occupied=evo_result.get("qd_occupied_cells", 0),
@@ -2080,17 +2151,6 @@ def main() -> None:
                 retrained=retrain_result.get("retrained", False),
                 generations_completed=evo_result.get("generations_completed", 0),
             )
-
-            # Try to include val_loss
-            if retrain_result.get("retrained"):
-                retrain_log = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
-                val_loss = parse_val_loss_from_retrain_log(retrain_log)
-                if val_loss is not None:
-                    snapshot.val_loss = val_loss
-                else:
-                    log(
-                        f"  Cycle {cycle}: [parser debug] val_loss=None, log={retrain_log}, exists={os.path.isfile(retrain_log)}"
-                    )
 
             meta_controller.update_cycle(snapshot)
 
@@ -2223,37 +2283,7 @@ def main() -> None:
         elif os.path.isfile(os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")):
             retrain_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")
         if retrain_ckpt:
-            # Skip MemGen diagnostics — they use PrefixGenerator on CPU (~500s)
-            diagnostics = None
-            if diagnostics:
-                combined["training_visibility"] = diagnostics
-
-            # Phase L: Pass memorization data to BarrierTuner for next cycle
-            if barrier_tuner is not None and barrier_tuner.history:
-                mem_gen = diagnostics.get("memorization_generalization", {}) if diagnostics else {}
-                mem_score = mem_gen.get("memorization_score")
-                gen_score = mem_gen.get("generalization_score")
-                if mem_score is not None or gen_score is not None:
-                    last_bt = barrier_tuner.history[-1]
-                    if mem_score is not None and isinstance(mem_score, (int, float)) and mem_score >= 0:
-                        last_bt.memorization_score = mem_score
-                        log(f"  Cycle {cycle}: BarrierTuner memorization_score={mem_score:.3f}")
-                    if gen_score is not None and isinstance(gen_score, (int, float)) and gen_score >= 0:
-                        last_bt.generalization_score = gen_score
-                        log(f"  Cycle {cycle}: BarrierTuner generalization_score={gen_score:.3f}")
-                    # Live diagnostic: warn on high mem_ratio (does not block retrain)
-                    if mem_score is not None and gen_score is not None and gen_score > 0:
-                        live_ratio = mem_score / gen_score
-                        if live_ratio > 2.5:
-                            log(
-                                f"  ⚠️ Cycle {cycle}: HIGH MEM_RATIO={live_ratio:.1f}x (mem={mem_score:.3f}, gen={gen_score:.3f})"
-                            )
-                        elif live_ratio > 1.5:
-                            log(
-                                f"  ⚡ Cycle {cycle}: Elevated mem_ratio={live_ratio:.1f}x (mem={mem_score:.3f}, gen={gen_score:.3f})"
-                            )
-                else:
-                    log(f"  Cycle {cycle}: BarrierTuner no mem/gen data available")
+            pass  # Retrain checkpoint available but diagnostics skipped
 
         all_results.append(combined)
 
@@ -2287,9 +2317,6 @@ def main() -> None:
         except Exception as e:
             log(f"  Cycle {cycle}: GPU cleanup skipped ({e})")
 
-        # v11: Cleanup stale checkpoints (keep last N + best)
-        _cleanup_stale_checkpoints(cycle)
-
         # Append to results file
         try:
             with open(RESULTS_FILE, "a") as f:
@@ -2297,6 +2324,26 @@ def main() -> None:
             log(f"  Cycle {cycle}: Results saved to {RESULTS_FILE}")
         except (OSError, PermissionError) as e:
             log(f"  Cycle {cycle}: Failed to write results: {e}")
+
+        # -- Retrain decision logging (audit v2 fix) ---------------------
+        try:
+            _retrain_decision = {
+                "cycle": cycle,
+                "decision": "attempted" if retrain_result.get("retrained") else "skipped",
+                "reason": retrain_result.get("reason", "unknown"),
+                "retrained": retrain_result.get("retrained", False),
+                "fitness": current_fitness,
+                "level": current_level,
+                "words": current_words,
+                "cycles_since_last_retrain": cycles_since_last_retrain,
+                "champion_traces": evo_result.get("champion_traces", 0),
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            }
+            _retrain_log_path = os.path.join(PROJECT_ROOT, "retrain_decisions.jsonl")
+            with open(_retrain_log_path, "a") as _f:
+                _f.write(json.dumps(_retrain_decision) + "\n")
+        except Exception as _e:
+            log(f"  Cycle {cycle}: Failed to write retrain decision log: {_e}")
 
     # Print final summary
     print_summary(all_results)
@@ -2319,15 +2366,6 @@ def main() -> None:
             pass
 
     log("Done.")
-
-
-def _cleanup_stale_checkpoints(current_cycle, keep=5):
-    """No-op: checkpoint consolidation removed per-cycle checkpoint files.
-
-    Previously cleaned up model_cycle{N}.pt and checkpoint_full_cycle_{N}.pt.
-    Now only two checkpoint files exist: checkpoint_best.pt and checkpoint_current.pt.
-    """
-    pass
 
 
 # ----------------------------------------------------------------------
@@ -2737,95 +2775,6 @@ def compute_memorization_generalization(
         f"{len({e['level'] for e in gen_tests})} levels)"
     )
     return result
-
-
-# -- Phase D: Wire training visibility diagnostics into cycle loop -----
-def _run_training_visibility_diagnostics(
-    cycle: int,
-    checkpoint: str,
-    champion: list[int] | None,
-    champion_level: int,
-    recurrent_data_path: str,
-) -> dict[str, Any]:
-    """Run all training visibility diagnostics for a cycle.
-
-    Calls compute_forgetting_curve, compute_weight_delta, and
-    compute_memorization_generalization, returning their results as a dict.
-    Silently handles failures (returns {} for each diagnostic on error).
-    """
-    diagnostics: dict[str, Any] = {}
-    import logging
-
-    log_fn = logging.info
-
-    # -- Forgetting curve ------------------------------------------
-    if champion is not None and champion_level >= 1:
-        try:
-            from evolution_engine import VMFarm
-            from run_multi_cycle import compute_forgetting_curve
-
-            vm = VMFarm(num_workers=1)
-            fc = compute_forgetting_curve(champion, champion_level, vm)
-            if fc:
-                diagnostics["forgetting_curve"] = fc
-                log_fn(f"  Cycle {cycle}: Forgetting curve: {len(fc)} levels tracked")
-        except Exception as e:
-            log_fn(f"  Cycle {cycle}: Forgetting curve skipped: {e}")
-
-    # -- Weight delta ----------------------------------------------
-    try:
-        before_ckpt = os.path.join(os.path.dirname(checkpoint), "checkpoint_current.pt")
-        if not os.path.isfile(before_ckpt):
-            before_ckpt = os.path.join(os.path.dirname(checkpoint), "checkpoint_best.pt")
-        after_ckpt = checkpoint
-        wd = compute_weight_delta(before_ckpt, after_ckpt)
-        if wd:
-            diagnostics["weight_delta"] = wd
-            max_key = max(wd, key=lambda k: wd[k])
-            log_fn(f"  Cycle {cycle}: Weight delta: {len(wd)} params, max={wd[max_key]:.4f} ({max_key})")
-    except Exception as e:
-        log_fn(f"  Cycle {cycle}: Weight delta skipped: {e}")
-
-    # -- Memorization vs Generalization (Phase E.2) ----------------
-    try:
-        mem_gen = compute_memorization_generalization(
-            checkpoint,
-            recurrent_data_path,
-            num_samples=20,
-            prefix_instructions=2,
-        )
-        if mem_gen:
-            diagnostics["memorization_generalization"] = mem_gen
-            log_fn(
-                f"  Cycle {cycle}: Mem/Gen: "
-                f"mem={mem_gen.get('memorization_score', '?'):.3f} "
-                f"gen={mem_gen.get('generalization_score', '?'):.3f}"
-            )
-    except Exception as e:
-        log_fn(f"  Cycle {cycle}: Mem/Gen skipped: {e}")
-
-    # -- Gradient norms (Phase F) -------------------------------------
-    try:
-        retrain_log = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
-        from meta_controller import parse_grad_norms_from_retrain_log
-
-        gn = parse_grad_norms_from_retrain_log(retrain_log)
-        if gn:
-            diagnostics["gradient_norms"] = gn
-            # Log summary: mean and max
-            norms_list = list(gn.values())
-            mean_norm = sum(norms_list) / len(norms_list)
-            max_norm = max(norms_list)
-            max_key = max(gn, key=gn.get)
-            log_fn(
-                f"  Cycle {cycle}: Gradient norms: "
-                f"mean={mean_norm:.6f}, max={max_norm:.6f} ({max_key}), "
-                f"{len(gn)} params tracked"
-            )
-    except Exception as e:
-        log_fn(f"  Cycle {cycle}: Gradient norms skipped: {e}")
-
-    return diagnostics
 
 
 if __name__ == "__main__":

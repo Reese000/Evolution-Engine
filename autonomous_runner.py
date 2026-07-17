@@ -382,6 +382,9 @@ class AutonomousRunner:
         self._max_self_correction_attempts = self._config.get("max_self_correction_attempts", 5)
         self._last_fitness: float | None = None
 
+        # ── Persistent MetaController (reused across _run_retrain calls) ──
+        self._meta_controller: Any = None
+
     def _default_state(self) -> dict[str, Any]:
         return {
             "version": 1,
@@ -622,7 +625,8 @@ class AutonomousRunner:
         self._health.set_status("running")
 
         # Lazy-init MetaController for stagnation detection (if not already wired)
-        meta_controller = self._init_meta_controller()
+        self._meta_controller = self._init_meta_controller()
+        meta_controller = self._meta_controller
 
         while not self.should_stop(meta_controller=meta_controller):
             cycle = self._state["current_cycle"] + 1
@@ -756,15 +760,23 @@ class AutonomousRunner:
             best_level=evo_result.get("final_level", 0),
         )
 
-        # Checkpoint gating via MetaController
-        if retrain_result.get("retrained"):
+        # Checkpoint gating via persistent MetaController
+        # Uses self._meta_controller (same instance across all _run_retrain calls)
+        # so _best_val_loss persists and gating actually works.
+        if retrain_result.get("retrained") and self._meta_controller is not None:
             try:
-                from meta_controller import MetaController, parse_val_loss_from_retrain_log
+                from meta_controller import parse_val_loss_from_retrain_log
 
-                mc = MetaController(checkpoint_dir=str(M1_CHECKPOINTS))
+                mc = self._meta_controller
                 retrain_log = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
-                val_loss = parse_val_loss_from_retrain_log(retrain_log)
+
+                # Prefer val_loss already parsed by retrain_model (in the result dict),
+                # fall back to log parsing for older code paths.
+                val_loss = retrain_result.get("val_loss")
+                if val_loss is None:
+                    val_loss = parse_val_loss_from_retrain_log(retrain_log)
                 if val_loss is not None:
+                    retrain_result["val_loss"] = val_loss  # propagate to caller
                     new_ck = retrain_result.get("checkpoint", "")
                     if new_ck and os.path.isfile(new_ck):
                         accepted = mc.accept_checkpoint(val_loss, new_ck)
@@ -773,6 +785,12 @@ class AutonomousRunner:
                             log(f"  Checkpoint accepted (val_loss={val_loss:.4f})")
                         else:
                             log(f"  Checkpoint rejected (val_loss={val_loss:.4f})")
+                # Persist MetaController state after each retrain
+                mc_path = str(META_CONTROLLER_STATE)
+                try:
+                    mc.save_state(mc_path)
+                except Exception as e:
+                    log(f"  MetaController state save failed: {e}")
             except Exception as e:
                 log(f"  Checkpoint gating failed: {e}")
 
