@@ -34,6 +34,17 @@ _EBREAK_INST: int = 0x00100073
 _CRASH_STATUSES: frozenset[str] = frozenset(("crash", "trap", "exception"))
 _TIMEOUT_STATUSES: frozenset[str] = frozenset(("timeout",))
 
+# Phase 3: Training signal quality thresholds
+# Only save traces with fitness above this threshold to the recurrent buffer.
+# Prevents training on low-quality/crash traces that contaminate the model.
+MIN_FITNESS_FOR_TRACE: float = 0.0
+# Maximum entries in recurrent_data.jsonl before quality-based eviction kicks in.
+# Evicts lowest-fitness traces when exceeded.
+MAX_RECURRENT_ENTRIES: int = 500
+# Recency decay rate for training sample weights (Phase 3.2).
+# weight = exp(-decay_rate * age_in_cycles). At age=100, weight ~ 37%.
+RECURRENT_DECAY_RATE: float = 0.01
+
 # ----------------------------------------------------------------------
 # Path setup -- import from sibling modules and milestone0
 # ----------------------------------------------------------------------
@@ -1293,6 +1304,17 @@ class EvolutionEngine:
         # Generate initial champion
         if self.champion is None:
             self.champion = self._generate_initial_champion()
+            # R45: Validate champion before expensive evaluation
+            is_valid, reason = self.validate_program(self.champion)
+            if not is_valid:
+                self._log(f"  Initial champion invalid ({reason}), generating replacement")
+                for _retry in range(5):
+                    self.champion = self._generate_initial_champion()
+                    is_valid, reason = self.validate_program(self.champion)
+                    if is_valid:
+                        break
+                if not is_valid:
+                    self._log("  WARNING: Could not generate valid champion after 5 retries")
             self.champion_trace = self._evaluate(self.champion)
             if self.config.use_secondary_tasks:
                 self._secondary_task_results = self._evaluate_secondary_tasks(self.champion)
@@ -1539,6 +1561,38 @@ class EvolutionEngine:
         seed = self.rng.randint(0, 2**32 - 1)
         self.task_instance = level_cls(seed=seed).generate_instance()
 
+    @staticmethod
+    def validate_program(program: list[int]) -> tuple[bool, str]:
+        """Cheap pre-check: is this program worth evaluating?
+
+        Returns (is_valid, reason). Invalid programs are skipped to avoid
+        wasting evaluation time on guaranteed-fitness-0 champions.
+
+        Checks:
+          - Non-empty
+          - Contains at least one non-EBREAK instruction
+          - At least 3 instructions (minimum for any useful program)
+          - No instructions beyond 0xFFFFFFFF (32-bit overflow)
+        """
+        if not program:
+            return False, "empty_program"
+
+        # Check for overflow/underflow first (before EBREAK stripping)
+        if any(w > 0xFFFFFFFF or w < 0 for w in program):
+            return False, "overflow"
+
+        # Remove trailing EBREAKs for length check
+        live = program
+        while live and live[-1] == 0x0010_0073:  # EBREAK
+            live = live[:-1]
+
+        if len(live) == 0:
+            return False, "all_ebreak"
+        if len(live) < 3:
+            return False, f"too_short_{len(live)}"
+
+        return True, "ok"
+
     def _evaluate(self, program: list[int]) -> dict[str, Any]:
         """Run a single evaluation and return a trace dict."""
         if self.task_instance is None:
@@ -1549,15 +1603,53 @@ class EvolutionEngine:
         return self._eval_result_to_trace(result)
 
     def _evaluate_batch(self, programs: list[list[int]]) -> list[dict[str, Any]]:
-        """Evaluate multiple programs (stage 1, lighter). Uses GPU batch when available."""
+        """Evaluate multiple programs (stage 1, lighter). Uses GPU batch when available.
+
+        R45: Validates programs before evaluation. Invalid programs get a
+        zero-trace result (status="invalid") instead of wasting GPU time.
+        """
         if self.task_instance is None:
             self._refresh_task_instance()
         inputs = self.task_instance.get("inputs", {}) if self.task_instance else {}
         budget = self.config.eval_budget // 2
-        # Use batch evaluation (GPU when available, CPU fallback)
-        inputs_list = [inputs] * len(programs)
-        results = self.vm_farm.evaluate_batch(programs, inputs_list, budget=budget)
-        return [self._eval_result_to_trace(r) for r in results]
+
+        # R45: Pre-validate programs — skip invalid ones
+        valid_indices = []
+        invalid_results = {}
+        for i, prog in enumerate(programs):
+            is_valid, reason = self.validate_program(prog)
+            if is_valid:
+                valid_indices.append(i)
+            else:
+                invalid_results[i] = {
+                    "status": "invalid",
+                    "trap_cause": reason,
+                    "instructions_count": len(prog),
+                    "final_regs": {},
+                    "final_memory": {},
+                    "pc_history": [],
+                    "reg_history": [],
+                    "memory_accesses": [],
+                }
+
+        if not valid_indices:
+            # All programs invalid — return all invalid results
+            return [invalid_results.get(i, {"status": "invalid"}) for i in range(len(programs))]
+
+        # Evaluate only valid programs
+        valid_programs = [programs[i] for i in valid_indices]
+        inputs_list = [inputs] * len(valid_programs)
+        results = self.vm_farm.evaluate_batch(valid_programs, inputs_list, budget=budget)
+        traces = [self._eval_result_to_trace(r) for r in results]
+
+        # Merge valid and invalid results back in original order
+        final = [None] * len(programs)
+        for vi, trace in zip(valid_indices, traces, strict=False):
+            final[vi] = trace
+        for i, result in invalid_results.items():
+            final[i] = result
+
+        return final
 
     def _evaluate_batch_detailed(self, programs: list[list[int]]) -> list[dict[str, Any]]:
         """Evaluate programs with full budget (stage 2). Uses GPU batch when available."""
@@ -1690,6 +1782,7 @@ class EvolutionEngine:
         program: list[int],
         trace: dict[str, Any],
         eval_budget: int | None = None,
+        raw_only: bool = False,
     ) -> float:
         """Compute crash-penalized fitness.
 
@@ -1698,6 +1791,10 @@ class EvolutionEngine:
           - PC crash / timeout (-50)
           - Memory crash (-25)
           - Instruction count bloat (-0.01 per instruction over 10)
+
+        When raw_only=True (used at max curriculum level), skips novelty/QD
+        blending to prevent novelty bias from filtering out strong
+        task-solving candidates.
 
         Performance: pre-computes bonus_threshold once per generation
         via _bonus_threshold_cache, and uses local variable hoisting to
@@ -1762,16 +1859,20 @@ class EvolutionEngine:
                 if actual_val == expected_val:
                     total_score += 1.0
                     continue
-                diff = actual_val - expected_val if actual_val >= expected_val else expected_val - actual_val
-                max_diff = expected_val if expected_val > 0 else (1 if expected_val == 0 else -expected_val)
-                if max_diff == 0:
-                    max_diff = 1
-                total_score += 1.0 / (1.0 + diff / max_diff)
+                # Distance-weighted: score decreases as error increases.
+                # When expected_val == 0: binary scoring (any non-zero = failure)
+                # When expected_val != 0: continuous score via error_ratio
+                if expected_val == 0:
+                    # Binary: expected 0, actual must be 0
+                    total_score += 0.0
+                else:
+                    error_ratio = abs(actual_val - expected_val) / max(1, abs(expected_val))
+                    total_score += 1.0 / (1.0 + error_ratio)
             reg_match = total_score / total
 
         # Bloat penalty -- moderate discouragement for long programs
         # Reduced from 0.5 to 0.2 per instruction to allow 20-30 instr programs
-        bloat_penalty = (instr_count - 10) * 0.2 if instr_count > 10 else 0.0
+        bloat_penalty = (instr_count - 50) * 0.05 if instr_count > 50 else 0.0
 
         max_score = total if total > 0 else 1
 
@@ -1786,6 +1887,15 @@ class EvolutionEngine:
         solved_bonus = 50.0 if reg_match >= 0.99 else 0.0
 
         base_score = reg_match * 100.0 - bloat_penalty + exec_credit + solved_bonus
+
+        # ── Level advancement bonus (PRIMARY signal) ────────────────────
+        # Each curriculum level adds 25 points. This ensures level 17
+        # always scores higher than level 0, even with fewer instructions.
+        # Level 0 gets 0 bonus, level 17 gets 425 bonus.
+        # This is the DOMINANT fitness signal — the system must reward
+        # progress, not punish complexity.
+        level_bonus = self.champion_level * 25.0
+        base_score += level_bonus
 
         # ── Efficiency scoring (+15 points max) ──────────────────────────
         # At high levels (L8+), REWARD instruction diversity (SMC needs
@@ -1916,6 +2026,12 @@ class EvolutionEngine:
         self._raw_task_score = base_score
         fitness = base_score
 
+        # When raw_only=True (at max curriculum level), skip novelty/QD
+        # blending to prevent novelty bias from filtering out strong
+        # task-solving candidates.
+        if raw_only:
+            return fitness
+
         # v13: Novelty-weighted fitness -- reward behaviorally novel programs
         # Cache novelty_weight as local to avoid repeated attribute lookup
         # R29: Adaptive novelty weight -- boost novelty contribution when
@@ -2020,6 +2136,7 @@ class EvolutionEngine:
         programs: list[list[int]],
         traces: list[dict[str, Any]],
         eval_budget: int | None = None,
+        raw_only: bool = False,
     ) -> tuple[list[float], list[float]]:
         """Vectorized batch fitness computation using numpy arrays.
 
@@ -2246,6 +2363,13 @@ class EvolutionEngine:
 
         # ── Raw task scores ─────────────────────────────────────────
         raw_scores[ok_indices] = base
+
+        # When raw_only=True (at max curriculum level), skip novelty/QD
+        # blending to prevent novelty bias from filtering out strong
+        # task-solving candidates.
+        if raw_only:
+            fitnesses[ok_indices] = base
+            return fitnesses.tolist(), raw_scores.tolist()
 
         # ── Novelty / QD blending (per-program, archive lookups) ────
         # These involve archive lookups that are hard to vectorise but
@@ -3217,6 +3341,9 @@ class EvolutionEngine:
         _compute = self._compute_fitness  # hoist to local for hot loop
         _use_sec = self.config.use_secondary_tasks
 
+        # At max curriculum level, use raw fitness only (no novelty/QD bias)
+        raw_only = self.champion_level >= self.config.max_level - 1
+
         # ── Vectorized batch fitness (fast path) ────────────────────
         # Evaluate secondary tasks for non-crashed programs first so
         # batch_compute_fitness can include multi-task scoring.
@@ -3236,6 +3363,7 @@ class EvolutionEngine:
                 challengers,
                 results,
                 eval_budget=stage1_budget,
+                raw_only=raw_only,
             )
             for idx in range(n_challengers):
                 scored[idx] = (batch_fitnesses[idx], challengers[idx], results[idx])
@@ -3255,7 +3383,7 @@ class EvolutionEngine:
                         self._secondary_task_results = self._evaluate_secondary_tasks(challengers[idx])
                     else:
                         self._secondary_task_results = None
-                    fit = _compute(challengers[idx], trace, eval_budget=stage1_budget)
+                    fit = _compute(challengers[idx], trace, eval_budget=stage1_budget, raw_only=raw_only)
                 scored[idx] = (fit, challengers[idx], results[idx])
                 fitness_cache[idx] = fit
         finally:
@@ -3565,6 +3693,11 @@ class EvolutionEngine:
         self-improving loop. The champion (reference solution) is NOT saved
         because it's already in the training data.
 
+        Phase 3: Quality-gated trace storage — only saves traces where
+        fitness > MIN_FITNESS_FOR_TRACE, preventing training on low-quality
+        or crash traces. Adds timestamp for recency decay in training.
+        Performs quality-based eviction when buffer exceeds MAX_RECURRENT_ENTRIES.
+
         Returns True if >= 50 examples accumulated (signal to retrain).
         """
         if not self._last_challengers:
@@ -3574,13 +3707,13 @@ class EvolutionEngine:
         # R16: Cache makedirs path to avoid repeated os.makedirs each generation
         recur_dir = self.config.recurrent_feedback_dir
         if not recur_dir:
-            recur_dir = os.path.join(MILESTONE1_DIR, "recurrent_data")
+            recur_dir = MILESTONE1_DIR  # Write to milestone1/ directly (not subdirectory)
         if getattr(self, "_recur_dir_made", None) != recur_dir:
             os.makedirs(recur_dir, exist_ok=True)
             self._recur_dir_made = recur_dir
 
         # Load existing hashes (cached on instance)
-        jsonl_path = os.path.join(recur_dir, "recurrent_data.jsonl")
+        jsonl_path = os.path.join(recur_dir, "recurrent_data.jsonl")  # milestone1/recurrent_data.jsonl
         if not hasattr(self, "_saved_sha256s"):
             self._saved_sha256s: dict[str, None] = {}  # R38: OrderedDict-like dict for age-based eviction
             if os.path.isfile(jsonl_path):
@@ -3594,6 +3727,7 @@ class EvolutionEngine:
                     pass
 
         saved_any = False
+        rejected_count = 0
         # Cache module-level LEVELS (already imported at module top — avoid re-import)
         _levels = LEVELS
         _verify_levels_sorted = None  # lazy: compute sorted keys once
@@ -3616,9 +3750,13 @@ class EvolutionEngine:
             if sha256 in self._saved_sha256s:
                 continue
 
-            # Fitness quality gate (early exit — avoid expensive level verification)
+            # Phase 3.1: Quality-gated trace storage
+            # Only save traces above MIN_FITNESS_FOR_TRACE threshold.
+            # Exception: if deeply stalled (>= 30 gens), save regardless
+            # as a desperate measure to get any training signal.
             challenger_fitness = fitnesses[idx] if idx < n_fitnesses else 0.0
-            if challenger_fitness <= 0.0 and self.generations_stalled < 50:
+            if challenger_fitness <= MIN_FITNESS_FOR_TRACE and self.generations_stalled < 30:
+                rejected_count += 1
                 continue
             if len(prog) < 2:
                 continue
@@ -3645,6 +3783,7 @@ class EvolutionEngine:
             except Exception:
                 pass
 
+            # Phase 3.2: Add timestamp for recency decay in training
             example = {
                 "level": solved_level,
                 "generation": self.current_generation,
@@ -3656,6 +3795,8 @@ class EvolutionEngine:
                 "trace_instr_count": trace.get("instructions_count", 0),
                 "stalled_count": self.generations_stalled,
                 "task_score": task_score,
+                "timestamp": time.time(),
+                "trace_quality_score": min(1.0, max(0.0, challenger_fitness / 100.0)),
             }
 
             self._saved_sha256s[sha256] = None
@@ -3676,8 +3817,67 @@ class EvolutionEngine:
                 f"Recurrent feedback saved ({self.recurrent_examples_count} total, "
                 f"{len(self._saved_sha256s)} unique)"
             )
+        if rejected_count > 0:
+            self._log(f"Rejected {rejected_count} low-quality traces " f"(fitness < {MIN_FITNESS_FOR_TRACE})")
+
+        # Phase 3.3: Quality-based eviction when buffer exceeds limit
+        # Evicts lowest-fitness traces (not oldest) to maintain training quality.
+        self._evict_recurrent_buffer(jsonl_path)
 
         return self.recurrent_examples_count >= 50
+
+    def _evict_recurrent_buffer(self, jsonl_path: str) -> None:
+        """Evict lowest-fitness traces when recurrent buffer exceeds MAX_RECURRENT_ENTRIES.
+
+        Reads all entries, sorts by fitness (ascending), removes the bottom
+        entries to bring count below MAX_RECURRENT_ENTRIES, then rewrites.
+        This ensures only high-quality traces remain for training.
+        """
+        if not os.path.isfile(jsonl_path):
+            return
+        try:
+            entries = []
+            with open(jsonl_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            entries.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+            if len(entries) <= MAX_RECURRENT_ENTRIES:
+                return
+
+            # Sort by fitness ascending — lowest fitness first for eviction
+            entries.sort(key=lambda e: e.get("fitness", 0.0))
+
+            # Keep only the top MAX_RECURRENT_ENTRIES entries
+            evicted_count = len(entries) - MAX_RECURRENT_ENTRIES
+            entries = entries[evicted_count:]
+
+            # Rewrite file with kept entries (atomic write)
+            import tempfile
+
+            dir_name = os.path.dirname(jsonl_path) or "."
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    for entry in entries:
+                        f.write(json.dumps(entry) + "\n")
+                os.replace(tmp_path, jsonl_path)
+                self._log(
+                    f"Evicted {evicted_count} low-fitness traces from recurrent buffer "
+                    f"(kept {len(entries)} entries)"
+                )
+            except Exception:
+                # Clean up temp file on failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        except Exception as e:
+            self._log(f"[RecurrentEvict] Failed: {e}")
 
     # ------------------------------------------------------------------
     # Strategy archive
