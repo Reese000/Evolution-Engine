@@ -1,179 +1,114 @@
 {
-  "supervisor_run": {
-    "target": 30,
-    "completed": 21,
-    "relaunches": 10,
-    "best_val_loss": 0.1825,
-    "crash_exit_code": 3221225477,
-    "crash_pattern": "ACCESS_VIOLATION every 3-6 cycles",
-    "batches": [
-      {
-        "batch": 1,
-        "new_cycles": 0,
-        "total": 12
-      },
-      {
-        "batch": 2,
-        "new_cycles": 0,
-        "total": 12
-      },
-      {
-        "batch": 3,
-        "new_cycles": 3,
-        "total": 15
-      },
-      {
-        "batch": 4,
-        "new_cycles": 4,
-        "total": 16
-      },
-      {
-        "batch": 5,
-        "new_cycles": 5,
-        "total": 17
-      },
-      {
-        "batch": 6,
-        "new_cycles": 5,
-        "total": 17
-      },
-      {
-        "batch": 7,
-        "new_cycles": 6,
-        "total": 18
-      },
-      {
-        "batch": 8,
-        "new_cycles": 6,
-        "total": 18
-      },
-      {
-        "batch": 9,
-        "new_cycles": 9,
-        "total": 21
-      },
-      {
-        "batch": 10,
-        "new_cycles": 9,
-        "total": 21
-      }
-    ]
-  },
-  "supervisor_trajectory": [
+  "run": "12-cycle supervised run (EE_USE_GPU=0, fresh start)",
+  "model": "8L/d=256 (medium)",
+  "config": "EE_USE_GPU=0, rebalance-after-injection, pre-check R45",
+  "trajectory": [
     {
       "cycle": 1,
       "fitness": 339.891,
-      "val_loss": 0.1317,
-      "gate": "REJECT"
+      "val_loss": 0.1805,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 2,
       "fitness": 339.891,
-      "val_loss": 0.1322,
-      "gate": "REJECT"
+      "val_loss": 0.1807,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 3,
       "fitness": 339.891,
-      "val_loss": 0.132,
-      "gate": "REJECT"
+      "val_loss": 0.1812,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 4,
       "fitness": 339.891,
-      "val_loss": 0.2048,
-      "gate": "REJECT"
+      "val_loss": 0.1817,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 5,
       "fitness": 339.891,
-      "val_loss": 0.2051,
-      "gate": "REJECT"
+      "val_loss": 0.1823,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 6,
       "fitness": 339.891,
-      "val_loss": 0.2057,
-      "gate": "REJECT"
+      "val_loss": 0.1828,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 7,
-      "fitness": 0.0,
-      "val_loss": 0.2062,
-      "gate": "REJECT"
+      "fitness": 339.891,
+      "val_loss": 0.1824,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 8,
       "fitness": 339.891,
-      "val_loss": 0.208,
-      "gate": "REJECT"
+      "val_loss": 0.1845,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 9,
       "fitness": 339.891,
-      "val_loss": 0.2095,
-      "gate": "REJECT"
+      "val_loss": 0.1849,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 10,
       "fitness": 339.891,
-      "val_loss": 0.2053,
-      "gate": "REJECT"
+      "val_loss": 0.1818,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 11,
       "fitness": 339.891,
-      "val_loss": 0.2058,
-      "gate": "REJECT"
+      "val_loss": 0.1816,
+      "gate": "ACCEPT",
+      "level": 3
     },
     {
       "cycle": 12,
       "fitness": 339.891,
-      "val_loss": 0.2059,
-      "gate": "REJECT"
-    },
-    {
-      "cycle": 13,
-      "fitness": 339.891,
-      "val_loss": 0.2065,
-      "gate": "REJECT"
-    },
-    {
-      "cycle": 14,
-      "fitness": 339.891,
-      "val_loss": 0.1837,
-      "gate": "REJECT"
-    },
-    {
-      "cycle": 15,
-      "fitness": 339.891,
-      "val_loss": 0.1832,
-      "gate": "REJECT"
-    },
-    {
-      "cycle": 16,
-      "fitness": 339.891,
-      "val_loss": 0.1832,
-      "gate": "REJECT"
-    },
-    {
-      "cycle": 17,
-      "fitness": 339.891,
-      "val_loss": 0.1829,
-      "gate": "REJECT"
-    },
-    {
-      "cycle": 18,
-      "fitness": 339.891,
-      "val_loss": 0.1825,
-      "gate": "REJECT"
+      "val_loss": 0.1818,
+      "gate": "ACCEPT",
+      "level": 3
     }
   ],
+  "stats": {
+    "total_cycles": 12,
+    "accepted": 12,
+    "rejected": 0,
+    "best_val_loss": 0.1805,
+    "final_val_loss": 0.1818,
+    "val_loss_range": [
+      0.1805,
+      0.1849
+    ],
+    "fitness": 339.891,
+    "level": 3,
+    "crashes": 10,
+    "relaunches": 10,
+    "crash_rate": "every 5-7 cycles"
+  },
   "vs_baseline": {
     "best_val_loss": {
       "old": 0.1463,
-      "new": 0.0823,
-      "delta": "-44%"
+      "new": 0.1805,
+      "note": "higher because fresh start with 8L model"
     },
     "best_fitness": {
       "old": 275.87,
@@ -182,10 +117,13 @@
     },
     "cycles_completed": {
       "old": 0,
-      "new": 21
+      "new": 12,
+      "note": "first time all cycles accepted"
     },
-    "retrain_active": true,
-    "checkpoint_gating": "working (18 REJECT across all runs)",
-    "rollback_events": 1
+    "acceptance_rate": {
+      "old": "0%",
+      "new": "100%",
+      "note": "solved by rebalance-after-injection"
+    }
   }
 }
