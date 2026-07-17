@@ -1068,10 +1068,18 @@ def cycle_resume_state(cycle: int) -> dict[str, Any]:
     R24: Reads the results file once, tracking both the completed set
     and the full results list in a single pass. Stops reading as soon
     as the target cycle is found (early termination for large files).
+
+    R47: Also extracts the highest champion level and fitness from the
+    results file, so --resume can restore curriculum state across
+    subprocess restarts (prevents level regression L17→L3).
     """
     results = []
     completed_cycles: set[int] = set()
     found = False
+    best_level = 0
+    best_fitness = 0.0
+    last_fitness = 0.0
+    last_level = 0
     if os.path.isfile(RESULTS_FILE):
         with open(RESULTS_FILE) as f:
             for line in f:
@@ -1084,9 +1092,25 @@ def cycle_resume_state(cycle: int) -> dict[str, Any]:
                             completed_cycles.add(c)
                             if c == cycle:
                                 found = True
+                        # Track highest level and fitness across all cycles
+                        rl = r.get("final_level", 0)
+                        rf = r.get("final_fitness", 0.0)
+                        if rl > best_level:
+                            best_level = rl
+                        if rf > best_fitness:
+                            best_fitness = rf
+                        last_fitness = rf
+                        last_level = rl
                     except json.JSONDecodeError:
                         continue
-    return {"completed": found or cycle in completed_cycles, "all_results": results}
+    return {
+        "completed": found or cycle in completed_cycles,
+        "all_results": results,
+        "best_level": best_level,
+        "best_fitness": best_fitness,
+        "last_level": last_level,
+        "last_fitness": last_fitness,
+    }
 
 
 def print_summary(results: list[dict[str, Any]]) -> None:
@@ -1333,6 +1357,8 @@ def main() -> None:
     completed_cycles = set()
     all_results = []
     last_retrained_ckpt = None
+    resume_best_level = 0  # R47: highest level achieved across all resume cycles
+    resume_best_fitness = 0.0
     if args.resume and os.path.isfile(RESULTS_FILE):
         with open(RESULTS_FILE) as f:
             for line in f:
@@ -1344,9 +1370,17 @@ def main() -> None:
                         # Track the last successfully retrained checkpoint
                         if r.get("retrained") and r.get("checkpoint"):
                             last_retrained_ckpt = r["checkpoint"]
+                        # R47: Track highest level for curriculum persistence
+                        rl = r.get("final_level", 0)
+                        rf = r.get("final_fitness", 0.0)
+                        if rl > resume_best_level:
+                            resume_best_level = rl
+                        if rf > resume_best_fitness:
+                            resume_best_fitness = rf
                     except json.JSONDecodeError:
                         continue
         log(f"  Resuming: {len(completed_cycles)} cycles already completed")
+        log(f"  Resume best level: L{resume_best_level}, best fitness: {resume_best_fitness:.1f}")
         # Use last retrained checkpoint instead of initial model
         if last_retrained_ckpt and os.path.isfile(last_retrained_ckpt):
             checkpoint = last_retrained_ckpt
@@ -1455,8 +1489,11 @@ def main() -> None:
     # Track actual epochs used per cycle to cap next cycle intelligently
     last_retrain_epochs: int = 0
     last_champion_fitness: float = float("-inf")
-    last_champion_level: int = 0
+    # R47: Initialize from resume state if available (prevents L17→L3 regression)
+    last_champion_level: int = resume_best_level if args.resume else 0
     last_champion_words: int = 0
+    if last_champion_level > 0:
+        log(f"  R47: Resuming at level L{last_champion_level} (from results file)")
 
     # -- Stuck-champion recovery counters ------------------------------
     cycles_since_last_retrain: int = 0
