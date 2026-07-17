@@ -279,9 +279,15 @@ def supervisor_main() -> int:
     while total_completed < args.cycles:
         remaining = args.cycles - total_completed
         batch_cycles = min(remaining, args.batch_size)
+        # The subprocess needs --cycles = total_completed + batch_cycles
+        # so that --resume skips the first total_completed and runs the new ones.
+        subprocess_cycles = total_completed + batch_cycles
         batch_num += 1
 
-        log(f"\n--- Batch {batch_num}: requesting {batch_cycles} cycles ---")
+        log(
+            f"\n--- Batch {batch_num}: requesting {batch_cycles} new cycles "
+            f"(subprocess --cycles {subprocess_cycles} --resume) ---"
+        )
 
         best_vl = get_best_val_loss()
         log(f"  Current best val_loss: {best_vl}")
@@ -295,7 +301,7 @@ def supervisor_main() -> int:
 
         # Run the batch
         exit_code, output = run_evolution_batch(
-            cycles=batch_cycles,
+            cycles=subprocess_cycles,
             gens=args.gens,
             python_path=python_path,
             extra_args=extra_args,
