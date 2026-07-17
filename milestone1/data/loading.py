@@ -1,4 +1,8 @@
-"""Extracts champion trace loading, tokenization, and per-level capping"""
+"""Data loading and level-capping utilities.
+
+Extracts champion trace loading, tokenization, and per-level capping
+from the monolithic train_model.py.
+"""
 
 from __future__ import annotations
 
@@ -6,35 +10,50 @@ import json
 import os
 import sys
 from collections import Counter
-from typing import Any
 
 import torch
+
+# Ensure milestone1/ and parent are on sys.path so sibling modules resolve.
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+# milestone0/logit-masking (for rv32i_mask)
+_LOGIT_MASK_DIR = os.path.join(BASE_DIR, "..", "milestone0", "logit-masking")
+if os.path.isdir(_LOGIT_MASK_DIR) and _LOGIT_MASK_DIR not in sys.path:
+    sys.path.insert(0, _LOGIT_MASK_DIR)
 
 
 def load_champion_traces(
     data_path: str,
-    tokenizer: Any,
-    rv32i_decode: Any = None,
+    tokenizer,
+    *,
+    rv32i_decode,
 ) -> tuple[list[torch.Tensor], list[float], list[list[dict]], list[int]]:
     """Load champion traces from a JSONL file and tokenize them.
 
+    Args:
+        data_path:  Path to recurrent_data.jsonl.
+        tokenizer:  An RV32IFieldTokenizer instance.
+        rv32i_decode: The rv32i_mask.decode function.
+
     Returns:
         (sequences, sample_weights, raw_dicts_for_augment, entry_levels)
-        - sequences: list of tokenized tensors
-        - sample_weights: per-sample weights (1.0 default)
-        - raw_dicts_for_augment: raw instruction dicts for augmentation
-        - entry_levels: per-sample curriculum level
     """
+    from rv32i_mask import decode as _default_decode
+
+    if rv32i_decode is None:
+        rv32i_decode = _default_decode
+
     sequences: list[torch.Tensor] = []
     sample_weights: list[float] = []
     raw_dicts_for_augment: list[list[dict]] = []
     entry_levels: list[int] = []
+    seen_hashes: set[int] = set()
 
     if not os.path.isfile(data_path):
         return sequences, sample_weights, raw_dicts_for_augment, entry_levels
 
-    seen_sha256: set[str] = set()
-    with open(data_path, encoding="utf-8") as f:
+    with open(data_path) as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -44,46 +63,75 @@ def load_champion_traces(
             except json.JSONDecodeError:
                 continue
 
-            # Dedup by champion sha256
-            sha = entry.get("champion_sha256", "")
-            if sha and sha in seen_sha256:
+            # Filter low-quality traces
+            fitness = entry.get("fitness", 0)
+            task_score = entry.get("task_score", 0)
+            is_reference = entry.get("save_reason") == "reference_solution"
+            is_model_generated = not is_reference and entry.get("generation", -1) >= 0
+            if fitness <= 0 or (task_score > 0 and task_score < 10.0):
                 continue
-            if sha:
-                seen_sha256.add(sha)
-
-            program = entry.get("champion_program", [])
-            if not program:
+            # Accept model-generated programs only if very high-fitness
+            # (model learns best from top-quality examples, not average ones)
+            if is_model_generated and task_score <= 0 and fitness < 100:
+                continue
+            # Skip Level 10 entries — nearly all have fitness < 100 (0.02% pass rate)
+            # These drag down training quality and cause model regression
+            entry_level = entry.get("level", 0)
+            if entry_level == 10 and not is_reference:
+                continue
+            # Skip short programs (< 10 instructions) — model should learn from
+            # longer programs that solve tasks better (28-30 instr have highest fitness)
+            # R43: Level-aware threshold — low levels (L0-L8) legitimately produce
+            # short programs (3-9 instr). Only apply the short-program filter to
+            # high levels where longer programs are expected.
+            instr_count = len(entry.get("champion_program", []))
+            min_instr = 10 if entry_level >= 9 else 3
+            if is_model_generated and instr_count < min_instr:
                 continue
 
-            # Convert hex strings to ints if needed
-            if program and isinstance(program[0], str):
+            prog = entry.get("champion_program", [])
+            if not prog:
+                continue
+
+            entry_level = entry.get("level", 0)
+
+            # Convert hex strings -> ints -> instruction dicts -> tokens
+            instr_dicts = []
+            for hw in prog:
+                if isinstance(hw, str) and hw.startswith("0x"):
+                    word = int(hw, 16)
+                elif isinstance(hw, int):
+                    word = hw
+                else:
+                    continue
                 try:
-                    program = [int(x, 16) if x.startswith("0x") else int(x) for x in program]
-                except (ValueError, TypeError):
+                    decoded = rv32i_decode(word)
+                    if decoded:
+                        instr_dicts.append(decoded)
+                except (ValueError, KeyError):
                     continue
 
-            # Tokenize
-            tokens = tokenizer.encode_program(program)
-            if not tokens or len(tokens) < 2:
+            if not instr_dicts:
                 continue
 
-            sequences.append(torch.tensor(tokens, dtype=torch.long))
-            sample_weights.append(1.0)
-            entry_levels.append(entry.get("level", 0))
-
-            # Store raw dicts for augmentation (if decode available)
-            if rv32i_decode is not None:
-                try:
-                    instr_dicts = []
-                    for word in program:
-                        d = rv32i_decode(word)
-                        if d:
-                            instr_dicts.append(d)
-                    raw_dicts_for_augment.append(instr_dicts)
-                except Exception:
-                    raw_dicts_for_augment.append([])
-            else:
-                raw_dicts_for_augment.append([])
+            # Tokenize
+            tokens = tokenizer.encode_trace(instr_dicts)
+            if tokens and len(tokens) >= 2:
+                # Dedup
+                seq_hash = hash(tuple(tokens))
+                if seq_hash in seen_hashes:
+                    continue
+                seen_hashes.add(seq_hash)
+                sequences.append(torch.tensor(tokens, dtype=torch.long))
+                raw_dicts_for_augment.append(instr_dicts)
+                entry_levels.append(entry_level)
+                # Phase 5: compute reward weight for this sample
+                ts = entry.get("task_score", None)
+                if ts is not None and ts > 0:
+                    sw = max(0.1, min(1.0, ts / 120.0))
+                else:
+                    sw = max(0.1, min(1.0, entry.get("fitness", 1.0) / 150.0))
+                sample_weights.append(sw)
 
     return sequences, sample_weights, raw_dicts_for_augment, entry_levels
 
@@ -139,24 +187,19 @@ def rebalance_level_weights(
 ) -> None:
     """Upsample underrepresented levels via sample_weights.
 
-    After apply_level_cap, high-level traces (L12-L17) can dominate 94% of
-    the data while low levels (L0-L8) have <6%. This causes the model to
-    predict poorly at low levels, leading to regression on curriculum resets.
+    After apply_level_cap, high-level traces can dominate the data while
+    low levels are underrepresented. This causes the model to predict
+    poorly at low levels, leading to regression on curriculum resets.
 
-    Fix: increase sample_weights for underrepresented levels so the loss
-    function pays proportionally more attention to them. The maximum weight
-    boost is capped at target_ratio (default 5x) to prevent outlier levels
+    Increases sample_weights for underrepresented levels so the loss
+    function pays proportionally more attention to them. The maximum
+    weight boost is capped at target_ratio to prevent outlier levels
     from destabilizing training.
 
     Mutates sample_weights in-place. entry_levels must be the same length.
-
-    Args:
-        sample_weights: Per-sample weights (mutated in-place).
-        entry_levels: Per-sample level labels (read-only).
-        target_ratio: Max weight multiplier for the rarest level vs the most
-                      common. E.g. 5.0 means the rarest level gets up to 5x
-                      the weight of the most common.
     """
+    from collections import Counter
+
     if not sample_weights or not entry_levels or len(sample_weights) != len(entry_levels):
         return
 
@@ -168,17 +211,11 @@ def rebalance_level_weights(
     if max_count == 0:
         return
 
-    # Compute per-level weight multiplier: rare levels get boosted.
     # mult = min(target_ratio, max_count / level_count)
     level_mult: dict[int, float] = {}
     for lvl, count in level_counts.items():
-        if count > 0:
-            mult = max_count / count
-            level_mult[lvl] = min(target_ratio, mult)
-        else:
-            level_mult[lvl] = 1.0
+        level_mult[lvl] = min(target_ratio, max_count / count) if count > 0 else 1.0
 
-    # Apply multipliers to sample_weights
     boosted = 0
     for i, lvl in enumerate(entry_levels):
         mult = level_mult.get(lvl, 1.0)
@@ -191,5 +228,6 @@ def rebalance_level_weights(
             f"L{l}:{level_counts[l]}x{level_mult[l]:.1f}" for l in sorted(level_mult) if level_mult[l] > 1.01
         )
         print(
-            f"  [Rebalance] Boosted {boosted} samples across {len([m for m in level_mult.values() if m > 1.01])} levels: {levels_str}"
+            f"  [Rebalance] Boosted {boosted} samples across "
+            f"{sum(1 for m in level_mult.values() if m > 1.01)} levels: {levels_str}"
         )
