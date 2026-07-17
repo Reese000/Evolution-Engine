@@ -192,6 +192,7 @@ def run_evolution(
     checkpoint_path: str,
     meta_evolution_params: dict[str, Any] | None = None,
     archive_data: dict[str, Any] | None = None,
+    start_level: int = 0,
 ) -> dict[str, Any]:
     """Run a single evolution cycle.
 
@@ -236,11 +237,13 @@ def run_evolution(
         return {"cycle": cycle, "error": f"directory_creation_failed: {e}"}
 
     # Configure: aggressive curriculum advancement to see multi-level progression
+    log(f"  Evolution starting at curriculum_level={start_level}")
     config = EvolutionConfig(
         max_generations=num_generations,
         population_size=50,
         curriculum_stall_threshold=3,
         auto_curriculum=True,
+        curriculum_level=start_level,
         checkpoint_interval=50,
         elite_ratio=0.1,
         dashboard_state_dir=state_dir,
@@ -1717,6 +1720,7 @@ def main() -> None:
                 checkpoint,
                 meta_evolution_params=evo_with_archive,
                 archive_data=prev_archive_state,
+                start_level=last_champion_level,
             )
 
         # Save archive state for next cycle (cross-cycle persistence)

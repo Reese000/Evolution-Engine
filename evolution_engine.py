@@ -3622,8 +3622,19 @@ class EvolutionEngine:
             # based on the wrong program's score.
             # Threshold lowered from 140 to 120 to work with graduated bonus curve
             if self._champion_raw_task_score >= 120.0:
+                self._log(
+                    f"[Curriculum] Advancing: stalled={self.generations_stalled}, "
+                    f"raw_score={self._champion_raw_task_score:.1f}, "
+                    f"level={self.champion_level}->{self.champion_level + 1}"
+                )
                 self._advance_curriculum()
                 return True
+            else:
+                self._log(
+                    f"[Curriculum] BLOCKED: stalled={self.generations_stalled} "
+                    f">= {self.config.curriculum_stall_threshold}, but "
+                    f"raw_score={self._champion_raw_task_score:.1f} < 120.0"
+                )
 
         return False
 
