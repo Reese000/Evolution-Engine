@@ -132,13 +132,6 @@ def train(
     apply_level_cap(sequences, sample_weights, raw_dicts_for_augment, entry_levels)
     print(f"[Train] Per-level cap: {_cap_before} -> {len(sequences)} sequences")
 
-    # ── Rebalance level weights (upsample underrepresented levels) ──
-    from data.loading import rebalance_level_weights
-
-    rebalance_level_weights(sample_weights, entry_levels)
-
-    print(f"[Train] Loaded {len(sequences)} sequences from {os.path.basename(data_path)}")
-
     # ── Register renaming augmentation ─────────────────────────────
     aug_count = 0
     augmented_seqs: list = []
@@ -164,7 +157,14 @@ def train(
     # ── Reference solution injection ───────────────────────────────
     inject_reference_solutions(tokenizer, sequences, sample_weights, rv32i_decode=rv32i_decode)
 
-    # ── Pack or pad sequences ──────────────────────────────────────
+    # ── Rebalance level weights (AFTER injection so all sequences get balanced) ──
+    from data.loading import rebalance_level_weights
+
+    # Reconstruct entry_levels for the full dataset (injected sequences get level 0)
+    full_entry_levels = entry_levels + [0] * (len(sequences) - len(entry_levels))
+    rebalance_level_weights(sample_weights, full_entry_levels)
+
+    print(f"[Train] Loaded {len(sequences)} sequences from {os.path.basename(data_path)}")
     split = pad_or_pack_sequences(
         sequences,
         sample_weights,
