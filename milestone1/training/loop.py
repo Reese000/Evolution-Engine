@@ -47,6 +47,7 @@ def train(
     reset_checkpoint: bool = False,
     migrate: bool = False,
     use_grad_checkpointing: bool = False,
+    output_path: str | None = None,
     **kwargs: Any,
 ) -> None:
     """Train the RV32ITransformer on champion program traces."""
@@ -130,6 +131,12 @@ def train(
     _cap_before = len(sequences)
     apply_level_cap(sequences, sample_weights, raw_dicts_for_augment, entry_levels)
     print(f"[Train] Per-level cap: {_cap_before} -> {len(sequences)} sequences")
+
+    # ── Rebalance level weights (upsample underrepresented levels) ──
+    from data.loading import rebalance_level_weights
+
+    rebalance_level_weights(sample_weights, entry_levels)
+
     print(f"[Train] Loaded {len(sequences)} sequences from {os.path.basename(data_path)}")
 
     # ── Register renaming augmentation ─────────────────────────────
@@ -316,7 +323,14 @@ def train(
 
     # ── Save checkpoint ────────────────────────────────────────────
     save_training_checkpoint(
-        model, best_val_loss, best_epoch, epoch, len(sequences), checkpoint_dir, config_name=model_size
+        model,
+        best_val_loss,
+        best_epoch,
+        epoch,
+        len(sequences),
+        checkpoint_dir,
+        config_name=model_size,
+        output_path=output_path,
     )
 
     # Cleanup

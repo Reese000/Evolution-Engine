@@ -200,5 +200,72 @@ class TestForceRetrainMechanism(unittest.TestCase):
         )
 
 
+class TestRebalanceLevelWeights(unittest.TestCase):
+    """rebalance_level_weights upsamples underrepresented levels."""
+
+    def test_boosts_rare_levels(self):
+        """Rare levels get higher weights, capped at target_ratio."""
+        import sys
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        m1 = os.path.join(project_root, "milestone1")
+        if m1 not in sys.path:
+            sys.path.insert(0, m1)
+        from data.loading import rebalance_level_weights
+
+        # 100 L5 traces, 1 L0 trace — L0 should get boosted
+        weights = [1.0] * 101
+        levels = [5] * 100 + [0]
+        rebalance_level_weights(weights, levels, target_ratio=5.0)
+        # L0 (1 sample) vs L5 (100 samples): mult = min(5.0, 100/1) = 5.0
+        self.assertAlmostEqual(weights[-1], 5.0, places=1)
+        # L5 stays at 1.0
+        self.assertAlmostEqual(weights[0], 1.0, places=1)
+
+    def test_no_change_when_balanced(self):
+        """When all levels have equal counts, no weight change."""
+        import sys
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        m1 = os.path.join(project_root, "milestone1")
+        if m1 not in sys.path:
+            sys.path.insert(0, m1)
+        from data.loading import rebalance_level_weights
+
+        weights = [1.0] * 20
+        levels = [0] * 10 + [1] * 10
+        original = weights.copy()
+        rebalance_level_weights(weights, levels, target_ratio=5.0)
+        self.assertEqual(weights, original)
+
+    def test_capped_at_target_ratio(self):
+        """Weight multiplier never exceeds target_ratio."""
+        import sys
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        m1 = os.path.join(project_root, "milestone1")
+        if m1 not in sys.path:
+            sys.path.insert(0, m1)
+        from data.loading import rebalance_level_weights
+
+        weights = [1.0] * 101
+        levels = [0] * 100 + [1]
+        rebalance_level_weights(weights, levels, target_ratio=3.0)
+        # L1 (1 sample) vs L0 (100 samples): mult = min(3.0, 100) = 3.0
+        self.assertAlmostEqual(weights[-1], 3.0, places=1)
+
+    def test_empty_input(self):
+        """Empty lists don't crash."""
+        import sys
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        m1 = os.path.join(project_root, "milestone1")
+        if m1 not in sys.path:
+            sys.path.insert(0, m1)
+        from data.loading import rebalance_level_weights
+
+        rebalance_level_weights([], [])  # no crash
+
+
 if __name__ == "__main__":
     unittest.main()
