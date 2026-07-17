@@ -138,8 +138,8 @@ def run_evolution_batch(
         )
         elapsed = time.time() - start
         combined = (result.stdout or "") + "\n" + (result.stderr or "")
-        log(f"  Process exited with code {result.exit_code} after {elapsed:.0f}s")
-        return result.exit_code, combined
+        log(f"  Process exited with code {result.returncode} after {elapsed:.0f}s")
+        return result.returncode, combined
     except subprocess.TimeoutExpired:
         elapsed = time.time() - start
         log(f"  Process TIMED OUT after {elapsed:.0f}s")
