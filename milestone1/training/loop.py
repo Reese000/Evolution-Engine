@@ -86,7 +86,14 @@ def train(
         ckpt_path = None
 
     # ── Device ─────────────────────────────────────────────────────
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # ── Device ─────────────────────────────────────────────────────
+    # EE_TRAIN_DEVICE overrides training device (for crash mitigation).
+    # "cuda" (default) or "cpu".
+    train_device_str = os.environ.get("EE_TRAIN_DEVICE", "cuda")
+    if train_device_str == "cpu" or not torch.cuda.is_available():
+        device = torch.device("cpu")
+    else:
+        device = torch.device("cuda")
 
     # ── Load or create model ───────────────────────────────────────
     model, _ckpt_config = load_or_create_model(
