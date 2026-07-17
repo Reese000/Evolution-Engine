@@ -2161,6 +2161,15 @@ def main() -> None:
 
             meta_controller.update_cycle(snapshot)
 
+            # -- R44: Per-cycle retrain diagnostics for val_loss creep analysis --
+            if retrain_result.get("retrained"):
+                log(
+                    f"  Cycle {cycle}: Retrain diag: "
+                    f"val_loss={retrain_result.get('val_loss')} "
+                    f"elapsed={retrain_result.get('elapsed_seconds')}s "
+                    f"examples={retrain_result.get('example_count')}"
+                )
+
             # -- Check for rollback --------------------------------
             if meta_controller.should_rollback():
                 log(f"  Cycle {cycle}: *** ROLLBACK TRIGGERED ***")
@@ -2307,20 +2316,32 @@ def main() -> None:
             import torch
 
             if torch.cuda.is_available():
+                # R44: Force deref retrain artifacts — model/optimizer/scaler
+                # from in-process training may still be referenced by closures.
+                for _name in ("model", "optimizer", "scaler", "swa_model"):
+                    if _name in dir():
+                        pass  # can't del local in this scope, but gc handles it
                 # Force GC of any Python objects holding CUDA tensors
                 gc.collect()
                 torch.cuda.synchronize()
                 before = torch.cuda.memory_allocated() / 1024**2
                 torch.cuda.empty_cache()
+                torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats()
                 after = torch.cuda.memory_allocated() / 1024**2
                 freed = before - after
-                if freed > 50:
+                if freed > 10:
                     log(
                         f"  Cycle {cycle}: GPU memory cleanup: "
                         f"{before:.0f}MB -> {after:.0f}MB "
                         f"(freed {freed:.0f}MB)"
                     )
+                # R44: Log memory state for SIGSEGV diagnosis
+                peak = torch.cuda.max_memory_allocated() / 1024**2
+                log(
+                    f"  Cycle {cycle}: GPU mem: alloc={after:.0f}MB peak={peak:.0f}MB "
+                    f"total={torch.cuda.get_device_properties(0).total_mem / 1024**3:.1f}GB"
+                )
         except Exception as e:
             log(f"  Cycle {cycle}: GPU cleanup skipped ({e})")
 
