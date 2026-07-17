@@ -111,6 +111,10 @@ def has_gpu() -> bool:
     global _has_gpu_cache
     if _has_gpu_cache is not None:
         return _has_gpu_cache
+    # EE_USE_GPU=0 disables GPU for both eval and retrain
+    if os.environ.get("EE_USE_GPU", "1") == "0":
+        _has_gpu_cache = False
+        return False
     try:
         import torch
 

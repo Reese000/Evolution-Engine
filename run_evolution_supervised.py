@@ -208,6 +208,9 @@ def run_evolution_batch(
     log(f"  Command: {' '.join(cmd)}")
     start = time.time()
 
+    # Propagate EE_USE_GPU to subprocess for crash mitigation
+    env = os.environ.copy()
+
     try:
         result = subprocess.run(
             cmd,
@@ -215,6 +218,7 @@ def run_evolution_batch(
             capture_output=True,
             text=True,
             timeout=7200,  # 2 hour hard timeout per batch
+            env=env,
         )
         elapsed = time.time() - start
         combined = (result.stdout or "") + "\n" + (result.stderr or "")
