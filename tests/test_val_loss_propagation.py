@@ -149,5 +149,56 @@ class TestValLossCheckpoints(unittest.TestCase):
         self.assertGreater(vl, 0)
 
 
+class TestForceRetrainMechanism(unittest.TestCase):
+    """MetaController.force_retrain flag activates on degenerate loops."""
+
+    def test_force_retrain_flag_default_false(self):
+        """force_retrain starts as False."""
+        import sys
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from meta_controller import MetaController
+
+        mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
+        self.assertFalse(mc.force_retrain)
+
+    def test_force_retrain_set_on_degenerate_loop(self):
+        """force_retrain=True after 5+ compound_stall + 5+ none val_loss cycles."""
+        import sys
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from meta_controller import MetaController, TelemetrySnapshot
+
+        mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
+        # Simulate 6 cycles of compound_stall with no val_loss.
+        # Must call tune_retrain_params per cycle to increment the counter.
+        for i in range(1, 7):
+            snap = TelemetrySnapshot(
+                cycle=i,
+                fitness=100.0 + i * 0.1,
+                level=3,
+                champion_words=5,
+                val_loss=None,
+                diversity=0.01,
+                novelty_size=0,
+                qd_occupied=0,
+                qd_total=100,
+                traces_count=0,
+                retrained=False,
+                generations_completed=10,
+            )
+            mc.update_cycle(snap)
+            mc.tune_retrain_params(cycle=i)
+        # After 6 cycles, force_retrain should be True
+        self.assertTrue(
+            mc.force_retrain,
+            "force_retrain should be True after degenerate loop",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

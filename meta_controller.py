@@ -234,6 +234,10 @@ class MetaController:
         # Compound stall counter (for meta-evolution trigger)
         self._compound_stall_counter: int = 0
 
+        # Force-retrain flag: set when compound_stall persists with val_loss=None
+        # for 5+ cycles. The main loop should check this and override skip logic.
+        self.force_retrain: bool = False
+
         # R28: Fitness momentum tracking -- exponential moving average of
         # fitness improvement rate. Used to detect acceleration/deceleration
         # in improvement and make smarter tuning decisions.
@@ -664,6 +668,21 @@ class MetaController:
                 self._log(f"  *** META-EVOLUTION REQUESTED (compound_stall x{self._compound_stall_counter})")
         else:
             self._compound_stall_counter = 0
+
+        # Force retrain when stuck with no val_loss signal for 5+ consecutive cycles.
+        # Uses _consecutive_none_val_loss as primary gate (counts from cycle 1,
+        # unlike compound_stall_counter which can't fire until cycle 6+).
+        # Requires either compound_stall detected OR fitness stagnant for robustness.
+        if self._consecutive_none_val_loss >= 5 and (
+            state == StagnationResult.COMPOUND_STALL or self.cycles_since_fitness_improvement >= 3
+        ):
+            if not self.force_retrain:
+                self._log(
+                    f"  *** FORCE RETRAIN REQUESTED "
+                    f"(no val_loss x{self._consecutive_none_val_loss}, "
+                    f"state={state.value}, fitness_stale={self.cycles_since_fitness_improvement})"
+                )
+            self.force_retrain = True
 
         return params
 

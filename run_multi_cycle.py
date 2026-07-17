@@ -1739,6 +1739,13 @@ def main() -> None:
             current_words = evo_result.get("champion_words", 0)
             should_retrain = True
 
+            # Force retrain if MetaController detected degenerate loop
+            # (compound_stall + no val_loss for 5+ cycles). Overrides all skip logic.
+            if meta_controller is not None and getattr(meta_controller, "force_retrain", False):
+                should_retrain = True
+                meta_controller.force_retrain = False  # consume the flag
+                log(f"  Cycle {cycle}: FORCE RETRAIN — MetaController detected degenerate loop")
+
             # -- Skip retrain if no new data (mtime check) ----------------
             if args.skip_retrain_if_no_new_data and cycle >= 2:
                 _recurrent_path = M1_RECURRENT_DATA
