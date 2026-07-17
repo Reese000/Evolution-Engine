@@ -13,6 +13,9 @@ Features:
   - Supervisor log with crash/resume timestamps
   - Tracks total effective cycles across restarts
   - Detects F=0.000 "bad evo" cycles and retries
+  - Torch version validation at subprocess startup
+  - CUDA cleanup between batches
+  - Bad-champion validity pre-check
 
 Usage:
     python run_evolution_supervised.py --cycles 30 --gens 10
@@ -104,9 +107,57 @@ def get_last_cycle_fitness() -> float:
     return 0.0
 
 
+def is_bad_champion(result_text: str) -> bool:
+    """Check if the subprocess output indicates a bad champion (F=0.000)."""
+    # Look for Cycle lines with F=0.000 in the output
+    for line in result_text.split("\n"):
+        if "Cycle" in line and "F=0.000" in line:
+            return True
+    return False
+
+
+def cuda_cleanup() -> None:
+    """Best-effort CUDA cleanup between batches."""
+    try:
+        import gc
+
+        import torch
+
+        if torch.cuda.is_available():
+            gc.collect()
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+            log("  CUDA cleanup: cache cleared")
+    except Exception as e:
+        log(f"  CUDA cleanup skipped: {e}")
+
+
+def verify_torch_env(python_path: str) -> bool:
+    """Verify the target Python has correct torch version."""
+    try:
+        result = subprocess.run(
+            [
+                python_path,
+                "-c",
+                "import sys, torch; print(f'torch={torch.__version__} cuda={torch.cuda.is_available()} path={sys.executable}')",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        output = result.stdout.strip()
+        log(f"  Torch env: {output}")
+        return result.returncode == 0 and "torch=2.4.1" in output
+    except Exception as e:
+        log(f"  Torch env check failed: {e}")
+        return False
+
+
 def run_evolution_batch(
     cycles: int,
     gens: int,
+    python_path: str,
     extra_args: list[str] | None = None,
 ) -> tuple[int, str]:
     """Run a batch of evolution cycles as a subprocess.
@@ -115,7 +166,7 @@ def run_evolution_batch(
         (exit_code, combined_output)
     """
     cmd = [
-        sys.executable,
+        python_path,
         os.path.join(SCRIPT_DIR, "run_multi_cycle.py"),
         "--cycles",
         str(cycles),
@@ -125,7 +176,8 @@ def run_evolution_batch(
     if extra_args:
         cmd.extend(extra_args)
 
-    log(f"  Launching: {' '.join(cmd)}")
+    log(f"  Launching: python_path={python_path}")
+    log(f"  Command: {' '.join(cmd[:6])}...")
     start = time.time()
 
     try:
@@ -138,6 +190,12 @@ def run_evolution_batch(
         )
         elapsed = time.time() - start
         combined = (result.stdout or "") + "\n" + (result.stderr or "")
+
+        # Log torch env from subprocess stderr (first few lines)
+        for line in combined.split("\n")[:5]:
+            if "torch" in line.lower() or "cuda" in line.lower():
+                log(f"  Subprocess: {line.strip()}")
+
         log(f"  Process exited with code {result.returncode} after {elapsed:.0f}s")
         return result.returncode, combined
     except subprocess.TimeoutExpired:
@@ -159,7 +217,14 @@ def supervisor_main() -> int:
     )
     parser.add_argument("--batch-size", type=int, default=10, help="Cycles per subprocess batch (default: 10)")
     parser.add_argument("--resume", action="store_true", help="Resume from last completed cycle")
+    parser.add_argument("--python", type=str, default=None, help="Python interpreter path (default: sys.executable)")
     args = parser.parse_args()
+
+    # Determine Python interpreter
+    python_path = args.python or sys.executable
+    if not os.path.isfile(python_path):
+        log(f"ERROR: Python not found at {python_path}")
+        return 1
 
     # Clear supervisor log on fresh start
     if not args.resume:
@@ -170,8 +235,14 @@ def supervisor_main() -> int:
 
     log("=" * 60)
     log("Evolution Supervisor starting")
+    log(f"  Python: {python_path}")
     log(f"  Target: {args.cycles} cycles, {args.gens} gens/cycle")
     log(f"  Batch size: {args.batch_size}, Max relaunches: {args.max_relaunches}")
+
+    # Verify torch environment
+    if not verify_torch_env(python_path):
+        log("  WARNING: torch version check failed — proceeding anyway")
+
     log("=" * 60)
 
     total_completed = get_completed_cycles()
@@ -191,15 +262,19 @@ def supervisor_main() -> int:
         best_vl = get_best_val_loss()
         log(f"  Current best val_loss: {best_vl}")
 
-        # Build extra args for resume
+        # CUDA cleanup between batches
+        cuda_cleanup()
+
+        # Build extra args — do NOT pass --resume since the subprocess
+        # runs a fixed cycle range (1..batch_size). The results file
+        # accumulates across batches; duplicate cycle entries are fine.
         extra_args = []
-        if args.resume or total_completed > 0:
-            extra_args.append("--resume")
 
         # Run the batch
         exit_code, output = run_evolution_batch(
             cycles=batch_cycles,
             gens=args.gens,
+            python_path=python_path,
             extra_args=extra_args,
         )
 
@@ -228,22 +303,23 @@ def supervisor_main() -> int:
                 log(f"  MAX RELAUNCHES REACHED ({args.max_relaunches}). Stopping.")
                 break
 
-            # Wait before relaunch (cool down)
+            # Wait before relaunch (cool down) — longer for repeated crashes
             cooldown = min(5 * relaunches, 30)
             log(f"  Cooling down for {cooldown}s...")
             time.sleep(cooldown)
 
-            # Force resume on next batch
-            args.resume = True
+            # CUDA cleanup after crash
+            cuda_cleanup()
+
             continue
 
         elif exit_code == -1:  # Timeout
-            log("  TIMEOUT detected. Relaunching with --resume")
-            args.resume = True
+            log("  TIMEOUT detected. Relaunching")
             relaunches += 1
             if relaunches >= args.max_relaunches:
                 log("  MAX RELAUNCHES REACHED. Stopping.")
                 break
+            cuda_cleanup()
             continue
 
         # Success — update counters
