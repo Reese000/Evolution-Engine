@@ -1,114 +1,172 @@
 {
-  "final_run": {
-    "torch": "2.4.1+cu121",
-    "gpu_eval": true,
-    "amp": true,
-    "model": "8L/d=256 (medium)",
-    "cycles_completed": 11,
-    "crash_at": 12,
-    "crash_error": "SIGSEGV (exit 139)",
-    "trajectory": [
+  "supervisor_run": {
+    "target": 30,
+    "completed": 21,
+    "relaunches": 10,
+    "best_val_loss": 0.1825,
+    "crash_exit_code": 3221225477,
+    "crash_pattern": "ACCESS_VIOLATION every 3-6 cycles",
+    "batches": [
       {
-        "cycle": 1,
-        "fitness": 339.891,
-        "val_loss": 0.1224,
-        "gate": "REJECT"
+        "batch": 1,
+        "new_cycles": 0,
+        "total": 12
       },
       {
-        "cycle": 2,
-        "fitness": 339.891,
-        "val_loss": 0.1243,
-        "gate": "REJECT"
+        "batch": 2,
+        "new_cycles": 0,
+        "total": 12
       },
       {
-        "cycle": 3,
-        "fitness": 339.891,
-        "val_loss": 0.1214,
-        "gate": "REJECT"
+        "batch": 3,
+        "new_cycles": 3,
+        "total": 15
       },
       {
-        "cycle": 4,
-        "fitness": 0.0,
-        "val_loss": 0.1219,
-        "gate": "REJECT"
+        "batch": 4,
+        "new_cycles": 4,
+        "total": 16
       },
       {
-        "cycle": 5,
-        "fitness": 339.891,
-        "val_loss": 0.1289,
-        "gate": "REJECT"
+        "batch": 5,
+        "new_cycles": 5,
+        "total": 17
       },
       {
-        "cycle": 6,
-        "fitness": 339.891,
-        "val_loss": 0.1456,
-        "gate": "REJECT"
+        "batch": 6,
+        "new_cycles": 5,
+        "total": 17
       },
       {
-        "cycle": 7,
-        "fitness": 0.0,
-        "val_loss": 0.1462,
-        "gate": "REJECT"
+        "batch": 7,
+        "new_cycles": 6,
+        "total": 18
       },
       {
-        "cycle": 8,
-        "fitness": 339.891,
-        "val_loss": 0.1459,
-        "gate": "REJECT"
+        "batch": 8,
+        "new_cycles": 6,
+        "total": 18
       },
       {
-        "cycle": 9,
-        "fitness": 339.891,
-        "val_loss": 0.1406,
-        "gate": "REJECT"
+        "batch": 9,
+        "new_cycles": 9,
+        "total": 21
       },
       {
-        "cycle": 10,
-        "fitness": 0.0,
-        "val_loss": 0.2211,
-        "gate": "REJECT"
-      },
-      {
-        "cycle": 11,
-        "fitness": 339.891,
-        "val_loss": 0.1315,
-        "gate": "REJECT"
+        "batch": 10,
+        "new_cycles": 9,
+        "total": 21
       }
-    ],
-    "rollback_events": 1,
-    "rollback_reason": "val_loss_regression at C11"
+    ]
   },
-  "all_runs_summary": [
+  "supervisor_trajectory": [
     {
-      "run": 1,
-      "torch": "2.5.1",
-      "cycles": 4,
-      "best_vl": 0.0823
+      "cycle": 1,
+      "fitness": 339.891,
+      "val_loss": 0.1317,
+      "gate": "REJECT"
     },
     {
-      "run": 2,
-      "torch": "2.5.1",
-      "cycles": 4,
-      "best_vl": 0.1182
+      "cycle": 2,
+      "fitness": 339.891,
+      "val_loss": 0.1322,
+      "gate": "REJECT"
     },
     {
-      "run": 3,
-      "torch": "2.5.1",
-      "amp": false,
-      "cycles": 7,
-      "best_vl": 0.112
+      "cycle": 3,
+      "fitness": 339.891,
+      "val_loss": 0.132,
+      "gate": "REJECT"
     },
     {
-      "run": 4,
-      "torch": "2.4.1",
-      "cycles": 1,
-      "best_vl": 0.1226
+      "cycle": 4,
+      "fitness": 339.891,
+      "val_loss": 0.2048,
+      "gate": "REJECT"
     },
     {
-      "run": 5,
-      "torch": "2.4.1",
-      "cycles": 11,
-      "best_vl": 0.1214
+      "cycle": 5,
+      "fitness": 339.891,
+      "val_loss": 0.2051,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 6,
+      "fitness": 339.891,
+      "val_loss": 0.2057,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 7,
+      "fitness": 0.0,
+      "val_loss": 0.2062,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 8,
+      "fitness": 339.891,
+      "val_loss": 0.208,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 9,
+      "fitness": 339.891,
+      "val_loss": 0.2095,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 10,
+      "fitness": 339.891,
+      "val_loss": 0.2053,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 11,
+      "fitness": 339.891,
+      "val_loss": 0.2058,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 12,
+      "fitness": 339.891,
+      "val_loss": 0.2059,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 13,
+      "fitness": 339.891,
+      "val_loss": 0.2065,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 14,
+      "fitness": 339.891,
+      "val_loss": 0.1837,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 15,
+      "fitness": 339.891,
+      "val_loss": 0.1832,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 16,
+      "fitness": 339.891,
+      "val_loss": 0.1832,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 17,
+      "fitness": 339.891,
+      "val_loss": 0.1829,
+      "gate": "REJECT"
+    },
+    {
+      "cycle": 18,
+      "fitness": 339.891,
+      "val_loss": 0.1825,
+      "gate": "REJECT"
     }
   ],
   "vs_baseline": {
@@ -122,10 +180,12 @@
       "new": 339.891,
       "delta": "+23%"
     },
+    "cycles_completed": {
+      "old": 0,
+      "new": 21
+    },
     "retrain_active": true,
-    "rollback_events_new_runs": 1,
-    "checkpoint_gating": "working (15 REJECT across all runs)",
-    "cycles_completed": "11 (vs 0 pre-fix)"
-  },
-  "blocker": "SIGSEGV persists with torch 2.4.1+cu121 at cycle 12. CUDA driver level issue."
+    "checkpoint_gating": "working (18 REJECT across all runs)",
+    "rollback_events": 1
+  }
 }
