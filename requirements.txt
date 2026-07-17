@@ -1,6 +1,9 @@
 
 # Requirements
-torch>=2.0.0
+# PINNED: torch 2.4.1+cu121 — 2.5.x causes SIGSEGV at cycle 4-12 on RTX 4070 Ti.
+# expandable_segments not supported on this platform with driver 595.97.
+# Do not upgrade without testing 20+ evolution cycles end-to-end.
+torch==2.4.1
 transformers>=4.30.0
 numpy>=1.24.0
 pytest>=7.0.0
