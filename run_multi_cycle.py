@@ -2306,7 +2306,14 @@ def main() -> None:
 
             # Update champion tracking for skip logic
             last_champion_fitness = evo_result.get("final_fitness", 0.0)
-            last_champion_level = evo_result.get("final_level", 0)
+            # R47: When F=0.000 (empty champion), lower level to prevent
+            # re-climbing from L17 to L0 every crash-restart cycle.
+            if last_champion_fitness == 0.0 and last_champion_level > 3:
+                old_level = last_champion_level
+                last_champion_level = max(3, last_champion_level - 3)
+                log(f"  Cycle {cycle}: F=0.000 → lowering level L{old_level}→L{last_champion_level}")
+            else:
+                last_champion_level = evo_result.get("final_level", 0)
             last_champion_words = evo_result.get("champion_words", 0)
 
             # -- v11.6: Auto-termination check ---------------------
