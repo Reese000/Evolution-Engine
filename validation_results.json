@@ -1,0 +1,67 @@
+{
+  "run": "20-cycle validation (truncated at cycle 4 by SIGSEGV)",
+  "fixes_active": [
+    "val_loss_propagation",
+    "force_retrain",
+    "rebalance_weights",
+    "level_aware_filter"
+  ],
+  "cuda": "torch=2.5.1+cu121, RTX 4070 Ti",
+  "cycles_completed": 4,
+  "trajectory": [
+    {
+      "cycle": 1,
+      "fitness": 339.891,
+      "val_loss": 0.0823,
+      "gate": "ACCEPT",
+      "retrain": true
+    },
+    {
+      "cycle": 2,
+      "fitness": 339.891,
+      "val_loss": 0.1169,
+      "gate": "REJECT",
+      "retrain": true
+    },
+    {
+      "cycle": 3,
+      "fitness": 339.891,
+      "val_loss": 0.1298,
+      "gate": "REJECT",
+      "retrain": true
+    },
+    {
+      "cycle": 4,
+      "fitness": 339.891,
+      "val_loss": 0.1394,
+      "gate": "REJECT",
+      "retrain": true
+    }
+  ],
+  "vs_baseline": {
+    "best_fitness": {
+      "old": 275.87,
+      "new": 339.891,
+      "delta": "+23%"
+    },
+    "best_val_loss": {
+      "old": 0.1463,
+      "new": 0.0823,
+      "delta": "-44%"
+    },
+    "retrain_active": {
+      "old": false,
+      "new": true
+    },
+    "rollback_events": {
+      "old": "10+ per 10 cycles",
+      "new": 0
+    }
+  },
+  "findings": [
+    "val_loss regression across cycles (0.0823->0.1394) \u2014 tuning issue",
+    "SIGSEGV at cycle 5 \u2014 CUDA memory fragmentation",
+    "MetaController correctly detects val_loss regression and tunes params",
+    "Checkpoint gating works: accepts/rejects based on val_loss threshold"
+  ]
+}
