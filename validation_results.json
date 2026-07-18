@@ -1,31 +1,25 @@
 {
-  "run": "60-cycle validation (EE_USE_GPU=0, all fixes active)",
+  "run": "60-cycle with L18-L20 (EE_USE_GPU=0)",
   "stats": {
     "total_cycles": 60,
     "completed": 60,
     "crashes": 0,
     "relaunches": 0,
-    "peak_fitness": 626.9,
-    "peak_fitness_cycle": 5,
-    "peak_level": 17,
-    "best_val_loss": 0.1127,
-    "best_val_loss_cycle": 40,
-    "f0_cycles": 1,
-    "avg_fitness_l17": 585.0
+    "peak_fitness": 668.9,
+    "peak_fitness_cycle": 57,
+    "peak_level": 20,
+    "best_val_loss": 0.0878,
+    "best_val_loss_cycle": 6,
+    "f0_cycles": 0,
+    "avg_fitness_l20": 660.1
   },
   "level_distribution": {
     "L3": 1,
     "L6": 1,
     "L9": 1,
     "L12": 1,
-    "L14": 1,
-    "L17": 54,
-    "L0": 1
-  },
-  "val_loss_trend": {
-    "C6-15": 0.1256,
-    "C16-30": 0.114,
-    "C31-45": 0.1132,
-    "C46-60": 0.113
+    "L15": 1,
+    "L18": 1,
+    "L20": 54
   }
 }
