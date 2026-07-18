@@ -167,15 +167,19 @@ class ChampionArchive:
         self.entries.append(entry)
         self._seen_hashes.add(sha256)
 
-        # Evict if over capacity: lowest fitness from oldest cycle
+        # Evict if over capacity: prefer evicting lower-level entries
         if len(self.entries) > self.max_size:
-            self._evict()
+            self._evict(new_level=level)
 
         self._update_tiers()
         return True
 
-    def _evict(self) -> None:
-        """Remove the lowest-fitness entry, preferring older cycles.
+    def _evict(self, new_level: int = 0) -> None:
+        """Remove an entry to make room, preferring lower-level entries.
+
+        R47: When a higher-level entry is added, evict lower-level entries
+        first (they're redundant once the model has progressed). Falls back
+        to oldest + lowest-fitness among same-level entries.
 
         Foundational entries (L0-L6) are never evicted.
         """
@@ -184,13 +188,19 @@ class ChampionArchive:
         # Filter out foundational entries — they are never evicted
         evictable = [i for i in range(len(self.entries)) if self.entries[i].level not in FOUNDATIONAL_LEVELS]
         if not evictable:
-            # Fallback: if all entries are foundational, evict worst anyway
             evictable = list(range(len(self.entries)))
-        # Sort by (cycle, fitness) ascending — oldest + lowest fitness first
-        worst_idx = min(
-            evictable,
-            key=lambda i: (self.entries[i].cycle, self.entries[i].fitness),
-        )
+
+        # Prefer evicting entries from levels BELOW the new entry's level
+        lower_level = [i for i in evictable if self.entries[i].level < new_level]
+        if lower_level:
+            # Among lower-level entries, evict the oldest
+            worst_idx = min(lower_level, key=lambda i: self.entries[i].cycle)
+        else:
+            # Fallback: oldest + lowest fitness (same or higher level)
+            worst_idx = min(
+                evictable,
+                key=lambda i: (self.entries[i].cycle, self.entries[i].fitness),
+            )
         removed = self.entries.pop(worst_idx)
         self._seen_hashes.discard(removed.sha256)
 

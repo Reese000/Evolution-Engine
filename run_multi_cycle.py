@@ -391,7 +391,7 @@ def merge_archive_to_recurrent(cycle: int) -> int:
     if not os.path.isfile(archive_path):
         return 0
 
-    archive = ChampionArchive(path=archive_path, max_size=500)
+    archive = ChampionArchive(path=archive_path, max_size=1000)
     if archive.size == 0:
         return 0
 

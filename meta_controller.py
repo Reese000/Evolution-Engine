@@ -172,7 +172,7 @@ class MetaController:
         diversity_collapse_threshold: float = 0.05,
         val_loss_regression_ratio: float = 1.5,
         # ── Checkpoint gating ──────────────────────────────────────────
-        checkpoint_acceptance_tolerance: float = 1.05,
+        checkpoint_acceptance_tolerance: float = 1.0,
         # ── Logging ────────────────────────────────────────────────────
         log_file: Optional[str] = None,
     ):
