@@ -1,17 +1,18 @@
 {
-  "run": "20-cycle measurement with archive fix (GPU)",
+  "run": "100-cycle GPU with archive fix (EE_USE_GPU=1, EE_TRAIN_DEVICE=cuda)",
   "stats": {
-    "total_cycles": 20,
-    "completed": 20,
+    "total_cycles": 100,
+    "completed": 100,
     "crashes": 0,
     "relaunches": 0,
-    "peak_fitness": 758.2,
-    "peak_fitness_cycle": 15,
+    "peak_fitness": 788.3,
+    "peak_fitness_cycle": 98,
     "peak_level": 25,
-    "best_val_loss": 0.0494,
-    "best_val_loss_cycle": 3,
-    "f0_cycles": 5,
-    "avg_time_per_cycle": 70,
-    "cycles_per_hour": 51.5
+    "best_val_loss": 0.0471,
+    "best_val_loss_cycle": 78,
+    "f0_cycles": 22,
+    "total_time_seconds": 6548,
+    "avg_time_per_cycle": 65,
+    "cycles_per_hour": 55.0
   }
 }
