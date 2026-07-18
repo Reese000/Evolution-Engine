@@ -1177,6 +1177,222 @@ class Level17(TaskLevel):
         ]
 
 
+class Level18(TaskLevel):
+    """XOR-based bit manipulation: x21 = (x1 XOR x2) AND mask.
+
+    Introduces XOR and XORI operations for bitwise data manipulation.
+    The mask (0x0000FFFF) isolates the lower 16 bits after XOR.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 255)
+        base = _compute_base_expected(v1, v2)
+        base[20] = _cap32(v1 + v2)  # L17 result
+        mask = 0x0000FFFF
+        base[21] = _cap32((v1 ^ v2) & mask)
+        return {
+            "level": 18,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        for r in range(3, 10):  # L0-L6
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        for r in [20, 21]:  # L17-L18
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(75, 8, 30)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        """L0-L6 base + L17 meta-evolution + L18: XOR + AND mask."""
+        # Reuse L17's reference (builds and executes sub-program)
+        base_ref = _base_ref() + [
+            {"name": "ADDI", "rd": 21, "rs1": 0, "imm": 1},
+            {"name": "SLLI", "rd": 21, "rs1": 21, "imm": 15},
+            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 1},
+            {"name": "SLLI", "rd": 22, "rs1": 22, "imm": 11},
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x213},
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 22},
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 23},
+            {"name": "SLLI", "rd": 22, "rs1": 2, "imm": 20},
+            {"name": "OR", "rd": 22, "rs1": 22, "rs2": 21},
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x40},
+            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 22, "imm": 0},
+            {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
+        ]
+        # L18: x21 = (x1 XOR x2) AND 0xFFFF
+        return base_ref + [
+            {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},  # x21 = x1 ^ x2
+            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},  # x22 = mask
+            {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},  # x21 = (x1^x2) & mask
+        ]
+
+
+class Level19(TaskLevel):
+    """Conditional branching: x22 = BNE result.
+
+    Introduces BNE (branch if not equal) and BLTU (unsigned comparison).
+    If x1 != x2: x22 = x1 + x2, else x22 = x1 - x2.
+    Tests conditional control flow with different branch conditions.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 255)
+        base = _compute_base_expected(v1, v2)
+        base[20] = _cap32(v1 + v2)  # L17
+        mask = 0x0000FFFF
+        base[21] = _cap32((v1 ^ v2) & mask)  # L18
+        if v1 != v2:
+            base[22] = _cap32(v1 + v2)
+        else:
+            base[22] = _cap32(v1 - v2)
+        return {
+            "level": 19,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        for r in range(3, 10):
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        for r in [20, 21, 22]:
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(80, 9, 32)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        """L0-L6 base + L17 meta-evolution + L18 XOR + L19 BNE."""
+        base_ref = _base_ref() + [
+            {"name": "ADDI", "rd": 21, "rs1": 0, "imm": 1},
+            {"name": "SLLI", "rd": 21, "rs1": 21, "imm": 15},
+            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 1},
+            {"name": "SLLI", "rd": 22, "rs1": 22, "imm": 11},
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x213},
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 22},
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 23},
+            {"name": "SLLI", "rd": 22, "rs1": 2, "imm": 20},
+            {"name": "OR", "rd": 22, "rs1": 22, "rs2": 21},
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x40},
+            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 22, "imm": 0},
+            {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
+            # L18: XOR + AND
+            {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
+            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+            {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
+        ]
+        # L19: BNE — if x1 != x2, x22 = x1+x2, else x22 = x1-x2
+        # Since _pick_small ensures v1 != v2 (both random 1-15),
+        # the BNE branch is always taken.
+        return base_ref + [
+            {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},  # skip if x1==x2
+            {"name": "ADD", "rd": 22, "rs1": 1, "rs2": 2},  # x22 = x1+x2 (else)
+            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},  # NOP (pad)
+            {"name": "ADDI", "rd": 22, "rs1": 1, "imm": 0},  # x22 = x1 (if x1==x2)
+            {"name": "SUB", "rd": 22, "rs1": 1, "rs2": 2},  # x22 = x1-x2
+        ]
+
+
+class Level20(TaskLevel):
+    """Complex memory + all operations: x23 = memory-based computation.
+
+    Combines memory load/store, XOR, conditional branch, and shifts.
+    Loads x1 from memory, XORs with x2, stores result, loads it back.
+    Tests full RV32I instruction mix.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 255)
+        base = _compute_base_expected(v1, v2)
+        base[20] = _cap32(v1 + v2)  # L17
+        mask = 0x0000FFFF
+        base[21] = _cap32((v1 ^ v2) & mask)  # L18
+        if v1 != v2:
+            base[22] = _cap32(v1 + v2)
+        else:
+            base[22] = _cap32(v1 - v2)  # L19
+        # L20: store x1 to mem[0], XOR with x2, store result, load back
+        addr = 0
+        stored = _cap32(v1)
+        xored = _cap32(stored ^ v2)
+        base[23] = xored
+        return {
+            "level": 20,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]
+        regs = output.get("registers", {})
+        for r in range(3, 10):
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        for r in [20, 21, 22, 23]:
+            if regs.get(r, 0) != exp["registers"].get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(85, 10, 35)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        """L0-L6 + L17 meta-evolution + L18 XOR + L19 BNE + L20 mem XOR."""
+        base_ref = _base_ref() + [
+            {"name": "ADDI", "rd": 21, "rs1": 0, "imm": 1},
+            {"name": "SLLI", "rd": 21, "rs1": 21, "imm": 15},
+            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 1},
+            {"name": "SLLI", "rd": 22, "rs1": 22, "imm": 11},
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x213},
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 22},
+            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 23},
+            {"name": "SLLI", "rd": 22, "rs1": 2, "imm": 20},
+            {"name": "OR", "rd": 22, "rs1": 22, "rs2": 21},
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x40},
+            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 22, "imm": 0},
+            {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
+            # L18: XOR + AND
+            {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
+            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+            {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
+            # L19: BNE (always taken since v1 != v2)
+            {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},
+            {"name": "ADD", "rd": 22, "rs1": 1, "rs2": 2},
+            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "ADDI", "rd": 22, "rs1": 1, "imm": 0},
+            {"name": "SUB", "rd": 22, "rs1": 1, "rs2": 2},
+        ]
+        # L20: memory XOR — store x1 to mem[0], XOR with x2, store result
+        return base_ref + [
+            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0},  # addr = 0
+            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 1, "imm": 0},  # mem[0] = x1
+            {"name": "XOR", "rd": 23, "rs1": 1, "rs2": 2},  # x23 = x1 ^ x2
+            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 23, "imm": 4},  # mem[4] = x23
+            {"name": "LW", "rd": 23, "rs1": 23, "imm": 0},  # x23 = mem[x23] (alias)
+        ]
+
+
 # ===========================================================================
 # Secondary tasks (multi-task fitness extension)
 # ===========================================================================
@@ -1344,6 +1560,9 @@ LEVELS = {
     15: Level15,
     16: Level16,
     17: Level17,
+    18: Level18,
+    19: Level19,
+    20: Level20,
 }
 
 
