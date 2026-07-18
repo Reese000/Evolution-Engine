@@ -1,20 +1,27 @@
 {
-  "run": "100-cycle with L18-L25 (EE_USE_GPU=0)",
+  "run": "30-cycle GPU mode (EE_USE_GPU=1, EE_TRAIN_DEVICE=cuda)",
   "stats": {
-    "total_cycles": 100,
-    "completed": 100,
+    "total_cycles": 30,
+    "completed": 30,
     "crashes": 0,
-    "relaunches": 2,
-    "peak_fitness": 790.9,
-    "peak_fitness_cycle": 52,
+    "relaunches": 0,
+    "peak_fitness": 755.1,
+    "peak_fitness_cycle": 8,
     "peak_level": 25,
-    "best_val_loss": 0.1155,
+    "best_val_loss": 0.1151,
     "best_val_loss_cycle": 7,
-    "f0_cycles": 19,
-    "avg_fitness_l25": 776.5
+    "f0_cycles": 0,
+    "total_time_seconds": 3369,
+    "avg_time_per_cycle": 112,
+    "cycles_per_hour": 32.1
+  },
+  "gpu_utilization": {
+    "training": "98-100%",
+    "retrain": "98-100%",
+    "evolution_eval": "11-14%",
+    "vram_used": "9.2-10.3GB"
   },
   "level_distribution": {
-    "L0": 19,
     "L3": 1,
     "L6": 1,
     "L9": 1,
@@ -22,8 +29,7 @@
     "L15": 1,
     "L18": 1,
     "L21": 1,
-    "L23": 1,
-    "L24": 12,
-    "L25": 61
+    "L24": 1,
+    "L25": 22
   }
 }
