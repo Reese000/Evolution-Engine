@@ -2052,8 +2052,8 @@ def main() -> None:
                                     log(f"  Cycle {cycle}: Reset to best-ever checkpoint: {best_ever_ckpt}")
                                     checkpoint = best_ever_ckpt
                                     meta_controller._consecutive_rejections = 0
-                                    # Skip evolution this cycle — go straight to retrain
-                                    skip_evolution = True
+                                    # R48: Do NOT skip evolution — let it run with the
+                                    # previous champion so we still get training data.
                                 else:
                                     log(f"  Cycle {cycle}: Reset failed — best checkpoint not found")
                     else:
