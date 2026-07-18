@@ -1,25 +1,29 @@
 {
-  "run": "60-cycle with L18-L20 (EE_USE_GPU=0)",
+  "run": "100-cycle with L18-L25 (EE_USE_GPU=0)",
   "stats": {
-    "total_cycles": 60,
-    "completed": 60,
+    "total_cycles": 100,
+    "completed": 100,
     "crashes": 0,
-    "relaunches": 0,
-    "peak_fitness": 668.9,
-    "peak_fitness_cycle": 57,
-    "peak_level": 20,
-    "best_val_loss": 0.0878,
-    "best_val_loss_cycle": 6,
-    "f0_cycles": 0,
-    "avg_fitness_l20": 660.1
+    "relaunches": 2,
+    "peak_fitness": 790.9,
+    "peak_fitness_cycle": 52,
+    "peak_level": 25,
+    "best_val_loss": 0.1155,
+    "best_val_loss_cycle": 7,
+    "f0_cycles": 19,
+    "avg_fitness_l25": 776.5
   },
   "level_distribution": {
+    "L0": 19,
     "L3": 1,
     "L6": 1,
     "L9": 1,
     "L12": 1,
     "L15": 1,
     "L18": 1,
-    "L20": 54
+    "L21": 1,
+    "L23": 1,
+    "L24": 12,
+    "L25": 61
   }
 }
