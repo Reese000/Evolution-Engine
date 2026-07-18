@@ -1,129 +1,31 @@
 {
-  "run": "12-cycle supervised run (EE_USE_GPU=0, fresh start)",
-  "model": "8L/d=256 (medium)",
-  "config": "EE_USE_GPU=0, rebalance-after-injection, pre-check R45",
-  "trajectory": [
-    {
-      "cycle": 1,
-      "fitness": 339.891,
-      "val_loss": 0.1805,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 2,
-      "fitness": 339.891,
-      "val_loss": 0.1807,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 3,
-      "fitness": 339.891,
-      "val_loss": 0.1812,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 4,
-      "fitness": 339.891,
-      "val_loss": 0.1817,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 5,
-      "fitness": 339.891,
-      "val_loss": 0.1823,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 6,
-      "fitness": 339.891,
-      "val_loss": 0.1828,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 7,
-      "fitness": 339.891,
-      "val_loss": 0.1824,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 8,
-      "fitness": 339.891,
-      "val_loss": 0.1845,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 9,
-      "fitness": 339.891,
-      "val_loss": 0.1849,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 10,
-      "fitness": 339.891,
-      "val_loss": 0.1818,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 11,
-      "fitness": 339.891,
-      "val_loss": 0.1816,
-      "gate": "ACCEPT",
-      "level": 3
-    },
-    {
-      "cycle": 12,
-      "fitness": 339.891,
-      "val_loss": 0.1818,
-      "gate": "ACCEPT",
-      "level": 3
-    }
-  ],
+  "run": "60-cycle validation (EE_USE_GPU=0, all fixes active)",
   "stats": {
-    "total_cycles": 12,
-    "accepted": 12,
-    "rejected": 0,
-    "best_val_loss": 0.1805,
-    "final_val_loss": 0.1818,
-    "val_loss_range": [
-      0.1805,
-      0.1849
-    ],
-    "fitness": 339.891,
-    "level": 3,
-    "crashes": 10,
-    "relaunches": 10,
-    "crash_rate": "every 5-7 cycles"
+    "total_cycles": 60,
+    "completed": 60,
+    "crashes": 0,
+    "relaunches": 0,
+    "peak_fitness": 626.9,
+    "peak_fitness_cycle": 5,
+    "peak_level": 17,
+    "best_val_loss": 0.1127,
+    "best_val_loss_cycle": 40,
+    "f0_cycles": 1,
+    "avg_fitness_l17": 585.0
   },
-  "vs_baseline": {
-    "best_val_loss": {
-      "old": 0.1463,
-      "new": 0.1805,
-      "note": "higher because fresh start with 8L model"
-    },
-    "best_fitness": {
-      "old": 275.87,
-      "new": 339.891,
-      "delta": "+23%"
-    },
-    "cycles_completed": {
-      "old": 0,
-      "new": 12,
-      "note": "first time all cycles accepted"
-    },
-    "acceptance_rate": {
-      "old": "0%",
-      "new": "100%",
-      "note": "solved by rebalance-after-injection"
-    }
+  "level_distribution": {
+    "L3": 1,
+    "L6": 1,
+    "L9": 1,
+    "L12": 1,
+    "L14": 1,
+    "L17": 54,
+    "L0": 1
+  },
+  "val_loss_trend": {
+    "C6-15": 0.1256,
+    "C16-30": 0.114,
+    "C31-45": 0.1132,
+    "C46-60": 0.113
   }
 }
