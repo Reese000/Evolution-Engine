@@ -1321,6 +1321,10 @@ class EvolutionEngine:
             else:
                 self._secondary_task_results = None
             self.champion_fitness = self._compute_fitness(self.champion, self.champion_trace)
+            # R50: Run verify() on initial champion (uses initial task instance)
+            verified, verify_score = self._verify_champion()
+            self._champion_verified = verified
+            self._champion_verify_score = verify_score
 
         summary = {
             "generations_completed": 0,
@@ -1330,7 +1334,7 @@ class EvolutionEngine:
             "elapsed_seconds": 0.0,
         }
 
-        # Precompute bonus threshold once per generation (avoids repeated
+        # Precompute bonus threshold once per generation
         # getattr + cache check inside _compute_fitness for every challenger).
         n_levels = len(_levels_ref)
         _precomputed_bonus_threshold: float | None = None
