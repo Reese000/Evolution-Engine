@@ -1880,6 +1880,362 @@ class Level25(TaskLevel):
 
 
 # ===========================================================================
+# Levels 26-30: harder task families
+# ===========================================================================
+
+
+def _l25_base_ref() -> List[dict]:
+    """L0-L25 base reference instructions."""
+    return _base_ref() + [
+        # L17: meta-evolution
+        {"name": "ADDI", "rd": 21, "rs1": 0, "imm": 1},
+        {"name": "SLLI", "rd": 21, "rs1": 21, "imm": 15},
+        {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 1},
+        {"name": "SLLI", "rd": 22, "rs1": 22, "imm": 11},
+        {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x213},
+        {"name": "OR", "rd": 21, "rs1": 21, "rs2": 22},
+        {"name": "OR", "rd": 21, "rs1": 21, "rs2": 23},
+        {"name": "SLLI", "rd": 22, "rs1": 2, "imm": 20},
+        {"name": "OR", "rd": 22, "rs1": 22, "rs2": 21},
+        {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x40},
+        {"name": "SW", "rd": 0, "rs1": 23, "rs2": 22, "imm": 0},
+        {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
+        # L18: XOR + AND
+        {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
+        {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+        {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
+        # L19: BNE
+        {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},
+        {"name": "ADD", "rd": 22, "rs1": 1, "rs2": 2},
+        {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
+        {"name": "ADDI", "rd": 22, "rs1": 1, "imm": 0},
+        {"name": "SUB", "rd": 22, "rs1": 1, "rs2": 2},
+        # L20: memory XOR
+        {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0},
+        {"name": "SW", "rd": 0, "rs1": 23, "rs2": 1, "imm": 0},
+        {"name": "XOR", "rd": 23, "rs1": 1, "rs2": 2},
+        {"name": "SW", "rd": 0, "rs1": 23, "rs2": 23, "imm": 4},
+        {"name": "LW", "rd": 23, "rs1": 23, "imm": 0},
+        # L21: XOR chain + shift
+        {"name": "XOR", "rd": 24, "rs1": 1, "rs2": 2},
+        {"name": "SLLI", "rd": 24, "rs1": 24, "imm": 2},
+        {"name": "XOR", "rd": 24, "rs1": 24, "rs2": 1},
+        # L23: memory array
+        {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0},
+        {"name": "SW", "rd": 0, "rs1": 25, "rs2": 1, "imm": 0},
+        {"name": "ADDI", "rd": 25, "rs1": 25, "imm": 4},
+        {"name": "SW", "rd": 0, "rs1": 25, "rs2": 2, "imm": 0},
+        {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0},
+        {"name": "LW", "rd": 25, "rs1": 25, "imm": 0},
+        {"name": "LW", "rd": 26, "rs1": 25, "imm": 4},
+        {"name": "ADD", "rd": 26, "rs1": 25, "rs2": 26},
+        # L25: full program
+        {"name": "XOR", "rd": 28, "rs1": 1, "rs2": 2},
+        {"name": "SLLI", "rd": 25, "rs1": 1, "imm": 1},
+        {"name": "ADD", "rd": 28, "rs1": 28, "rs2": 25},
+        {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0xFF},
+        {"name": "AND", "rd": 26, "rs1": 2, "rs2": 25},
+        {"name": "ADD", "rd": 28, "rs1": 28, "rs2": 26},
+    ]
+
+
+def _compute_l25_expected(v1: int, v2: int) -> Dict[int, int]:
+    """Compute expected register values for L0-L25."""
+    base = _compute_base_expected(v1, v2)
+    base[20] = _cap32(v1 + v2)
+    base[21] = _cap32((v1 ^ v2) & 0xFFFF)
+    base[22] = _cap32((v1 + v2) if v1 != v2 else (v1 - v2))
+    base[23] = _cap32(v1 ^ v2)
+    base[24] = _cap32(((v1 ^ v2) << 2) ^ v1)
+    if v1 > v2:
+        base[25] = _cap32(v1 + v2)
+    elif v1 < v2:
+        base[25] = _cap32(v1 - v2)
+    else:
+        base[25] = _cap32(v1 << 1)
+    base[26] = _cap32(v1 + v2)
+    if v1 > v2:
+        base[27] = _cap32(v1 + v2)
+    else:
+        base[27] = _cap32(v1 - v2)
+    base[28] = _cap32((v1 ^ v2) + (v1 << 1) + (v2 & 0xFF))
+    return base
+
+
+class Level26(TaskLevel):
+    """Shift chain: x29 = ((x1<<3)>>1)>>2 + ((x2&0xFF)<<1).
+
+    Introduces SLL, SRL, SRA — chained shift pipeline.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 255)
+        base = _compute_l25_expected(v1, v2)
+        shifted = ((v1 << 3) >> 1) >> 2
+        masked = (v2 & 0xFF) << 1
+        base[29] = _cap32(shifted + masked)
+        return {
+            "level": 26,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]["registers"]
+        regs = output.get("registers", {})
+        for r in list(range(3, 10)) + list(range(20, 30)):
+            if regs.get(r, 0) != exp.get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(115, 14, 46)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        return _l25_base_ref() + [
+            {"name": "SLLI", "rd": 29, "rs1": 1, "imm": 3},
+            {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 1},
+            {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 2},
+            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0xFF},
+            {"name": "AND", "rd": 26, "rs1": 2, "rs2": 25},
+            {"name": "SLLI", "rd": 26, "rs1": 26, "imm": 1},
+            {"name": "ADD", "rd": 29, "rs1": 29, "rs2": 26},
+        ]
+
+
+class Level27(TaskLevel):
+    """Unsigned comparison: x30 = BGEU/BLTU result.
+
+    If (unsigned)x1 >= x2: x30 = x1+x2, else x30 = x1-x2.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 255)
+        base = _compute_l25_expected(v1, v2)
+        base[29] = _cap32((((v1 << 3) >> 1) >> 2) + ((v2 & 0xFF) << 1))
+        base[30] = _cap32(v1 + v2) if v1 >= v2 else _cap32(v1 - v2)
+        return {
+            "level": 27,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]["registers"]
+        regs = output.get("registers", {})
+        for r in list(range(3, 10)) + list(range(20, 31)):
+            if regs.get(r, 0) != exp.get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(120, 15, 48)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        base = _l25_base_ref() + [
+            {"name": "SLLI", "rd": 29, "rs1": 1, "imm": 3},
+            {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 1},
+            {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 2},
+            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0xFF},
+            {"name": "AND", "rd": 26, "rs1": 2, "rs2": 25},
+            {"name": "SLLI", "rd": 26, "rs1": 26, "imm": 1},
+            {"name": "ADD", "rd": 29, "rs1": 29, "rs2": 26},
+        ]
+        return base + [
+            {"name": "BLTU", "rs1": 1, "rs2": 2, "imm": 12},
+            {"name": "ADD", "rd": 30, "rs1": 1, "rs2": 2},
+            {"name": "JALR", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "SUB", "rd": 30, "rs1": 1, "rs2": 2},
+        ]
+
+
+class Level28(TaskLevel):
+    """Byte memory: x31 = SB/LB round-trip ^ x2.
+
+    Store x1 as byte, load back, XOR with x2.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 255)
+        base = _compute_l25_expected(v1, v2)
+        base[29] = _cap32((((v1 << 3) >> 1) >> 2) + ((v2 & 0xFF) << 1))
+        base[30] = _cap32(v1 + v2) if v1 >= v2 else _cap32(v1 - v2)
+        base[31] = _cap32((v1 & 0xFF) ^ v2)
+        return {
+            "level": 28,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]["registers"]
+        regs = output.get("registers", {})
+        for r in list(range(3, 10)) + list(range(20, 32)):
+            if regs.get(r, 0) != exp.get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(125, 16, 50)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        base = _l25_base_ref() + [
+            {"name": "SLLI", "rd": 29, "rs1": 1, "imm": 3},
+            {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 1},
+            {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 2},
+            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0xFF},
+            {"name": "AND", "rd": 26, "rs1": 2, "rs2": 25},
+            {"name": "SLLI", "rd": 26, "rs1": 26, "imm": 1},
+            {"name": "ADD", "rd": 29, "rs1": 29, "rs2": 26},
+            {"name": "BLTU", "rs1": 1, "rs2": 2, "imm": 12},
+            {"name": "ADD", "rd": 30, "rs1": 1, "rs2": 2},
+            {"name": "JALR", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "SUB", "rd": 30, "rs1": 1, "rs2": 2},
+        ]
+        return base + [
+            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0x50},
+            {"name": "SB", "rd": 0, "rs1": 25, "rs2": 1, "imm": 0},
+            {"name": "LB", "rd": 31, "rs1": 25, "imm": 0},
+            {"name": "XOR", "rd": 31, "rs1": 31, "rs2": 2},
+        ]
+
+
+class Level29(TaskLevel):
+    """Subroutine call: x28 = (x1+x2)<<1 via inline subroutine.
+
+    Tests sequential compute with register chaining.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 255)
+        base = _compute_l25_expected(v1, v2)
+        base[29] = _cap32((((v1 << 3) >> 1) >> 2) + ((v2 & 0xFF) << 1))
+        base[30] = _cap32(v1 + v2) if v1 >= v2 else _cap32(v1 - v2)
+        base[31] = _cap32((v1 & 0xFF) ^ v2)
+        base[28] = _cap32((v1 + v2) << 1)
+        return {
+            "level": 29,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]["registers"]
+        regs = output.get("registers", {})
+        for r in list(range(3, 10)) + list(range(20, 32)):
+            if regs.get(r, 0) != exp.get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(130, 17, 52)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        base = _l25_base_ref() + [
+            {"name": "SLLI", "rd": 29, "rs1": 1, "imm": 3},
+            {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 1},
+            {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 2},
+            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0xFF},
+            {"name": "AND", "rd": 26, "rs1": 2, "rs2": 25},
+            {"name": "SLLI", "rd": 26, "rs1": 26, "imm": 1},
+            {"name": "ADD", "rd": 29, "rs1": 29, "rs2": 26},
+            {"name": "BLTU", "rs1": 1, "rs2": 2, "imm": 12},
+            {"name": "ADD", "rd": 30, "rs1": 1, "rs2": 2},
+            {"name": "JALR", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "SUB", "rd": 30, "rs1": 1, "rs2": 2},
+            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0x50},
+            {"name": "SB", "rd": 0, "rs1": 25, "rs2": 1, "imm": 0},
+            {"name": "LB", "rd": 31, "rs1": 25, "imm": 0},
+            {"name": "XOR", "rd": 31, "rs1": 31, "rs2": 2},
+        ]
+        return base + [
+            {"name": "ADD", "rd": 28, "rs1": 1, "rs2": 2},
+            {"name": "SLLI", "rd": 28, "rs1": 28, "imm": 1},
+        ]
+
+
+class Level30(TaskLevel):
+    """Sort-and-compute: abs_diff + sum of sorted x1, x2.
+
+    Compares x1 and x2, computes absolute difference and sum.
+    """
+
+    def generate_instance(self) -> dict:
+        v1 = self._pick_small()
+        v2 = self._rng.randint(1, 255)
+        base = _compute_l25_expected(v1, v2)
+        base[28] = _cap32((v1 + v2) << 1)
+        base[29] = _cap32(abs(v1 - v2))
+        base[30] = _cap32(min(v1, v2) + max(v1, v2))
+        base[31] = _cap32((v1 & 0xFF) ^ v2)
+        return {
+            "level": 30,
+            "difficulty": self.difficulty_metric(),
+            "inputs": {"registers": {1: v1, 2: v2}, "memory": {}},
+            "expected_output": {"registers": base, "memory": {}},
+        }
+
+    def verify(self, output: dict, inst: dict) -> float:
+        exp = inst["expected_output"]["registers"]
+        regs = output.get("registers", {})
+        for r in list(range(3, 10)) + list(range(20, 32)):
+            if regs.get(r, 0) != exp.get(r, 0):
+                return 0.0
+        return 1.0
+
+    def difficulty_metric(self) -> float:
+        return compute_difficulty(135, 18, 54)
+
+    @staticmethod
+    def reference_solution() -> List[dict]:
+        base = _l25_base_ref() + [
+            {"name": "SLLI", "rd": 28, "rs1": 1, "imm": 3},
+            {"name": "SRLI", "rd": 28, "rs1": 28, "imm": 1},
+            {"name": "SRLI", "rd": 28, "rs1": 28, "imm": 2},
+            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0xFF},
+            {"name": "AND", "rd": 26, "rs1": 2, "rs2": 25},
+            {"name": "SLLI", "rd": 26, "rs1": 26, "imm": 1},
+            {"name": "ADD", "rd": 28, "rs1": 28, "rs2": 26},
+            {"name": "BLTU", "rs1": 1, "rs2": 2, "imm": 12},
+            {"name": "ADD", "rd": 30, "rs1": 1, "rs2": 2},
+            {"name": "JALR", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "SUB", "rd": 30, "rs1": 1, "rs2": 2},
+            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0x50},
+            {"name": "SB", "rd": 0, "rs1": 25, "rs2": 1, "imm": 0},
+            {"name": "LB", "rd": 31, "rs1": 25, "imm": 0},
+            {"name": "XOR", "rd": 31, "rs1": 31, "rs2": 2},
+            {"name": "ADD", "rd": 28, "rs1": 1, "rs2": 2},
+            {"name": "SLLI", "rd": 28, "rs1": 28, "imm": 1},
+        ]
+        return base + [
+            {"name": "SLT", "rd": 25, "rs1": 1, "rs2": 2},
+            {"name": "BNE", "rs1": 25, "rs2": 0, "imm": 12},
+            {"name": "ADD", "rd": 30, "rs1": 1, "rs2": 2},
+            {"name": "SUB", "rd": 29, "rs1": 2, "rs2": 1},
+            {"name": "JALR", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
+            {"name": "ADD", "rd": 30, "rs1": 1, "rs2": 2},
+            {"name": "SUB", "rd": 29, "rs1": 1, "rs2": 2},
+        ]
+
+
+# ===========================================================================
 # Secondary tasks (multi-task fitness extension)
 # ===========================================================================
 
@@ -2054,6 +2410,11 @@ LEVELS = {
     23: Level23,
     24: Level24,
     25: Level25,
+    26: Level26,
+    27: Level27,
+    28: Level28,
+    29: Level29,
+    30: Level30,
 }
 
 
