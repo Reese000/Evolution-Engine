@@ -1,17 +1,17 @@
 {
-  "run": "30-cycle GPU with R48 fix (no skip_evolution)",
+  "run": "50-cycle GPU with L26-L30 (EE_USE_GPU=1)",
   "stats": {
-    "total_cycles": 30,
-    "completed": 15,
-    "crashes": 10,
-    "relaunches": 10,
-    "peak_fitness": 740.3,
-    "peak_fitness_cycle": 14,
-    "peak_level": 25,
-    "best_val_loss": 0.0556,
-    "best_val_loss_cycle": 6,
+    "total_cycles": 50,
+    "completed": 8,
+    "crashes": 15,
+    "relaunches": 15,
+    "peak_fitness": 717.9,
+    "peak_fitness_cycle": 8,
+    "peak_level": 24,
+    "best_val_loss": 0.0524,
+    "best_val_loss_cycle": 2,
     "f0_cycles": 0,
-    "avg_time_per_cycle": 64,
-    "cycles_per_hour": 56.5
+    "avg_time_per_cycle": 67,
+    "cycles_per_hour": 54.1
   }
 }
