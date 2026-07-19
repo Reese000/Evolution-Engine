@@ -3645,7 +3645,7 @@ class EvolutionEngine:
                     "registers": self.champion_trace.get("final_regs", {}),
                     "memory": self.champion_trace.get("final_memory", {}),
                 }
-                verify_score = level_cls.verify(output, self.task_instance)
+                verify_score = level_cls(seed=self.champion_level).verify(output, self.task_instance)
                 verified = verify_score >= 1.0
                 self._champion_verified = verified
                 self._champion_verify_score = verify_score
@@ -3699,7 +3699,7 @@ class EvolutionEngine:
                 "registers": self.champion_trace.get("final_regs", {}),
                 "memory": self.champion_trace.get("final_memory", {}),
             }
-            score = level_cls.verify(output, self.task_instance)
+            score = level_cls(seed=self.champion_level).verify(output, self.task_instance)
             return score >= 1.0, score
         except Exception:
             return False, 0.0
@@ -3851,7 +3851,7 @@ class EvolutionEngine:
                 for lvl in _verify_levels_sorted:
                     level_cls = _levels[lvl]
                     try:
-                        score = level_cls.verify(output, self.task_instance)
+                        score = level_cls(seed=lvl).verify(output, self.task_instance)
                         if score > task_score:
                             task_score = score
                             solved_level = lvl
