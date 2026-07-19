@@ -2089,6 +2089,11 @@ def main() -> None:
                                     meta_controller._consecutive_rejections = 0
                                     # R48: Do NOT skip evolution — let it run with the
                                     # previous champion so we still get training data.
+                                    # Arm B: EE_SKIP_EVOLUTION_ON_REJECTION=1 restores
+                                    # pre-R48 behavior for bisection testing.
+                                    if os.environ.get("EE_SKIP_EVOLUTION_ON_REJECTION", "0") == "1":
+                                        log(f"  Cycle {cycle}: Arm B — skipping evolution (pre-R48 behavior)")
+                                        skip_evolution = True
                                 else:
                                     log(f"  Cycle {cycle}: Reset failed — best checkpoint not found")
                     else:
