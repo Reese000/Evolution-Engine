@@ -1516,10 +1516,12 @@ class EvolutionEngine:
         summary["champion_words"] = len(self.champion) if self.champion else 0
         summary["elapsed_seconds"] = time.time() - start_time
         # R50: Record verify() result for integrity gate
-        verified, verify_score = self._verify_champion()
+        # Use stored result from champion replacement (uses correct task instance)
+        verified = getattr(self, "_champion_verified", False)
+        verify_score = getattr(self, "_champion_verify_score", 0.0)
         summary["champion_verified"] = verified
         summary["champion_verify_score"] = verify_score
-        # R50: verified_fitness = fitness if verify() passes, else unverified
+        # R50: verified_fitness = fitness if verify() passes, else negated
         summary["verified_fitness"] = self.champion_fitness if verified else -abs(self.champion_fitness)
 
         # R4: Convergence diagnostics -- help downstream consumers detect
@@ -3543,6 +3545,10 @@ class EvolutionEngine:
             if hasattr(self, "_champion_raw_task_score"):
                 self._champion_raw_task_score = best_raw_score
             self.champion_fitness = best_fitness
+            # R50: Run verify() on champion after replacement (uses current task instance)
+            verified, verify_score = self._verify_champion()
+            self._champion_verified = verified
+            self._champion_verify_score = verify_score
             # R21: Mark champion changed so _update_qd_archive and
             # _update_novelty_archive know to run next generation.
             self._champion_changed_since_last_qd = True
