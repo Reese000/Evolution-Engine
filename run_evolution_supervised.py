@@ -132,19 +132,26 @@ def get_last_cycle_fitness() -> float:
 
 
 def cuda_cleanup() -> None:
-    """Best-effort CUDA cleanup between batches."""
+    """Best-effort CUDA cleanup between batches.
+
+    R49: Skip if CUDA not initialized — initializing CUDA in the supervisor
+    process causes ACCESS_VIOLATION in subprocesses (torch 2.4.1+cu121 on
+    Windows). The supervisor doesn't use CUDA; only subprocesses do.
+    """
     try:
         import gc
 
         import torch
 
-        if torch.cuda.is_available():
-            gc.collect()
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            torch.cuda.reset_peak_memory_stats()
-            alloc = torch.cuda.memory_allocated() / 1024**2
-            log(f"  CUDA cleanup: {alloc:.0f}MB allocated")
+        # R49: Don't initialize CUDA in supervisor — it interferes with subprocesses
+        if not torch.cuda.is_initialized():
+            return
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        alloc = torch.cuda.memory_allocated() / 1024**2
+        log(f"  CUDA cleanup: {alloc:.0f}MB allocated")
     except Exception as e:
         log(f"  CUDA cleanup skipped: {e}")
 
