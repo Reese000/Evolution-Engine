@@ -15,24 +15,49 @@
   - `augmentation.py:141 inject_synthetic_data`
   - `rv32i_mask.py:193 _split_imm_b → rv32i_mask.py:290 encode`
   - `synthetic_data.py:163 generate_all → 336 _gen_templates → 416 _gen_loop_sum`
-  - `augmentation.py:217 inject_reference_solutions`
   - All called from `training/loop.py train()` → `run_multi_cycle.py retrain_model()`
-- **Conclusion**: L26-L30 is NOT the trigger. Crash rate identical to full L30 run.
 
-## Arm B: R48 Reverted (skip_evolution restored)
-- **Status**: NOT YET RUN
-- **Rationale**: Arm A already eliminated L26-L30. Next step is to test
-  whether reverting R48 eliminates crashes (yesterday's 100-cycle control
-  had zero relaunches).
+## Arm B: R48 Reverted (EE_SKIP_EVOLUTION_ON_REJECTION=1)
+- **Run**: 20-cycle GPU, skip_evolution restored on gate rejection
+- **Result**: 4/20 cycles completed, 10 relaunches (hit max)
+- **Crash rate**: 10 crashes / 4 successful cycles = 2.50 crashes/cycle
+- **Faulting stacks** (via faulthandler):
+  - `augmentation.py:270 inject_reference_solutions`
+  - Called from `training/loop.py:165 train()` → `run_multi_cycle.py:956 retrain_model()`
 
-## Key Findings
-1. Crashes are in retrain augmentation path, NOT evolution
-2. All stacks point to `rv32i_model.py` encoding → `synthetic_data.py` generation
-3. ACCESS_VIOLATION is C-level (torch/CUDA), Python frames show thread location
-4. Crash rate unchanged whether L26-L30 enabled or disabled
-5. The 100-cycle zero-crash control was before R48 (skip_evolution removed)
+## Conclusions
 
-## Hypothesis (pending Arm B test)
-R48 (removing skip_evolution) causes more frequent retrain calls, which
-increases exposure to a latent CUDA crash in the encode_trace/synthetic_data
-path. The crash was always present but was masked by lower retrain frequency.
+### What IS NOT the trigger (eliminated by experiment)
+1. **L26-L30 levels** — Arm A crashes at same rate without them
+2. **R48 (skip_evolution removal)** — Arm B crashes at same rate with it reverted
+3. **Evolution always running** — both arms crash whether evolution skips or not
+
+### What the data shows
+- Both arms crash at ~1.6-2.5 crashes/cycle, same as the full L30 run
+- All faulting stacks are in the **retrain augmentation path**, not evolution
+- The crash is ACCESS_VIOLATION (C-level, not Python)
+- faulthandler shows Python frames where the thread WAS when the C crash fired
+  (per PM: "augmentation may not be the actual culprit — faulting stacks may
+  show main thread location while actual fault is in CUDA/native thread")
+- The 100-cycle zero-crash control was at an earlier commit (3d7ffe6)
+- Something changed between 3d7ffe6 and HEAD that introduced the crash
+
+### What changed between control and current HEAD
+Commits between 3d7ffe6 and HEAD (after removing R48 and L26-L30):
+- R50 integrity gate (verify() calls in evolution_engine.py)
+- verify() class-vs-instance fix
+- In-process retrain CUDA cleanup
+- Supervisor CUDA cleanup fix
+- Various docs/fixes
+- The augmentation code itself was NOT changed between 3d7ffe6 and HEAD
+
+### Leading hypothesis
+A torch/CUDA state corruption that accumulates during retrain's
+in-process training, manifesting as ACCESS_VIOLATION when augmentation
+code (encode_trace, synthetic data) runs in a corrupted CUDA context.
+
+### Recommended fix (per PM)
+Isolate synthetic-data generation + augmentation into a short-lived
+subprocess (clean interpreter, no CUDA context) so retrain's data
+prep can't collide with CUDA state. Resilient regardless of the exact
+corruption source.
