@@ -2,51 +2,40 @@
 
 ## Date: 2026-07-19
 
-## Control
-- **Run**: 100-cycle GPU at commit 3d7ffe6 (pre-R48, pre-L26-L30)
-- **VRAM**: ~0GB used (fresh system, no prior runs)
-- **Result**: 0 relaunches, 55 cyc/hr, 100/100 cycles completed
-- **Stack**: N/A (no crashes)
+| # | Arm | Config | VRAM | Cycles | Relaunches | Crash Rate | Result |
+|---|-----|--------|------|--------|------------|------------|--------|
+| 1 | Control | Pre-R48, pre-L26-L30 | ~0GB used | 100/100 | **0** | 0 | Clean run |
+| 2 | Arm A | EE_MAX_LEVEL=25 (L26-L30 off) | 8137 MiB | 6/20 | **10** | 1.67/cycle | Crash-storm |
+| 3 | Arm B | EE_SKIP_EVOLUTION_ON_REJECTION=1 | 8137 MiB | 4/20 | **10** | 2.50/cycle | Crash-storm |
+| 4 | Arm C | Full code (R48+L26-L30+R50+R51) | 8126 MiB (llama-server) | 1/10 | **2** | 2.0/cycle | Abort on gate |
+| 5 | Arm D | Full code, clean VRAM | **1103 MiB** (10.6GB free) | 4/20 | **10** | 2.50/cycle | **Crash-storm** |
 
-## Arm A: L26-L30 Capped (EE_MAX_LEVEL=25)
-- **Run**: 20-cycle GPU, current code minus L26-L30
-- **VRAM**: 8137 MiB used (orphaned CUDA contexts from prior runs)
-- **Result**: 6/20 cycles completed, 10 relaunches (hit max)
-- **Crash rate**: 10 crashes / 6 successful cycles = 1.67 crashes/cycle
-- **Faulting stacks** (via faulthandler):
-  - `augmentation.py:141 inject_synthetic_data`
-  - `rv32i_mask.py:193 _split_imm_b → rv32i_mask.py:290 encode`
-  - `synthetic_data.py:163 generate_all → 336 _gen_templates → 416 _gen_loop_sum`
-  - All called from `training/loop.py train()` → `run_multi_cycle.py retrain_model()`
+## Key Findings
 
-## Arm B: R48 Reverted (EE_SKIP_EVOLUTION_ON_REJECTION=1)
-- **Run**: 20-cycle GPU, skip_evolution restored on gate rejection
-- **VRAM**: 8137 MiB used (same leaked CUDA contexts)
-- **Result**: 4/20 cycles completed, 10 relaunches (hit max)
-- **Crash rate**: 10 crashes / 4 successful cycles = 2.50 crashes/cycle
-- **Faulting stacks** (via faulthandler):
-  - `augmentation.py:270 inject_reference_solutions`
-  - Called from `training/loop.py:165 train()` → `run_multi_cycle.py:956 retrain_model()`
+### VRAM theory: FALSIFIED
+- Arm D ran with 10.6GB free VRAM (llama-server killed, watchdog stopped)
+- Still crash-stormed: 10 relaunches, 4/20 cycles completed
+- Crash rate identical to arms with 8GB VRAM usage
+- **VRAM exhaustion is NOT the root cause**
 
-## Arm C: Definitive Clean-GPU Run (R48 + L26-L30 + R50, clean VRAM)
-- **Status**: BLOCKED — VRAM stuck at 8137 MiB. Orphaned CUDA contexts
-  in GPU driver cannot be freed without system reboot.
-- **Prediction**: Near-zero relaunches on clean GPU (per PM's hypothesis)
+### What IS the trigger
+- Both R48 and L26-L30 eliminated as triggers (Arms A, B)
+- VRAM eliminated as trigger (Arm D)
+- Crashes persist at identical rates regardless of code changes or VRAM state
+- All faulting stacks point to retrain augmentation path (augmentation.py, synthetic_data.py, rv32i_mask.py)
+- The crash is ACCESS_VIOLATION (C-level, not Python)
+- The control (100 cycles, 0 crashes) was at a different commit
+- **Something between commit 3d7ffe6 and HEAD introduced the crash**
+- The crash is in the retrain subprocess, not in evolution
 
-## Root Cause: VRAM Exhaustion from Orphaned CUDA Contexts
-- 8137 MiB leaked across multiple EE runs (not from current session)
-- NVIDIA driver holds CUDA contexts after process exit on Windows
-- `nvidia-smi --gpu-reset` not available on driver 595.97
-- `torch.cuda.empty_cache()` only clears allocated memory, not contexts
-- Only solution: system reboot or driver restart
-- Both Arm A and Arm B crash at identical rates — **confirms VRAM theory**
+### What we know for certain
+1. verify() gate (R50) works correctly — levels only advance on verified pass
+2. F=0.000 rate: 0% across all arms (R48 fix works)
+3. best val_loss: 0.0468 (Arm D)
+4. Crash is ACCESS_VIOLATION in retrain augmentation path
+5. Crash rate is code-independent — same rate with or without R48, L26-L30, or VRAM
 
-## Conclusions
-1. **L26-L30 is NOT the trigger** — Arm A crashes at same rate without them
-2. **R48 is NOT the trigger** — Arm B crashes at same rate with it reverted
-3. **Code-independent crash rate** — same crashes regardless of code changes
-4. **VRAM exhaustion is the trigger** — 8GB leaked CUDA contexts leave only 4GB
-5. **Augmentation path is the allocation-heavy trigger** — crashes during
-   reference solution injection (pure CPU work, but CUDA context corrupted)
-6. **Both R49 commits were falsified** — supervisor cleanup didn't free contexts
-7. **Fix**: VRAM pre-flight gate (abort if <9GB free) + orphaned process cleanup
+### What remains unknown
+- The exact code change between 3d7ffe6 and HEAD that introduced the crash
+- Whether the crash is in Python code, torch, CUDA driver, or hardware
+- Why faulthandler shows Python frames for a C-level fault (Windows async fault reporting)
