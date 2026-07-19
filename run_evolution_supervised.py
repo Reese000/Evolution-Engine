@@ -276,6 +276,19 @@ def supervisor_main() -> int:
         log("ABORTING: torch version verification failed")
         return 1
 
+    # R51: Pre-flight VRAM check — abort if not enough free VRAM
+    vram_ok, vram_msg = check_vram_free(min_gb=9.0)
+    if not vram_ok:
+        log(f"ABORTING: {vram_msg}")
+        log("Kill orphaned CUDA processes or reboot, then retry.")
+        return 1
+    log(f"  VRAM check: {vram_msg}")
+
+    # Kill any orphaned EE child processes from previous runs
+    killed = kill_ee_subtree()
+    if killed:
+        log(f"  Killed {killed} orphaned EE process(es)")
+
     # Show preserved state
     best_vl = get_best_val_loss()
     completed = get_completed_cycles()
@@ -382,6 +395,64 @@ def supervisor_main() -> int:
     log("=" * 60)
 
     return 0
+
+
+def check_vram_free(min_gb: float = 9.0) -> tuple[bool, str]:
+    """Check if GPU has enough free VRAM. Returns (ok, message)."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            free_mb, total_mb = [int(x.strip()) for x in result.stdout.strip().split(",")]
+            free_gb = free_mb / 1024
+            total_gb = total_mb / 1024
+            if free_gb < min_gb:
+                return (
+                    False,
+                    f"Only {free_gb:.1f}GB free of {total_gb:.1f}GB (need {min_gb}GB). Reboot or kill orphaned CUDA processes.",
+                )
+            return True, f"{free_gb:.1f}GB free of {total_gb:.1f}GB"
+    except Exception as e:
+        return False, f"Could not query GPU: {e}"
+    return False, "Could not query GPU"
+
+
+def kill_ee_subtree() -> int:
+    """Kill any orphaned EE child processes. Returns count killed."""
+    killed = 0
+    try:
+        # Find any python processes running EE scripts
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                'Get-CimInstance Win32_Process -Filter "'
+                "CommandLine LIKE '%run_multi_cycle%' OR "
+                "CommandLine LIKE '%run_evolution_supervised%' OR "
+                "CommandLine LIKE '%augmentation_subprocess%'"
+                '" | Select-Object -ExpandProperty ProcessId',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for pid_str in result.stdout.strip().split():
+                try:
+                    pid = int(pid_str.strip())
+                    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=5)
+                    log(f"  Killed orphaned EE process PID {pid}")
+                    killed += 1
+                except (ValueError, subprocess.TimeoutExpired):
+                    pass
+    except Exception:
+        pass
+    return killed
 
 
 if __name__ == "__main__":
