@@ -341,6 +341,10 @@ def run_evolution(
         "final_fitness": result.get("final_fitness", 0.0),
         "final_level": result.get("final_level", 0),
         "champion_words": result.get("champion_words", 0),
+        # R50: Integrity gate — verified fitness and verify() result
+        "verified_fitness": result.get("verified_fitness", 0.0),
+        "champion_verified": result.get("champion_verified", False),
+        "champion_verify_score": result.get("champion_verify_score", 0.0),
         # v13 Phase E.2: Include champion program for memorization diagnostic
         "champion_program": ([f"0x{w:08X}" for w in engine.champion] if engine.champion is not None else None),
         "elapsed_seconds": round(elapsed, 2),

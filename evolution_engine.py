@@ -1515,6 +1515,12 @@ class EvolutionEngine:
         summary["final_level"] = self.champion_level
         summary["champion_words"] = len(self.champion) if self.champion else 0
         summary["elapsed_seconds"] = time.time() - start_time
+        # R50: Record verify() result for integrity gate
+        verified, verify_score = self._verify_champion()
+        summary["champion_verified"] = verified
+        summary["champion_verify_score"] = verify_score
+        # R50: verified_fitness = fitness if verify() passes, else unverified
+        summary["verified_fitness"] = self.champion_fitness if verified else -abs(self.champion_fitness)
 
         # R4: Convergence diagnostics -- help downstream consumers detect
         # whether evolution is stuck, making progress, or oscillating.
@@ -3607,6 +3613,11 @@ class EvolutionEngine:
     def _try_curriculum_advance(self) -> bool:
         """Check curriculum advancement conditions.
 
+        R50: Curriculum may only advance when the champion PASSES verify()
+        for the current level. This prevents inflated fitness (from level_bonus)
+        from advancing the curriculum when the champion doesn't actually solve
+        the task.
+
         Returns True if the level was advanced.
         """
         if not self.config.auto_curriculum:
@@ -3616,6 +3627,32 @@ class EvolutionEngine:
 
         # Check if stalled long enough
         if self.generations_stalled >= self.config.curriculum_stall_threshold:
+            # R50: Verify the champion actually passes the current level
+            verified = False
+            try:
+                level_cls = get_task_level(self.champion_level)
+                output = {
+                    "registers": self.champion_trace.get("final_regs", {}),
+                    "memory": self.champion_trace.get("final_memory", {}),
+                }
+                verify_score = level_cls.verify(output, self.task_instance)
+                verified = verify_score >= 1.0
+                self._champion_verified = verified
+                self._champion_verify_score = verify_score
+            except Exception:
+                verified = False
+                self._champion_verified = False
+                self._champion_verify_score = 0.0
+
+            if not verified:
+                self._log(
+                    f"[Curriculum] BLOCKED (R50): stalled={self.generations_stalled} "
+                    f">= {self.config.curriculum_stall_threshold}, "
+                    f"raw_score={self._champion_raw_task_score:.1f}, "
+                    f"verify={self._champion_verify_score:.2f} < 1.0"
+                )
+                return False
+
             # R33: Use champion-specific raw task score instead of the instance
             # variable which reflects the last evaluated elite (not necessarily
             # the champion). This fixes curriculum advancing/not-advancing
@@ -3625,6 +3662,7 @@ class EvolutionEngine:
                 self._log(
                     f"[Curriculum] Advancing: stalled={self.generations_stalled}, "
                     f"raw_score={self._champion_raw_task_score:.1f}, "
+                    f"verify={self._champion_verify_score:.2f}, "
                     f"level={self.champion_level}->{self.champion_level + 1}"
                 )
                 self._advance_curriculum()
@@ -3637,6 +3675,24 @@ class EvolutionEngine:
                 )
 
         return False
+
+    def _verify_champion(self) -> tuple[bool, float]:
+        """R50: Run verify() on the current champion against the current level.
+
+        Returns (verified: bool, verify_score: float).
+        """
+        if self.champion is None or self.champion_trace is None:
+            return False, 0.0
+        try:
+            level_cls = get_task_level(self.champion_level)
+            output = {
+                "registers": self.champion_trace.get("final_regs", {}),
+                "memory": self.champion_trace.get("final_memory", {}),
+            }
+            score = level_cls.verify(output, self.task_instance)
+            return score >= 1.0, score
+        except Exception:
+            return False, 0.0
 
     def _advance_curriculum(self) -> None:
         """Advance to the next curriculum level."""
