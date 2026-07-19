@@ -190,7 +190,7 @@ def load_or_create_model(
                 n_heads=ckpt_cfg.get("n_heads", 8),
                 d_ff=ckpt_cfg.get("d_ff", 1024),
                 max_seq_len=ckpt_cfg.get("max_seq_len", 2048),
-                use_checkpointing=(device.type == "cuda"),
+                use_checkpointing=False,
             )
         else:
             print(
@@ -204,7 +204,7 @@ def load_or_create_model(
                 n_heads=target_cfg["n_heads"],
                 d_ff=target_cfg["d_ff"],
                 max_seq_len=ckpt_cfg.get("max_seq_len", 2048),
-                use_checkpointing=(device.type == "cuda"),
+                use_checkpointing=False,
             )
 
         sd = ckpt_sd if size_compatible else None
@@ -246,7 +246,7 @@ def load_or_create_model(
             n_heads=target_cfg["n_heads"],
             d_ff=target_cfg["d_ff"],
             max_seq_len=2048,
-            use_checkpointing=(device.type == "cuda"),
+            use_checkpointing=False,
         )
 
     model.to(device)
