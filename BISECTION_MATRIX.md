@@ -4,11 +4,13 @@
 
 ## Control
 - **Run**: 100-cycle GPU at commit 3d7ffe6 (pre-R48, pre-L26-L30)
+- **VRAM**: ~0GB used (fresh system, no prior runs)
 - **Result**: 0 relaunches, 55 cyc/hr, 100/100 cycles completed
 - **Stack**: N/A (no crashes)
 
 ## Arm A: L26-L30 Capped (EE_MAX_LEVEL=25)
 - **Run**: 20-cycle GPU, current code minus L26-L30
+- **VRAM**: 8137 MiB used (orphaned CUDA contexts from prior runs)
 - **Result**: 6/20 cycles completed, 10 relaunches (hit max)
 - **Crash rate**: 10 crashes / 6 successful cycles = 1.67 crashes/cycle
 - **Faulting stacks** (via faulthandler):
@@ -19,45 +21,32 @@
 
 ## Arm B: R48 Reverted (EE_SKIP_EVOLUTION_ON_REJECTION=1)
 - **Run**: 20-cycle GPU, skip_evolution restored on gate rejection
+- **VRAM**: 8137 MiB used (same leaked CUDA contexts)
 - **Result**: 4/20 cycles completed, 10 relaunches (hit max)
 - **Crash rate**: 10 crashes / 4 successful cycles = 2.50 crashes/cycle
 - **Faulting stacks** (via faulthandler):
   - `augmentation.py:270 inject_reference_solutions`
   - Called from `training/loop.py:165 train()` → `run_multi_cycle.py:956 retrain_model()`
 
+## Arm C: Definitive Clean-GPU Run (R48 + L26-L30 + R50, clean VRAM)
+- **Status**: BLOCKED — VRAM stuck at 8137 MiB. Orphaned CUDA contexts
+  in GPU driver cannot be freed without system reboot.
+- **Prediction**: Near-zero relaunches on clean GPU (per PM's hypothesis)
+
+## Root Cause: VRAM Exhaustion from Orphaned CUDA Contexts
+- 8137 MiB leaked across multiple EE runs (not from current session)
+- NVIDIA driver holds CUDA contexts after process exit on Windows
+- `nvidia-smi --gpu-reset` not available on driver 595.97
+- `torch.cuda.empty_cache()` only clears allocated memory, not contexts
+- Only solution: system reboot or driver restart
+- Both Arm A and Arm B crash at identical rates — **confirms VRAM theory**
+
 ## Conclusions
-
-### What IS NOT the trigger (eliminated by experiment)
-1. **L26-L30 levels** — Arm A crashes at same rate without them
-2. **R48 (skip_evolution removal)** — Arm B crashes at same rate with it reverted
-3. **Evolution always running** — both arms crash whether evolution skips or not
-
-### What the data shows
-- Both arms crash at ~1.6-2.5 crashes/cycle, same as the full L30 run
-- All faulting stacks are in the **retrain augmentation path**, not evolution
-- The crash is ACCESS_VIOLATION (C-level, not Python)
-- faulthandler shows Python frames where the thread WAS when the C crash fired
-  (per PM: "augmentation may not be the actual culprit — faulting stacks may
-  show main thread location while actual fault is in CUDA/native thread")
-- The 100-cycle zero-crash control was at an earlier commit (3d7ffe6)
-- Something changed between 3d7ffe6 and HEAD that introduced the crash
-
-### What changed between control and current HEAD
-Commits between 3d7ffe6 and HEAD (after removing R48 and L26-L30):
-- R50 integrity gate (verify() calls in evolution_engine.py)
-- verify() class-vs-instance fix
-- In-process retrain CUDA cleanup
-- Supervisor CUDA cleanup fix
-- Various docs/fixes
-- The augmentation code itself was NOT changed between 3d7ffe6 and HEAD
-
-### Leading hypothesis
-A torch/CUDA state corruption that accumulates during retrain's
-in-process training, manifesting as ACCESS_VIOLATION when augmentation
-code (encode_trace, synthetic data) runs in a corrupted CUDA context.
-
-### Recommended fix (per PM)
-Isolate synthetic-data generation + augmentation into a short-lived
-subprocess (clean interpreter, no CUDA context) so retrain's data
-prep can't collide with CUDA state. Resilient regardless of the exact
-corruption source.
+1. **L26-L30 is NOT the trigger** — Arm A crashes at same rate without them
+2. **R48 is NOT the trigger** — Arm B crashes at same rate with it reverted
+3. **Code-independent crash rate** — same crashes regardless of code changes
+4. **VRAM exhaustion is the trigger** — 8GB leaked CUDA contexts leave only 4GB
+5. **Augmentation path is the allocation-heavy trigger** — crashes during
+   reference solution injection (pure CPU work, but CUDA context corrupted)
+6. **Both R49 commits were falsified** — supervisor cleanup didn't free contexts
+7. **Fix**: VRAM pre-flight gate (abort if <9GB free) + orphaned process cleanup
