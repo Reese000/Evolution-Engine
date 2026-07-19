@@ -424,10 +424,16 @@ def check_vram_free(min_gb: float = 9.0) -> tuple[bool, str]:
 
 
 def kill_ee_subtree() -> int:
-    """Kill any orphaned EE child processes. Returns count killed."""
+    """Kill orphaned run_multi_cycle.py child processes.
+    Returns count killed. Excludes own PID and parent."""
     killed = 0
+    own_pid = os.getpid()
+    skip_pids = {own_pid}
     try:
-        # Find any python processes running EE scripts
+        skip_pids.add(os.getppid())
+    except Exception:
+        pass
+    try:
         result = subprocess.run(
             [
                 "powershell.exe",
@@ -435,7 +441,6 @@ def kill_ee_subtree() -> int:
                 "-Command",
                 'Get-CimInstance Win32_Process -Filter "'
                 "CommandLine LIKE '%run_multi_cycle%' OR "
-                "CommandLine LIKE '%run_evolution_supervised%' OR "
                 "CommandLine LIKE '%augmentation_subprocess%'"
                 '" | Select-Object -ExpandProperty ProcessId',
             ],
@@ -447,6 +452,8 @@ def kill_ee_subtree() -> int:
             for pid_str in result.stdout.strip().split():
                 try:
                     pid = int(pid_str.strip())
+                    if pid in skip_pids:
+                        continue
                     subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=5)
                     log(f"  Killed orphaned EE process PID {pid}")
                     killed += 1
