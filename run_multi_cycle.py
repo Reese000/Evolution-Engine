@@ -1761,6 +1761,7 @@ def main() -> None:
         # Phase 1: Run evolution (with dynamic gen count and archive params)
         # Merge archive params into evolution params
         # Take pre-cycle checkpoint snapshot (for LEVEL_REGRESSION rollback)
+        _evo_start = time.time()
         if skip_evolution:
             log(f"  Cycle {cycle}: SKIPPING evolution (RESET-AND-RELEARN from previous cycle)")
             evo_result = {
@@ -1796,6 +1797,7 @@ def main() -> None:
             )
 
         # Save archive state for next cycle (cross-cycle persistence)
+        _evo_elapsed = time.time() - _evo_start
         if "archive_state" in evo_result:
             prev_archive_state = evo_result["archive_state"]
 
@@ -1811,6 +1813,7 @@ def main() -> None:
                 meta_controller._log(f"Best-level snapshot: C{cycle} reached L{current_level}")
 
         # Phase 2: Retrain (unless --no-retrain)
+        _retrain_start = time.time()
         retrain_result: dict[str, Any] = {"retrained": False, "reason": "skipped"}
         if not args.no_retrain:
             # -- v11.5: Retrain skip -- skip if champion hasn't improved -----
@@ -2368,6 +2371,17 @@ def main() -> None:
         if "error" in evo_result:
             log(f"  Cycle {cycle}: Evolution had errors -- see above")
         combined = {**evo_result, **retrain_result}
+
+        # -- Phase timing breakdown ----------------------------------
+        _retrain_elapsed = time.time() - _retrain_start
+        _total_elapsed = _evo_elapsed + _retrain_elapsed
+        combined["phase_evolution_seconds"] = round(_evo_elapsed, 2)
+        combined["phase_retrain_seconds"] = round(_retrain_elapsed, 2)
+        combined["phase_total_seconds"] = round(_total_elapsed, 2)
+        log(
+            f"  Cycle {cycle}: phases: evolution={_evo_elapsed:.1f}s "
+            f"retrain={_retrain_elapsed:.1f}s total={_total_elapsed:.1f}s"
+        )
 
         # -- Export Prometheus metrics ----------------------------------
         if prometheus_server is not None:
