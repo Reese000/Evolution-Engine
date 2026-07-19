@@ -208,7 +208,7 @@ def run_short_cycle():
 
     tasks = [Level0(), Level1(), Level2()]
 
-    engine = EvolutionEngine(cfg, tasks)
+    engine = EvolutionEngine(cfg)
 
     start = time.time()
 

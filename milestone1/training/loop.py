@@ -158,11 +158,60 @@ def train(
         print(f"[Train] Register renaming augmentation: +{aug_count} sequences")
     del raw_dicts_for_augment, augmented_seqs, augmented_weights
 
-    # ── Synthetic data generation ──────────────────────────────────
-    inject_synthetic_data(sequences, sample_weights, seed=42)
+    # ── R51: Augmentation in isolated subprocess ────────────────────
+    # Synthetic data generation + reference solutions run in a fresh
+    # interpreter with no CUDA context, preventing ACCESS_VIOLATION
+    # crashes when the parent process has corrupted CUDA state.
+    import json as _json
+    import subprocess as _subprocess
 
-    # ── Reference solution injection ───────────────────────────────
-    inject_reference_solutions(tokenizer, sequences, sample_weights, rv32i_decode=rv32i_decode)
+    _aug_script = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "augmentation_subprocess.py",
+    )
+    if os.path.isfile(_aug_script):
+        try:
+            _aug_input = _json.dumps(
+                {
+                    "seed": 42,
+                    "max_sequences": 5000,
+                    "data_path": data_path,
+                }
+            )
+            _aug_result = _subprocess.run(
+                [sys.executable, _aug_script],
+                input=_aug_input,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            )
+            if _aug_result.returncode == 0 and _aug_result.stdout.strip():
+                _aug_data = _json.loads(_aug_result.stdout)
+                _aug_seqs = _aug_data.get("sequences", [])
+                _aug_count = 0
+                for entry in _aug_seqs:
+                    tokens = entry.get("tokens", [])
+                    weight = entry.get("weight", 1.0)
+                    if tokens:
+                        sequences.append(torch.tensor(tokens, dtype=torch.long))
+                        sample_weights.append(weight)
+                        _aug_count += 1
+                print(f"[Train] R51 subprocess augmentation: +{_aug_count} sequences")
+            else:
+                # Fallback to in-process if subprocess fails
+                print(f"[Train] R51 subprocess failed (rc={_aug_result.returncode}), falling back to in-process")
+                print(f"[Train] stderr: {_aug_result.stderr[:200]}")
+                inject_synthetic_data(sequences, sample_weights, seed=42)
+                inject_reference_solutions(tokenizer, sequences, sample_weights, rv32i_decode=rv32i_decode)
+        except Exception as e:
+            print(f"[Train] R51 subprocess error: {e}, falling back to in-process")
+            inject_synthetic_data(sequences, sample_weights, seed=42)
+            inject_reference_solutions(tokenizer, sequences, sample_weights, rv32i_decode=rv32i_decode)
+    else:
+        # Fallback if subprocess script doesn't exist
+        inject_synthetic_data(sequences, sample_weights, seed=42)
+        inject_reference_solutions(tokenizer, sequences, sample_weights, rv32i_decode=rv32i_decode)
 
     # ── Rebalance level weights (AFTER injection so all sequences get balanced) ──
     from data.loading import rebalance_level_weights
@@ -214,6 +263,7 @@ def train(
     if device.type == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
 
     from rv32i_model import compute_loss as weighted_compute_loss
     from rv32i_model import compute_loss_with_scheduled_sampling

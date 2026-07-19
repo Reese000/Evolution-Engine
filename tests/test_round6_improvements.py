@@ -53,7 +53,7 @@ class TestSelectEliteDedupAlignment:
         for i, prog in enumerate(programs):
             fitness_map[tuple(prog)] = float(i * 10)  # 0, 10, 20, ..., 90
 
-        def fake_fitness(prog, trace, eval_budget=None):
+        def fake_fitness(prog, trace, eval_budget=None, raw_only=False):
             return fitness_map.get(tuple(prog), 0.0)
 
         engine._compute_fitness = fake_fitness
@@ -102,7 +102,7 @@ class TestSelectEliteDedupAlignment:
         programs = [list(range(i, i + 3)) for i in range(5)]
         results = [{"status": "ok", "final_regs": {}, "instructions_count": 3} for _ in range(5)]
 
-        engine._compute_fitness = lambda prog, trace, eval_budget=None: float(sum(prog))
+        engine._compute_fitness = lambda prog, trace, eval_budget=None, raw_only=False: float(sum(prog))
         engine.task_instance = {"inputs": {}, "expected_output": {"registers": {}}}
 
         elites, elite_fits = engine._select_elite(programs, results)

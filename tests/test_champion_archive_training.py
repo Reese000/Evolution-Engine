@@ -42,14 +42,17 @@ class TestMergeArchiveToRecurrent:
 
         orig_project = rmc.PROJECT_ROOT
         orig_recurrent = rmc.M1_RECURRENT
+        orig_recurrent_data = rmc.M1_RECURRENT_DATA
         try:
             rmc.PROJECT_ROOT = str(tmp_path)
             rmc.M1_RECURRENT = recurrent_dir
+            rmc.M1_RECURRENT_DATA = recurrent_path
 
             added = rmc.merge_archive_to_recurrent(cycle=1)
         finally:
             rmc.PROJECT_ROOT = orig_project
             rmc.M1_RECURRENT = orig_recurrent
+            rmc.M1_RECURRENT_DATA = orig_recurrent_data
 
         assert added == 2
         assert os.path.isfile(recurrent_path)
@@ -86,14 +89,17 @@ class TestMergeArchiveToRecurrent:
 
         orig_project = rmc.PROJECT_ROOT
         orig_recurrent = rmc.M1_RECURRENT
+        orig_recurrent_data = rmc.M1_RECURRENT_DATA
         try:
             rmc.PROJECT_ROOT = str(tmp_path)
             rmc.M1_RECURRENT = recurrent_dir
+            rmc.M1_RECURRENT_DATA = recurrent_path
 
             added = rmc.merge_archive_to_recurrent(cycle=1)
         finally:
             rmc.PROJECT_ROOT = orig_project
             rmc.M1_RECURRENT = orig_recurrent
+            rmc.M1_RECURRENT_DATA = orig_recurrent_data
 
         assert added == 0  # No new entries added (deduplicated)
 
@@ -111,17 +117,21 @@ class TestMergeArchiveToRecurrent:
 
         recurrent_dir = str(tmp_path / "recurrent_data")
         os.makedirs(recurrent_dir, exist_ok=True)
+        recurrent_path = os.path.join(recurrent_dir, "recurrent_data.jsonl")
 
         orig_project = rmc.PROJECT_ROOT
         orig_recurrent = rmc.M1_RECURRENT
+        orig_recurrent_data = rmc.M1_RECURRENT_DATA
         try:
             rmc.PROJECT_ROOT = str(tmp_path)
             rmc.M1_RECURRENT = recurrent_dir
+            rmc.M1_RECURRENT_DATA = recurrent_path
 
             added = rmc.merge_archive_to_recurrent(cycle=1)
         finally:
             rmc.PROJECT_ROOT = orig_project
             rmc.M1_RECURRENT = orig_recurrent
+            rmc.M1_RECURRENT_DATA = orig_recurrent_data
 
         assert added == 0
 
@@ -136,19 +146,23 @@ class TestMergeArchiveToRecurrent:
         archive.save()
 
         recurrent_dir = str(tmp_path / "nonexistent" / "recurrent_data")
+        recurrent_path = os.path.join(recurrent_dir, "recurrent_data.jsonl")
 
         import run_multi_cycle as rmc
 
         orig_project = rmc.PROJECT_ROOT
         orig_recurrent = rmc.M1_RECURRENT
+        orig_recurrent_data = rmc.M1_RECURRENT_DATA
         try:
             rmc.PROJECT_ROOT = str(tmp_path)
             rmc.M1_RECURRENT = recurrent_dir
+            rmc.M1_RECURRENT_DATA = recurrent_path
 
             added = rmc.merge_archive_to_recurrent(cycle=1)
         finally:
             rmc.PROJECT_ROOT = orig_project
             rmc.M1_RECURRENT = orig_recurrent
+            rmc.M1_RECURRENT_DATA = orig_recurrent_data
 
         assert added == 1
         assert os.path.isdir(recurrent_dir)
@@ -176,14 +190,17 @@ class TestMergeArchiveToRecurrent:
 
         orig_project = rmc.PROJECT_ROOT
         orig_recurrent = rmc.M1_RECURRENT
+        orig_recurrent_data = rmc.M1_RECURRENT_DATA
         try:
             rmc.PROJECT_ROOT = str(tmp_path)
             rmc.M1_RECURRENT = recurrent_dir
+            rmc.M1_RECURRENT_DATA = recurrent_path
 
             added = rmc.merge_archive_to_recurrent(cycle=1)
         finally:
             rmc.PROJECT_ROOT = orig_project
             rmc.M1_RECURRENT = orig_recurrent
+            rmc.M1_RECURRENT_DATA = orig_recurrent_data
 
         assert added == 1
 
@@ -206,20 +223,24 @@ class TestMergeArchiveToRecurrent:
 
         recurrent_dir = str(tmp_path / "recurrent_data")
         os.makedirs(recurrent_dir, exist_ok=True)
+        recurrent_path = os.path.join(recurrent_dir, "recurrent_data.jsonl")
 
         import run_multi_cycle as rmc
 
         orig_project = rmc.PROJECT_ROOT
         orig_recurrent = rmc.M1_RECURRENT
+        orig_recurrent_data = rmc.M1_RECURRENT_DATA
         try:
             rmc.PROJECT_ROOT = str(tmp_path)
             rmc.M1_RECURRENT = recurrent_dir
+            rmc.M1_RECURRENT_DATA = recurrent_path
 
             added1 = rmc.merge_archive_to_recurrent(cycle=1)
             added2 = rmc.merge_archive_to_recurrent(cycle=2)
         finally:
             rmc.PROJECT_ROOT = orig_project
             rmc.M1_RECURRENT = orig_recurrent
+            rmc.M1_RECURRENT_DATA = orig_recurrent_data
 
         assert added1 == 1
         assert added2 == 0  # Second call adds nothing (deduplicated)

@@ -1,113 +1,193 @@
 {
-  "best_fitness": 116.94790160972576,
-  "best_level": 11,
-  "best_val_loss": null,
-  "cycles_since_fitness_improvement": 2,
-  "cycles_since_level_up": 4,
+  "best_fitness": 583.3785871577936,
+  "best_level": 13,
+  "best_val_loss": 0.0446,
+  "cycles_since_fitness_improvement": 37,
+  "cycles_since_level_up": 36,
   "recovery_mode": false,
   "recovery_cycles_remaining": 0,
-  "last_stagnation": "diversity_collapse",
-  "total_gated": 0,
+  "last_stagnation": "level_stalled",
+  "total_gated": 50,
   "total_rollbacks": 0,
-  "total_cycles_observed": 5,
-  "_consecutive_none_val_loss": 5,
+  "total_cycles_observed": 10,
+  "_consecutive_none_val_loss": 0,
   "last_5_cycles": [
     {
-      "cycle": 1,
-      "fitness": 106.66559267593705,
-      "level": 11,
-      "val_loss": null,
-      "diversity": 0.03
+      "cycle": 46,
+      "fitness": 489.681578364288,
+      "level": 13,
+      "val_loss": 0.0465,
+      "diversity": 0.3
     },
     {
-      "cycle": 2,
-      "fitness": 105.94124832403064,
-      "level": 11,
-      "val_loss": null,
-      "diversity": 0.04
+      "cycle": 47,
+      "fitness": 498.27108239580554,
+      "level": 13,
+      "val_loss": 0.0462,
+      "diversity": 0.3
     },
     {
-      "cycle": 3,
-      "fitness": 116.94790160972576,
-      "level": 11,
-      "val_loss": null,
-      "diversity": 0.04
+      "cycle": 48,
+      "fitness": 493.0589286412512,
+      "level": 13,
+      "val_loss": 0.0464,
+      "diversity": 0.3
     },
     {
-      "cycle": 4,
-      "fitness": 102.31858463311568,
-      "level": 11,
-      "val_loss": null,
-      "diversity": 0.045
+      "cycle": 49,
+      "fitness": 492.565633105246,
+      "level": 13,
+      "val_loss": 0.0464,
+      "diversity": 0.3
     },
     {
-      "cycle": 5,
-      "fitness": 72.3356438933035,
-      "level": 11,
-      "val_loss": null,
-      "diversity": 0.045
+      "cycle": 50,
+      "fitness": 500.88492473118276,
+      "level": 13,
+      "val_loss": 0.047,
+      "diversity": 0.3
     }
   ],
   "tuning_history": [
     {
       "domain": "evolution",
-      "param": "diversity_inject_ratio",
+      "param": "novelty_weight",
       "old": null,
-      "new": 0.3,
-      "reason": "stagnation: diversity_collapse (tier 1)"
+      "new": 0.35,
+      "reason": "stagnation: level_stalled"
     },
     {
       "domain": "retrain",
-      "param": "retrain_freeze_layers",
+      "param": "retrain_lr",
       "old": null,
-      "new": 1,
-      "reason": "stagnation: diversity_collapse (tier 1)"
+      "new": 7.500000000000001e-06,
+      "reason": "stagnation: level_stalled"
     },
     {
       "domain": "evolution",
-      "param": "diversity_inject_ratio",
+      "param": "novelty_weight",
       "old": null,
-      "new": 0.3,
-      "reason": "stagnation: diversity_collapse (tier 1)"
+      "new": 0.35,
+      "reason": "stagnation: level_stalled"
     },
     {
       "domain": "retrain",
-      "param": "retrain_freeze_layers",
+      "param": "retrain_lr",
       "old": null,
-      "new": 0,
-      "reason": "stagnation: diversity_collapse (tier 3)"
+      "new": 7.500000000000001e-06,
+      "reason": "stagnation: level_stalled"
     },
     {
       "domain": "evolution",
-      "param": "champion_crossover_prob",
+      "param": "novelty_weight",
       "old": null,
-      "new": 0.85,
-      "reason": "stagnation: diversity_collapse (tier 2)"
+      "new": 0.35,
+      "reason": "stagnation: level_stalled"
     },
     {
       "domain": "retrain",
-      "param": "retrain_freeze_layers",
+      "param": "retrain_lr",
       "old": null,
-      "new": 0,
-      "reason": "stagnation: diversity_collapse (tier 3)"
+      "new": 7.500000000000001e-06,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "evolution",
+      "param": "novelty_weight",
+      "old": null,
+      "new": 0.35,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "retrain",
+      "param": "retrain_lr",
+      "old": null,
+      "new": 7.500000000000001e-06,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "evolution",
+      "param": "novelty_weight",
+      "old": null,
+      "new": 0.35,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "retrain",
+      "param": "retrain_lr",
+      "old": null,
+      "new": 7.500000000000001e-06,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "evolution",
+      "param": "novelty_weight",
+      "old": null,
+      "new": 0.35,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "retrain",
+      "param": "retrain_lr",
+      "old": null,
+      "new": 7.500000000000001e-06,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "evolution",
+      "param": "novelty_weight",
+      "old": null,
+      "new": 0.35,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "retrain",
+      "param": "retrain_lr",
+      "old": null,
+      "new": 7.500000000000001e-06,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "evolution",
+      "param": "novelty_weight",
+      "old": null,
+      "new": 0.35,
+      "reason": "stagnation: level_stalled"
+    },
+    {
+      "domain": "retrain",
+      "param": "retrain_lr",
+      "old": null,
+      "new": 7.500000000000001e-06,
+      "reason": "stagnation: level_stalled"
     }
   ],
-  "_best_val_loss": Infinity,
-  "_gated_count": 0,
+  "_best_val_loss": 0.0446,
+  "_gated_count": 50,
   "_rollback_count": 0,
   "_compound_stall_counter": 0,
-  "_fitness_momentum": -15.018869500559026,
+  "_fitness_momentum": -88.08249875039247,
   "_best_fitness_at_last_tune": -Infinity,
-  "_last_stagnation_state": "diversity_collapse",
-  "_consecutive_stagnation_counter": 6,
+  "_last_stagnation_state": "level_stalled",
+  "_consecutive_stagnation_counter": 50,
   "_state_ring": [
-    "diversity_collapse",
-    "diversity_collapse",
-    "diversity_collapse",
-    "diversity_collapse",
-    "diversity_collapse",
-    "diversity_collapse"
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled",
+    "level_stalled"
   ],
-  "last_level": 11,
-  "best_champion_words": 7
+  "last_level": 13,
+  "best_champion_words": 30
 }

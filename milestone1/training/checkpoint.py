@@ -81,6 +81,7 @@ def save_training_checkpoint(
     n_sequences: int,
     checkpoint_dir: str,
     config_name: str | None = None,
+    output_path: str | None = None,
 ) -> None:
     """Save the final + best checkpoints to *checkpoint_dir*.
 
@@ -98,6 +99,10 @@ def save_training_checkpoint(
         checkpoint_dir:   Directory to write checkpoints into.
         config_name:      Model size key (small/medium/large/xlarge) to tag
                           the checkpoint for cross-validation on load.
+        output_path:      Optional explicit path for the primary checkpoint.
+                          When set, writes the full checkpoint to this path
+                          instead of checkpoint_best.pt. Always still writes
+                          model_final.pt for backward compat.
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -130,9 +135,16 @@ def save_training_checkpoint(
 
     import shutil
 
-    # Atomic copies to best and current paths
-    _atomic_save(ckpt_out, best_path)
-    print(f"[Train] Updated: {os.path.basename(best_path)}")
+    # When output_path is specified (cycle-specific retrain), write there
+    # instead of checkpoint_best.pt to avoid overwriting the last-known-good.
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        _atomic_save(ckpt_out, output_path)
+        print(f"[Train] Saved: {os.path.basename(output_path)} (val_loss={best_val_loss:.4f}, epoch={best_epoch + 1})")
+    else:
+        # Atomic copies to best and current paths
+        _atomic_save(ckpt_out, best_path)
+        print(f"[Train] Updated: {os.path.basename(best_path)}")
 
-    _atomic_save(ckpt_out, current_path)
-    print(f"[Train] Updated: {os.path.basename(current_path)}")
+        _atomic_save(ckpt_out, current_path)
+        print(f"[Train] Updated: {os.path.basename(current_path)}")

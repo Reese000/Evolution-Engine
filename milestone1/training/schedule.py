@@ -47,15 +47,19 @@ def build_optimizer_and_schedulers(
     Returns:
         dict with keys: optimizer, scheduler, use_swa, swa_model, swa_scheduler
     """
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, fused=True)
 
     warmup_steps = max(1, int(0.05 * actual_epochs * n_train_batches))  # 5% warmup
     total_steps = actual_epochs * n_train_batches
 
     from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LinearLR, SequentialLR
+
     warmup_sched = LinearLR(optimizer, start_factor=0.1, total_iters=warmup_steps)
     restart_sched = CosineAnnealingWarmRestarts(
-        optimizer, T_0=max(1, total_steps // 3), T_mult=2, eta_min=lr * 0.1,
+        optimizer,
+        T_0=max(1, total_steps // 3),
+        T_mult=2,
+        eta_min=lr * 0.1,
     )
     scheduler = SequentialLR(optimizer, [warmup_sched, restart_sched], milestones=[warmup_steps])
 
@@ -67,7 +71,9 @@ def build_optimizer_and_schedulers(
         swa_model = torch.optim.swa_utils.AveragedModel(model)
         swa_lr_val = swa_lr or lr * 0.5
         swa_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=actual_epochs - swa_start, eta_min=swa_lr_val,
+            optimizer,
+            T_max=actual_epochs - swa_start,
+            eta_min=swa_lr_val,
         )
 
     return dict(
@@ -99,6 +105,8 @@ def build_swa_components(
     swa_model = torch.optim.swa_utils.AveragedModel(model)
     swa_lr_val = swa_lr or lr * 0.5
     swa_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=actual_epochs - swa_start, eta_min=swa_lr_val,
+        optimizer,
+        T_max=actual_epochs - swa_start,
+        eta_min=swa_lr_val,
     )
     return swa_model, swa_scheduler
