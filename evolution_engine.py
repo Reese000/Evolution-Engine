@@ -3634,6 +3634,10 @@ class EvolutionEngine:
             return False
         if self.champion_level >= len(LEVELS) - 1:
             return False
+        # Bisection: EE_MAX_LEVEL caps curriculum advancement
+        _max_level = int(os.environ.get("EE_MAX_LEVEL", "999"))
+        if self.champion_level >= _max_level:
+            return False
 
         # Check if stalled long enough
         if self.generations_stalled >= self.config.curriculum_stall_threshold:

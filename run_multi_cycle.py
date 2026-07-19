@@ -18,8 +18,18 @@ Usage:
 
 from __future__ import annotations
 
+# R50: Enable faulthandler to capture faulting stack on ACCESS_VIOLATION
+import faulthandler as _faulthandler
+
 # v13: CUDA memory management for crash-resilient long runs
 import os
+
+_FAULT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crash_fault.log")
+try:
+    _fault_file = open(_FAULT_LOG, "w")
+    _faulthandler.enable(file=_fault_file)
+except Exception:
+    pass
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:128")
 import argparse
@@ -1205,6 +1215,12 @@ def _make_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--retrain-max-per-level", type=int, default=None, help="Max recurrent examples per curriculum level"
+    )
+    parser.add_argument(
+        "--max-level",
+        type=int,
+        default=None,
+        help="Cap curriculum level for bisection experiments (e.g. --max-level 25)",
     )
     parser.add_argument(
         "--retrain-model-size",
