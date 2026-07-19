@@ -879,6 +879,21 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
             train_mod.train(**train_kwargs)
             retrain_ok = True
             log(f"  Cycle {cycle}: In-process training completed successfully")
+            # R49: CUDA cleanup after in-process retrain to prevent
+            # PrefixGenerator init failure in next cycle's evolution.
+            # Retrain leaves CUDA tensors in memory; without cleanup,
+            # the next cycle's PrefixGenerator model.to(cuda) triggers
+            # "device-side assert" (CUDA kernel assertion).
+            try:
+                import gc as _gc
+
+                import torch as _torch
+
+                _gc.collect()
+                _torch.cuda.empty_cache()
+                _torch.cuda.reset_peak_memory_stats()
+            except Exception:
+                pass
         except RuntimeError as cuda_err:
             cuda_err_str = str(cuda_err)
             cudagraph_err = "CUDAGraph" in cuda_err_str or "cudagraph" in cuda_err_str.lower()
