@@ -277,12 +277,14 @@ def supervisor_main() -> int:
         return 1
 
     # R51: Pre-flight VRAM check — abort if not enough free VRAM
-    vram_ok, vram_msg = check_vram_free(min_gb=9.0)
+    # EE_VRAM_MIN_GB overrides (for experiments on dirty VRAM)
+    vram_min = float(os.environ.get("EE_VRAM_MIN_GB", "9.0"))
+    vram_ok, vram_msg = check_vram_free(min_gb=vram_min)
     if not vram_ok:
         log(f"ABORTING: {vram_msg}")
         log("Kill orphaned CUDA processes or reboot, then retry.")
         return 1
-    log(f"  VRAM check: {vram_msg}")
+    log(f"  VRAM check: {vram_msg} (threshold={vram_min}GB)")
 
     # Kill any orphaned EE child processes from previous runs
     killed = kill_ee_subtree()
