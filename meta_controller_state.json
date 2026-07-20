@@ -1,193 +1,63 @@
 {
-  "best_fitness": 583.3785871577936,
-  "best_level": 13,
-  "best_val_loss": 0.0446,
-  "cycles_since_fitness_improvement": 37,
-  "cycles_since_level_up": 36,
+  "best_fitness": 356.9939998990586,
+  "best_level": 4,
+  "best_val_loss": 0.2024,
+  "cycles_since_fitness_improvement": 0,
+  "cycles_since_level_up": 2,
   "recovery_mode": false,
   "recovery_cycles_remaining": 0,
-  "last_stagnation": "level_stalled",
-  "total_gated": 50,
+  "last_stagnation": "normal",
+  "total_gated": 5,
   "total_rollbacks": 0,
-  "total_cycles_observed": 10,
+  "total_cycles_observed": 5,
   "_consecutive_none_val_loss": 0,
   "last_5_cycles": [
     {
-      "cycle": 46,
-      "fitness": 489.681578364288,
-      "level": 13,
-      "val_loss": 0.0465,
+      "cycle": 1,
+      "fitness": 339.89107306551597,
+      "level": 3,
+      "val_loss": 0.26,
       "diversity": 0.3
     },
     {
-      "cycle": 47,
-      "fitness": 498.27108239580554,
-      "level": 13,
-      "val_loss": 0.0462,
+      "cycle": 2,
+      "fitness": 339.892199760716,
+      "level": 3,
+      "val_loss": 0.2024,
       "diversity": 0.3
     },
     {
-      "cycle": 48,
-      "fitness": 493.0589286412512,
-      "level": 13,
-      "val_loss": 0.0464,
+      "cycle": 3,
+      "fitness": 356.9939953228284,
+      "level": 4,
+      "val_loss": 0.2048,
       "diversity": 0.3
     },
     {
-      "cycle": 49,
-      "fitness": 492.565633105246,
-      "level": 13,
-      "val_loss": 0.0464,
+      "cycle": 4,
+      "fitness": 353.65294090138076,
+      "level": 4,
+      "val_loss": 0.2041,
       "diversity": 0.3
     },
     {
-      "cycle": 50,
-      "fitness": 500.88492473118276,
-      "level": 13,
-      "val_loss": 0.047,
+      "cycle": 5,
+      "fitness": 356.9939998990586,
+      "level": 4,
+      "val_loss": 0.2124,
       "diversity": 0.3
     }
   ],
-  "tuning_history": [
-    {
-      "domain": "evolution",
-      "param": "novelty_weight",
-      "old": null,
-      "new": 0.35,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "retrain",
-      "param": "retrain_lr",
-      "old": null,
-      "new": 7.500000000000001e-06,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "evolution",
-      "param": "novelty_weight",
-      "old": null,
-      "new": 0.35,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "retrain",
-      "param": "retrain_lr",
-      "old": null,
-      "new": 7.500000000000001e-06,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "evolution",
-      "param": "novelty_weight",
-      "old": null,
-      "new": 0.35,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "retrain",
-      "param": "retrain_lr",
-      "old": null,
-      "new": 7.500000000000001e-06,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "evolution",
-      "param": "novelty_weight",
-      "old": null,
-      "new": 0.35,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "retrain",
-      "param": "retrain_lr",
-      "old": null,
-      "new": 7.500000000000001e-06,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "evolution",
-      "param": "novelty_weight",
-      "old": null,
-      "new": 0.35,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "retrain",
-      "param": "retrain_lr",
-      "old": null,
-      "new": 7.500000000000001e-06,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "evolution",
-      "param": "novelty_weight",
-      "old": null,
-      "new": 0.35,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "retrain",
-      "param": "retrain_lr",
-      "old": null,
-      "new": 7.500000000000001e-06,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "evolution",
-      "param": "novelty_weight",
-      "old": null,
-      "new": 0.35,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "retrain",
-      "param": "retrain_lr",
-      "old": null,
-      "new": 7.500000000000001e-06,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "evolution",
-      "param": "novelty_weight",
-      "old": null,
-      "new": 0.35,
-      "reason": "stagnation: level_stalled"
-    },
-    {
-      "domain": "retrain",
-      "param": "retrain_lr",
-      "old": null,
-      "new": 7.500000000000001e-06,
-      "reason": "stagnation: level_stalled"
-    }
-  ],
-  "_best_val_loss": 0.0446,
-  "_gated_count": 50,
+  "tuning_history": [],
+  "_best_val_loss": 0.2024,
+  "_gated_count": 5,
   "_rollback_count": 0,
   "_compound_stall_counter": 0,
-  "_fitness_momentum": -88.08249875039247,
+  "_fitness_momentum": 1.8124598289316596,
   "_best_fitness_at_last_tune": -Infinity,
-  "_last_stagnation_state": "level_stalled",
-  "_consecutive_stagnation_counter": 50,
-  "_state_ring": [
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled",
-    "level_stalled"
-  ],
-  "last_level": 13,
-  "best_champion_words": 30
+  "_last_stagnation_state": "",
+  "_consecutive_stagnation_counter": 0,
+  "_state_ring": [],
+  "last_level": 4,
+  "best_champion_words": 7
 }
