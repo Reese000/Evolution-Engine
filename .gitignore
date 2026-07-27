@@ -31,6 +31,8 @@ node_modules/
 # Python caches
 .mypy_cache/
 .pytest_cache/
+.benchmarks/
+*.egg-info/
 
 # Claude
 .claude/

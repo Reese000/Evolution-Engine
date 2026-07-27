@@ -4,6 +4,8 @@ A self-evolving machine-code AI that continuously improves its ability to genera
 
 The system combines an evolutionary algorithm with a transformer-based code generator. A champion program is maintained and iteratively improved through mutation and selection. A transformer model learns from champion traces to generate increasingly complex programs across a 12-level curriculum. A meta-controller orchestrates the entire process, tuning hyperparameters in real-time and detecting stagnation or regression.
 
+> **Architecture origin:** This project is the production implementation of the design documents and simulation prototypes in the companion repo [SelfEvolving-MachineCode-AI](https://github.com/Reese000/SelfEvolving-MachineCode-AI). That repo contains the project constitution, TinyVM-SIM simulation, and milestone-by-milestone blueprints. This repo is the living system.
+
 ## Architecture
 
 The system has four major components:
@@ -85,6 +87,37 @@ Evolution Engine/
 3. **Meta-Control**: Between cycles, the meta-controller analyzes telemetry to detect stagnation, regression, or diversity collapse. It adjusts retrain learning rate, evolution strategy weights, population size, and mutation rates. Checkpoint gating prevents accepting regressed models.
 
 4. **Prefix-Guided Generation**: At higher curriculum levels, the MODEL_GUIDED strategy uses the transformer to generate program continuations from champion prefixes, replacing blind mutation with learned generation.
+
+## Verification Status (as of July 2026)
+
+### Benchmarks
+
+| Metric | Result | Method |
+|--------|--------|--------|
+| Feature benchmarks | **5/5 passed** | `benchmarks/verify_v13_features.py` — MG scheduler, temperature annealing, tournament selection with elitism, MG ratio, full evolution cycle |
+| Average fitness/generation vs baseline | **5.3× faster** | `benchmarks/verify_improvements.py` |
+| Per-generation speed | **1.6× faster** | `benchmarks/verify_improvements.py` |
+| Test suite | **1321/1321 passing** | `python -m pytest tests/ -v` (Jul 17 adversarial audit: 1373 passed) |
+
+### Verified-But-Not-Yet-Activated Fixes
+
+The following fixes have been **verified as correct in isolation** but require a restart of the autonomous evolution cycle to actually activate in the running system:
+
+| Fix | What it does | Activation |
+|-----|-------------|------------|
+| SEP-as-EOS | Fixes end-of-sequence handling in model-guided generation | Requires new model checkpoint |
+| EBREAK | Proper halt instruction at program end | Requires champion restart |
+| Task score gate | Prevents accepting degenerate programs that pass fewer levels | Requires MetaController restart |
+| Checkpoint chain | Better checkpoint management with cycle-specific files | Requires checkpoint dir reset |
+| LR cap | Prevents learning rate from growing unboundedly during retrain | Requires retrain restart |
+
+**Status:** The fixes are merged into the codebase and all tests pass, but the engine was last started before these changes landed. A fresh `python autonomous_runner.py --resume` will activate them.
+
+### Honest Caveats
+
+- The adversarial audit (Jul 17, 2026) found that `val_loss` has been null across all 1,534 cycles — the retrain loop's training signal was never realized. The data path fixes (merged but not yet cycled) should resolve this on next restart.
+- Many test files in `tests/test_round*.py` are round-specific regression tests that may pass trivially. The core integration tests (`test_integration.py`, `test_e2e_smoke.py`, `test_phase8_production.py`) provide the real regression safety net.
+- GPU acceleration requires CUDA (CuPy + RTX 4070 Ti); CPU mode works but is significantly slower for batch evaluation.
 
 ## Curriculum Levels
 
