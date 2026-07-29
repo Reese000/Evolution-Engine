@@ -610,10 +610,20 @@ class MAPElitesArchive:
             quality_weighted_uniformity — the overall diversity score
             that accounts for both spatial coverage and the quality of
             programs filling that space
+          - quality_weighted_shannon_entropy: Shannon entropy over a
+            fitness-weighted probability distribution across occupied
+            bins.  Each bin's weight equals the fitness of its occupant,
+            so high-quality bins contribute more to the entropy.  Normalised
+            to [0.0, 1.0] where 1.0 = perfectly even quality-weighted
+            spread across all occupied bins.
+          - quality_weighted_illumination_diversity: coverage_ratio *
+            quality_weighted_shannon_entropy — combines spatial coverage
+            with the quality-aware information-theoretic spread metric.
 
         Returns a dict with coverage_ratio, centroid_distance, uniformity,
-        overall_diversity_score, quality_weighted_uniformity, and
-        quality_weighted_diversity.
+        overall_diversity_score, quality_weighted_uniformity,
+        quality_weighted_diversity, quality_weighted_shannon_entropy, and
+        quality_weighted_illumination_diversity.
         """
         total = self.bins * self.bins
         if total == 0:
@@ -624,6 +634,8 @@ class MAPElitesArchive:
                 "overall_diversity_score": 0.0,
                 "quality_weighted_uniformity": 0.0,
                 "quality_weighted_diversity": 0.0,
+                "quality_weighted_shannon_entropy": 0.0,
+                "quality_weighted_illumination_diversity": 0.0,
             }
 
         occupied_count = self._occupied
@@ -721,6 +733,37 @@ class MAPElitesArchive:
         #     of behaviour space contribute more to the overall score.
         quality_weighted_diversity = coverage_ratio * quality_weighted_uniformity
 
+        # (f) Quality-weighted Shannon entropy: weight each occupied bin's
+        #     contribution to the probability distribution by its fitness,
+        #     so high-quality bins dominate the entropy calculation.
+        #     P(cell_i) = fitness_i / sum(fitness_j) for all occupied j.
+        #     Then H = -sum(P * log2(P)), normalised by log2(N_occupied)
+        #     so the result is in [0.0, 1.0].
+        quality_weighted_shannon_entropy = 0.0
+        occupied_fitnesses: list[float] = []
+        for idx, cell in enumerate(self._grid):
+            if cell is not None:
+                occupied_fitnesses.append(cell["fitness"])
+
+        if occupied_fitnesses:
+            total_fitness = sum(occupied_fitnesses)
+            if total_fitness > 0:
+                qw_probs = [f / total_fitness for f in occupied_fitnesses]
+                qw_entropy = 0.0
+                for p in qw_probs:
+                    if p > 0:
+                        qw_entropy -= p * math.log2(p)
+                # Normalise by maximum possible entropy (uniform distribution)
+                n_occupied = len(occupied_fitnesses)
+                max_qw_entropy = math.log2(n_occupied) if n_occupied > 1 else 0.0
+                quality_weighted_shannon_entropy = (
+                    qw_entropy / max_qw_entropy if max_qw_entropy > 0 else 0.0
+                )
+
+        quality_weighted_illumination_diversity = (
+            coverage_ratio * quality_weighted_shannon_entropy
+        )
+
         return {
             "coverage_ratio": coverage_ratio,
             "centroid_distance": centroid_distance,
@@ -728,6 +771,8 @@ class MAPElitesArchive:
             "overall_diversity_score": overall_diversity_score,
             "quality_weighted_uniformity": quality_weighted_uniformity,
             "quality_weighted_diversity": quality_weighted_diversity,
+            "quality_weighted_shannon_entropy": quality_weighted_shannon_entropy,
+            "quality_weighted_illumination_diversity": quality_weighted_illumination_diversity,
         }
 
     def clear(self) -> None:

@@ -3409,10 +3409,55 @@ class EvolutionEngine:
         # reactive decisions take precedence over time-based bias).
         # Skipped for unsolved levels (9-11) to avoid conflicting with
         # the dedicated perturbation_capped override for those levels.
-        try:
-            _cycle_progress = self.current_generation / max(self.config.max_generations, 1)
-        except Exception:
-            pass
+        if self.champion_level not in self._unsolved_levels_set:
+            try:
+                # Skip cycle-phase bias at generation 0: no meaningful
+                # phase exists until the cycle has actually progressed.
+                if self.current_generation > 0:
+                    _cycle_progress = self.current_generation / max(
+                        self.config.max_generations, 1
+                    )
+                    # Only apply cycle-phase bias when no high-priority reactive
+                    # override (plateau=4, mutation-stats=3) is active. These
+                    # reactive decisions are more contextually accurate than a
+                    # blind time-based bias.
+                    if override_priority < 3:
+                        if _cycle_progress <= 0.3:
+                            # Early phase: bias toward exploration strategies
+                            # to discover new solution regions.
+                            _explore_pool = [
+                                s for s in MutationStrategy
+                                if s.value in (
+                                    'GROW', 'PERTURBATION_CAPPED',
+                                    'MODEL_GUIDED', 'HYBRID',
+                                )
+                            ]
+                            if _explore_pool and self.rng.random() < 0.40:
+                                chosen = self.rng.choice(_explore_pool)
+                                self._log(
+                                    f"[Strategy] Cycle-phase early explore: "
+                                    f"progress={_cycle_progress:.2f}, "
+                                    f"chosen={chosen.value}"
+                                )
+                        elif _cycle_progress >= 0.7:
+                            # Late phase: bias toward exploitation strategies
+                            # to refine promising solutions.
+                            _exploit_pool = [
+                                s for s in MutationStrategy
+                                if s.value in (
+                                    'RANDOM', 'TASK_AWARE', 'DIRECTED'
+                                )
+                            ]
+                            if _exploit_pool and self.rng.random() < 0.40:
+                                chosen = self.rng.choice(_exploit_pool)
+                                self._log(
+                                    f"[Strategy] Cycle-phase late exploit: "
+                                    f"progress={_cycle_progress:.2f}, "
+                                    f"chosen={chosen.value}"
+                                )
+                        # Middle phase (0.3 < progress < 0.7): neutral — no adjustment.
+            except Exception:
+                pass
 
         # Unsolved levels 9-11: use higher PERTURBATION_CAPPED probability
         if self.champion_level in self._unsolved_levels_set and self.generations_stalled > 2:
