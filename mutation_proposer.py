@@ -888,6 +888,97 @@ class DirectedMutator:
             "similarity_threshold": DirectedMutator._SIMILARITY_THRESHOLD,
         }
 
+    @staticmethod
+    def get_program_mutation_affinity_by_hash(
+        program_hash: str,
+        top_n: int = 5,
+        similarity_threshold: Optional[float] = None,
+    ) -> List[Tuple[str, float, int]]:
+        """Return mutation strategies ranked by historical success for a program hash.
+
+        This overload accepts a pre-computed program hash (as returned by
+        ``_compute_program_hash``) and uses the cached opcode-category
+        feature vector to find similar programs.  It is functionally
+        equivalent to the program-based version but avoids re-hashing
+        when the caller already has the hash.
+
+        Args:
+            program_hash:          SHA-256 truncated hash of the program
+                                   (as stored in ``_program_mutation_outcomes``).
+            top_n:                 Number of top strategies to return (default 5).
+            similarity_threshold:  Minimum cosine similarity to consider a
+                                   previously-tracked program "similar".
+                                   Defaults to ``_SIMILARITY_THRESHOLD`` (0.7).
+
+        Returns:
+            List of ``(mutation_type, success_rate, total_attempts)`` tuples
+            sorted by ``success_rate`` descending.  Empty list if no data.
+        """
+        if not DirectedMutator._program_mutation_outcomes:
+            return []
+
+        threshold = (
+            similarity_threshold
+            if similarity_threshold is not None
+            else DirectedMutator._SIMILARITY_THRESHOLD
+        )
+
+        query_features = DirectedMutator._program_feature_cache.get(program_hash)
+        if query_features is None:
+            # Hash not in cache — try an exact-match lookup only
+            if program_hash not in DirectedMutator._program_mutation_outcomes:
+                return []
+            type_stats = DirectedMutator._program_mutation_outcomes[program_hash]
+            results: List[Tuple[str, float, int]] = []
+            for prefix, stats in type_stats.items():
+                attempts = stats["attempts"]
+                if attempts < 1.0:
+                    continue
+                rate = stats["successes"] / attempts
+                results.append((prefix, rate, int(attempts)))
+            results.sort(key=lambda x: (x[1], x[2]), reverse=True)
+            return results[:top_n]
+
+        # Aggregate stats from all similar programs
+        aggregated: Dict[str, Dict[str, float]] = {}
+
+        for prog_hash, type_stats in DirectedMutator._program_mutation_outcomes.items():
+            cached_features = DirectedMutator._program_feature_cache.get(prog_hash)
+            if cached_features is None:
+                continue
+
+            sim = DirectedMutator._program_similarity(query_features, cached_features)
+            if sim < threshold:
+                continue
+
+            for prefix, stats in type_stats.items():
+                if prefix not in aggregated:
+                    aggregated[prefix] = {"successes": 0.0, "attempts": 0.0}
+                aggregated[prefix]["successes"] += stats["successes"]
+                aggregated[prefix]["attempts"] += stats["attempts"]
+
+        hash_results: List[Tuple[str, float, int]] = []
+        for prefix, agg in aggregated.items():
+            attempts = agg["attempts"]
+            if attempts < 1.0:
+                continue
+            rate = agg["successes"] / attempts
+            hash_results.append((prefix, rate, int(attempts)))
+
+        hash_results.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        return hash_results[:top_n]
+
+    @staticmethod
+    def get_program_cached_features(program_hash: str) -> Optional[tuple]:
+        """Return the cached opcode-category feature vector for a program hash.
+
+        Returns ``None`` if the hash is not in the feature cache.
+        The feature vector is a tuple of 11 L2-normalised floats
+        representing the program's instruction distribution across
+        the 11 RV32I opcode categories.
+        """
+        return DirectedMutator._program_feature_cache.get(program_hash)
+
     # ── Structural helpers ─────────────────────────────────
 
     @staticmethod
