@@ -4355,6 +4355,14 @@ class EvolutionEngine:
         generalization across difficulty levels. Combined multiplicatively
         with fitness weights and normalized.
 
+        Phase 6: Novelty weighting — weights training examples by how
+        structurally different they are from existing training data.
+        Uses bitwise Hamming distance between each candidate and a
+        cached set of existing training programs (novelty anchors).
+        Novel programs (distant from existing data) contribute more
+        learning signal, while redundant programs are downweighted.
+        Combined multiplicatively with fitness and diversity weights.
+
         Returns True if >= 50 examples accumulated (signal to retrain).
         """
         if not self._last_challengers:
@@ -4529,7 +4537,84 @@ class EvolutionEngine:
             if _w_sum > 0:
                 _weights = [w / _w_sum for w in _weights]
 
-        # Phase 2: Write training examples with fitness+diversity weights
+        # Phase 6: Novelty weighting — weight training examples by how
+        # structurally different they are from existing training data.
+        # Novel programs (far from existing data) contribute more learning
+        # signal; redundant programs are downweighted. Uses cached novelty
+        # anchors (up to 200 existing training programs) and computes
+        # minimum bitwise Hamming distance for each candidate.
+        _novelty_weight_applied = False
+        if _candidates:
+            # Lazily load and cache novelty anchors from the training JSONL
+            if not hasattr(self, '_novelty_anchors'):
+                self._novelty_anchors: list[list[int]] = []
+                self._novelty_anchors_file_size = 0
+
+            try:
+                _current_file_size = os.path.getsize(jsonl_path) if os.path.isfile(jsonl_path) else 0
+            except OSError:
+                _current_file_size = 0
+
+            # Refresh anchors when file grows (avoids stale cache)
+            if _current_file_size > self._novelty_anchors_file_size or not self._novelty_anchors:
+                _MAX_NOVELTY_ANCHORS = 200
+                _new_anchors = []
+                try:
+                    if os.path.isfile(jsonl_path):
+                        with open(jsonl_path) as _nf:
+                            for _nline in _nf:
+                                try:
+                                    _ne = json.loads(_nline)
+                                    _prog_hex = _ne.get("champion_program", [])
+                                    if _prog_hex:
+                                        _prog_words = [int(h, 16) for h in _prog_hex]
+                                        if len(_prog_words) >= 3:
+                                            _new_anchors.append(_prog_words)
+                                            if len(_new_anchors) >= _MAX_NOVELTY_ANCHORS:
+                                                break
+                                except (json.JSONDecodeError, ValueError):
+                                    continue
+                except Exception:
+                    pass
+                self._novelty_anchors = _new_anchors
+                self._novelty_anchors_file_size = _current_file_size
+
+            if self._novelty_anchors:
+                _novelty_scores = []
+                for prog, _fit, _trace, _sha in _candidates:
+                    _min_dist = float('inf')
+                    for _anchor in self._novelty_anchors:
+                        # XOR-based Hamming distance (count differing bits)
+                        _xor_bits = 0
+                        _compare_len = min(len(prog), len(_anchor))
+                        for j in range(_compare_len):
+                            _xor_bits += bin(prog[j] ^ _anchor[j]).count('1')
+                        # Penalize length difference (8 bits per word difference)
+                        _len_diff = abs(len(prog) - len(_anchor))
+                        _total_bits = (_xor_bits + _len_diff * 8) / max(1, len(prog) + len(_anchor))
+                        if _total_bits < _min_dist:
+                            _min_dist = _total_bits
+                    _novelty_scores.append(_min_dist if _min_dist != float('inf') else 0.5)
+
+                # Convert to novelty weights: sqrt scaling to avoid extremes
+                _max_novelty = max(_novelty_scores) if _novelty_scores else 1.0
+                if _max_novelty > 1e-6:
+                    _novelty_ws = [math.sqrt(s / _max_novelty) for s in _novelty_scores]
+                else:
+                    _novelty_ws = [1.0] * len(_novelty_scores)
+                # Floor at 0.1 so known programs aren't fully suppressed
+                _novelty_ws = [max(0.1, w) for w in _novelty_ws]
+
+                # Combine multiplicatively with existing weights
+                if _weights is not None:
+                    for i in range(len(_weights)):
+                        _weights[i] *= _novelty_ws[i]
+                    _w_sum2 = sum(_weights)
+                    if _w_sum2 > 0:
+                        _weights = [w / _w_sum2 for w in _weights]
+                _novelty_weight_applied = True
+
+        # Phase 2: Write training examples with fitness+diversity+novelty weights
         # (levels pre-computed in Phase 3.5 above)
         for i, (prog, challenger_fitness, trace, sha256) in enumerate(_candidates):
             solved_level = _level_data[i][0] if _level_data else self.champion_level
@@ -4549,8 +4634,9 @@ class EvolutionEngine:
                 "task_score": task_score,
                 "timestamp": time.time(),
                 "trace_quality_score": min(1.0, max(0.0, challenger_fitness / 100.0)),
-                # Phase 4: Fitness+diversity training weight (softmax × inverse-freq)
-                # Higher fitness AND underrepresented level → higher weight
+                # Phase 4+6: Fitness+diversity+novelty training weight
+                # (softmax × inverse-freq × novelty_distance)
+                # Higher fitness, underrepresented level, AND novelty → higher weight
                 "training_weight": _weights[i] if _weights else 1.0,
             }
 
@@ -4571,8 +4657,9 @@ class EvolutionEngine:
             self._log(
                 f"Recurrent feedback saved ({self.recurrent_examples_count} total, "
                 f"{len(self._saved_sha256s)} unique, "
-                f"fitness+diversity-weighted={_weights is not None}, "
-                f"levels_covered={_n_levels_found})"
+                f"fitness+diversity+novelty-weighted={_novelty_weight_applied}, "
+                f"levels_covered={_n_levels_found}, "
+                f"novelty_anchors={len(self._novelty_anchors) if hasattr(self, '_novelty_anchors') else 0})"
             )
         if rejected_count > 0:
             self._log(f"Rejected {rejected_count} low-quality traces (fitness/length/trivial)")

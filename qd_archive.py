@@ -126,12 +126,27 @@ class MAPElitesArchive:
     ) -> bool:
         """Attempt to insert a solution into the archive.
 
-        The solution replaces the incumbent of its cell when its fitness
-        exceeds a freshness-adjusted threshold.  Stale cells have a
-        reduced effective fitness (up to 30% lower), making them easier
-        to replace.  Fresh cells retain full protection.  Returns
-        ``True`` when a cell was added or replaced (i.e. the archive
-        changed).
+        Uses a composite fitness-and-freshness replacement strategy:
+
+        * **Coverage-adaptive staleness decay** — the freshness discount
+          scales with archive coverage.  A nearly-full archive (coverage
+          > 90 %) aggressively recycles stale entries to promote turnover;
+          a sparse archive (< 30 %) is conservative so that early
+          discoveries aren't prematurely evicted.
+
+        * **Minimum improvement margin** — fresh incumbents require a
+          meaningful improvement to be displaced; stale incumbents can
+          be replaced by marginal gains.  This prevents "churn" in
+          recently-populated cells while still allowing progress in
+          frozen regions.
+
+        * **Diversity-aware protection** — cells whose program history
+          contains many unique programs are slightly easier to replace,
+          since the archive has already captured their diversity
+          contribution.
+
+        Returns ``True`` when a cell was added or replaced (i.e. the
+        archive changed).
         """
         idx = self._cell_index(descriptor)
         if idx is None:
@@ -159,23 +174,47 @@ class MAPElitesArchive:
             self._cell_program_history.setdefault(idx, []).append(prog_hash)
             return True
 
-        # Cell occupied — use freshness-adjusted replacement strategy.
-        # Stale cells with low fitness should be replaced first;
-        # fresh cells with high fitness should be protected.
-        # Compute cell age in terms of archive-wide update events.
-        cell_age = max(0, self._addition_counter - self._cell_last_updated[idx])
-        # Staleness score: 0 for freshly updated cells, approaching 1 for
-        # very stale ones.  Exponential decay gives a gentle gradient —
-        # after ~200 updates the cell is ~63% stale, after ~500 it's ~92%.
-        staleness_score = 1.0 - math.exp(-0.005 * cell_age)
-        # Effective incumbent fitness: stale cells have a reduced effective
-        # fitness, making them easier to replace.  The staleness_weight
-        # caps the maximum reduction at 30% so that even the most stale
-        # cell still has some protection against marginally-better programs.
-        staleness_weight = 0.3
-        effective_incumbent_fitness = existing["fitness"] * (1.0 - staleness_weight * staleness_score)
+        # ------------------------------------------------------------------
+        # Cell occupied — composite fitness + freshness replacement strategy
+        # ------------------------------------------------------------------
 
-        if fitness > effective_incumbent_fitness:
+        # (1) Staleness of the incumbent cell.
+        #     Exponential decay: ~63 % stale after 300 archive-wide updates,
+        #     ~95 % stale after 1 000.  Gentler than the old 0.005 rate so
+        #     that moderately-old cells still retain some protection.
+        cell_age = max(0, self._addition_counter - self._cell_last_updated[idx])
+        staleness_score = 1.0 - math.exp(-cell_age / 300.0)
+
+        # (2) Coverage-adaptive staleness weight.
+        #     Low coverage  → keep what we have (max 15 % discount).
+        #     High coverage → prioritise freshness (max 45 % discount).
+        coverage = self._occupied / max(1, self.bins * self.bins)
+        staleness_weight = 0.15 + 0.30 * coverage  # range: [0.15, 0.45]
+
+        # (3) Effective incumbent fitness: stale cells have a reduced
+        #     effective fitness, making them easier to replace.
+        freshness_factor = 1.0 - staleness_weight * staleness_score
+
+        # (4) Diversity-aware adjustment: cells with many unique programs
+        #     have already contributed to the archive's diversity, so they
+        #     carry a slight replaceability bonus (up to 5 %).
+        history = self._cell_program_history.get(idx, [])
+        diversity_ratio = 0.0
+        if len(history) > 1:
+            unique_count = len(set(history))
+            diversity_ratio = unique_count / len(history)
+        diversity_discount = 0.05 * diversity_ratio  # max 5 %
+
+        effective_incumbent = existing["fitness"] * freshness_factor * (1.0 - diversity_discount)
+
+        # (5) Minimum improvement margin: fresh cells demand a meaningful
+        #     improvement to displace the incumbent; stale cells can be
+        #     replaced by marginal gains.  This prevents rapid churn in
+        #     recently-populated cells.
+        min_margin = 0.03 * (1.0 - staleness_score)  # 3 % for fresh → 0 % for stale
+
+        # (6) Replacement decision.
+        if fitness > effective_incumbent * (1.0 + min_margin):
             self._grid[idx] = {
                 "fitness": fitness,
                 "program": list(program),
