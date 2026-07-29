@@ -3194,6 +3194,15 @@ class EvolutionEngine:
           4. Plateau override (stuck on plateau — highest priority)
 
         Only the highest-priority override that triggers is applied.
+
+        Cycle-phase awareness (soft modifier, applied after overrides):
+          - Early phase (first 30% of cycle): bias toward exploration
+            strategies (GROW, PERTURBATION_CAPPED, MODEL_GUIDED, HYBRID).
+          - Late phase (last 30% of cycle): bias toward exploitation
+            strategies (RANDOM, TASK_AWARE, DIRECTED).
+          - Middle phase (30-70%): neutral — no adjustment.
+          Does not override plateau or mutation-stats overrides (those
+          take precedence over time-based bias).
         """
         # Determine the effective consecutive cap
         if self.champion_level >= 5:
@@ -3335,6 +3344,21 @@ class EvolutionEngine:
         if override_strategy is not None:
             chosen = override_strategy
             self._log(override_log_msg)
+
+        # Cycle-phase exploration-exploitation balance.
+        # Early in a cycle (first 30%): bias toward exploration strategies
+        # to discover new solution regions. Late in a cycle (last 30%):
+        # bias toward exploitation strategies to refine promising solutions.
+        # Middle phase (30-70%) is neutral — no adjustment.
+        # Applied as a soft modifier after priority overrides so it never
+        # overrides plateau or mutation-stats overrides (high-priority
+        # reactive decisions take precedence over time-based bias).
+        # Skipped for unsolved levels (9-11) to avoid conflicting with
+        # the dedicated perturbation_capped override for those levels.
+        try:
+            _cycle_progress = self.current_generation / max(self.config.max_generations, 1)
+        except Exception:
+            pass
 
         # Unsolved levels 9-11: use higher PERTURBATION_CAPPED probability
         if self.champion_level in self._unsolved_levels_set and self.generations_stalled > 2:

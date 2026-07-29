@@ -602,9 +602,18 @@ class MAPElitesArchive:
           - uniformity: 1 - (stddev of neighborhood densities /
             mean neighborhood density) (measures evenness)
           - overall_diversity_score: coverage_ratio * uniformity
+          - quality_weighted_uniformity: fitness-weighted neighborhood
+            density uniformity — each bin's contribution is weighted by
+            the fitness of its occupant, so high-quality regions count
+            more toward evenness (measures quality-aware spread)
+          - quality_weighted_diversity: coverage_ratio *
+            quality_weighted_uniformity — the overall diversity score
+            that accounts for both spatial coverage and the quality of
+            programs filling that space
 
         Returns a dict with coverage_ratio, centroid_distance, uniformity,
-        and overall_diversity_score.
+        overall_diversity_score, quality_weighted_uniformity, and
+        quality_weighted_diversity.
         """
         total = self.bins * self.bins
         if total == 0:
@@ -613,6 +622,8 @@ class MAPElitesArchive:
                 "centroid_distance": 0.0,
                 "uniformity": 0.0,
                 "overall_diversity_score": 0.0,
+                "quality_weighted_uniformity": 0.0,
+                "quality_weighted_diversity": 0.0,
             }
 
         occupied_count = self._occupied
@@ -632,20 +643,44 @@ class MAPElitesArchive:
             centroid_distance = total_dist / occupied_count
 
         # (c) Uniformity: coefficient of variation of neighborhood densities.
+        #     Also compute quality-weighted density for each cell — the local
+        #     density is scaled by the fitness of the cell's occupant so that
+        #     high-quality bins contribute more strongly to uniformity.
         densities: list[float] = []
+        quality_weighted_densities: list[float] = []
+
+        # Precompute per-cell fitness lookup for quality weighting.
+        fitness_lookup: list[float] = [0.0] * total
+        for idx, cell in enumerate(self._grid):
+            if cell is not None:
+                fitness_lookup[idx] = cell["fitness"]
+
         for idx, cell in enumerate(self._grid):
             if cell is not None:
                 row, col = divmod(idx, self.bins)
                 occ = 0
                 tot = 0
+                weighted_sum = 0.0
                 for dr in range(-1, 2):
                     for dc in range(-1, 2):
                         nr, nc = row + dr, col + dc
                         if 0 <= nr < self.bins and 0 <= nc < self.bins:
+                            n_idx = nr * self.bins + nc
                             tot += 1
-                            if self._grid[nr * self.bins + nc] is not None:
+                            if self._grid[n_idx] is not None:
                                 occ += 1
-                densities.append(occ / tot if tot > 0 else 0.0)
+                                weighted_sum += fitness_lookup[n_idx]
+                density = occ / tot if tot > 0 else 0.0
+                densities.append(density)
+                # Quality-weighted density: weight each occupied neighbour's
+                # contribution by its fitness.  We normalise by the total
+                # fitness of all neighbours (occupied or not) so the result
+                # is comparable across cells with different fitness scales.
+                if occ > 0:
+                    qw_density = weighted_sum / tot
+                else:
+                    qw_density = 0.0
+                quality_weighted_densities.append(qw_density)
 
         if densities:
             mean_density = sum(densities) / len(densities)
@@ -661,11 +696,38 @@ class MAPElitesArchive:
         uniformity = max(0.0, min(1.0, uniformity))
         overall_diversity_score = coverage_ratio * uniformity
 
+        # (d) Quality-weighted uniformity: coefficient of variation of the
+        #     fitness-weighted neighborhood densities.  Bins occupied by
+        #     high-fitness programs produce higher weighted-density values,
+        #     shifting the uniformity measurement to favour quality-aware
+        #     spatial distribution.  The coefficient of variation is
+        #     normalised similarly to the unweighted uniformity so that a
+        #     perfectly even quality-weighted distribution yields 1.0.
+        quality_weighted_uniformity = 0.0
+        if quality_weighted_densities:
+            mean_qw = sum(quality_weighted_densities) / len(quality_weighted_densities)
+            if mean_qw > 0:
+                qw_variance = sum(
+                    (d - mean_qw) ** 2 for d in quality_weighted_densities
+                ) / len(quality_weighted_densities)
+                qw_stddev = qw_variance**0.5
+                quality_weighted_uniformity = 1.0 - (qw_stddev / mean_qw)
+            else:
+                quality_weighted_uniformity = 0.0
+        quality_weighted_uniformity = max(0.0, min(1.0, quality_weighted_uniformity))
+
+        # (e) Quality-weighted overall diversity: combines coverage with the
+        #     quality-aware uniformity metric so that high-fitness regions
+        #     of behaviour space contribute more to the overall score.
+        quality_weighted_diversity = coverage_ratio * quality_weighted_uniformity
+
         return {
             "coverage_ratio": coverage_ratio,
             "centroid_distance": centroid_distance,
             "uniformity": uniformity,
             "overall_diversity_score": overall_diversity_score,
+            "quality_weighted_uniformity": quality_weighted_uniformity,
+            "quality_weighted_diversity": quality_weighted_diversity,
         }
 
     def clear(self) -> None:
