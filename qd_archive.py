@@ -71,6 +71,10 @@ class MAPElitesArchive:
         # Per-cell freshness timestamps (generation when last updated)
         self._cell_last_updated: list[int] = [0] * (bins * bins)
 
+        # Per-cell program history: maps cell index -> list of program hashes.
+        # Tracks every program that has occupied each cell for diversity analysis.
+        self._cell_program_history: dict[int, list[int]] = {}
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -132,6 +136,10 @@ class MAPElitesArchive:
 
         self._update_bounds(descriptor)
 
+        # Track program hash for diversity measurement (uses hash index
+        # pattern from novelty.py).
+        prog_hash = hash(tuple(program))
+
         existing = self._grid[idx]
         if existing is None:
             # Empty cell — always insert.
@@ -145,6 +153,7 @@ class MAPElitesArchive:
             self._addition_counter += 1
             self._cell_addition_counts[idx] = self._addition_counter
             self._cell_last_updated[idx] = self._addition_counter
+            self._cell_program_history.setdefault(idx, []).append(prog_hash)
             return True
 
         # Cell occupied — replace only if strictly better.
@@ -159,6 +168,7 @@ class MAPElitesArchive:
             self._addition_counter += 1
             self._cell_addition_counts[idx] = self._addition_counter
             self._cell_last_updated[idx] = self._addition_counter
+            self._cell_program_history.setdefault(idx, []).append(prog_hash)
             return True
 
         return False
@@ -400,6 +410,79 @@ class MAPElitesArchive:
             'occupied_cells': occupied,
         }
 
+    def get_cell_program_diversity(self, cell_idx: int) -> dict[str, Any]:
+        """Return the program diversity score for a specific cell.
+
+        Uses the program hash index (``hash(tuple(program))``, matching
+        the approach in ``novelty.py``) to identify unique programs that
+        have occupied the cell over its history.  Diversity is computed as
+        Shannon entropy of the unique-program distribution, normalised to
+        [0.0, 1.0].
+
+        A cell with only one distinct program has diversity 0.0; a cell
+        where every program has been unique has diversity 1.0.
+
+        Parameters
+        ----------
+        cell_idx:
+            Flat grid index (``row * bins + col``).
+
+        Returns
+        -------
+        dict
+            ``diversity``:          normalised Shannon entropy in [0.0, 1.0]
+            ``unique_programs``:    number of distinct program hashes seen
+            ``total_programs``:     total number of programs added to cell
+            ``unique_ratio``:       ``unique_programs / total_programs``
+        """
+        total = self.bins * self.bins
+        if cell_idx < 0 or cell_idx >= total:
+            return {
+                "diversity": 0.0,
+                "unique_programs": 0,
+                "total_programs": 0,
+                "unique_ratio": 0.0,
+            }
+
+        history: list[int] = self._cell_program_history.get(cell_idx, [])
+        if not history:
+            return {
+                "diversity": 0.0,
+                "unique_programs": 0,
+                "total_programs": 0,
+                "unique_ratio": 0.0,
+            }
+
+        total_programs = len(history)
+
+        # Count occurrences of each unique program hash.
+        freq: dict[int, int] = {}
+        for h in history:
+            freq[h] = freq.get(h, 0) + 1
+
+        unique_programs = len(freq)
+        unique_ratio = unique_programs / total_programs
+
+        # Shannon entropy over the frequency distribution, normalised
+        # by log2(unique_count) so the result is in [0.0, 1.0].
+        if unique_programs <= 1:
+            entropy = 0.0
+        else:
+            entropy = 0.0
+            for count in freq.values():
+                p = count / total_programs
+                if p > 0:
+                    entropy -= p * math.log2(p)
+            max_entropy = math.log2(unique_programs)
+            entropy = entropy / max_entropy if max_entropy > 0 else 0.0
+
+        return {
+            "diversity": entropy,
+            "unique_programs": unique_programs,
+            "total_programs": total_programs,
+            "unique_ratio": unique_ratio,
+        }
+
     def get_improvement_velocity(self) -> dict[str, Any]:
         """Track how fast fitness improves per cell using a heuristic.
 
@@ -538,6 +621,7 @@ class MAPElitesArchive:
         self._rebins = 0
         self._addition_counter = 0
         self._cell_addition_counts = [0] * (self.bins * self.bins)
+        self._cell_program_history.clear()
 
     # ------------------------------------------------------------------
     # Persistence
@@ -571,6 +655,7 @@ class MAPElitesArchive:
             "addition_counter": self._addition_counter,
             "cell_addition_counts": list(self._cell_addition_counts),
             "cell_last_updated": self._cell_last_updated,
+            "cell_program_history": {str(k): v for k, v in self._cell_program_history.items()},
         }
 
     @classmethod
@@ -599,6 +684,9 @@ class MAPElitesArchive:
             archive._cell_last_updated = data['cell_last_updated']
         else:
             archive._cell_last_updated = [0] * (archive.bins * archive.bins)
+        # Restore per-cell program history (stored as str keys for JSON compat).
+        saved_history = data.get("cell_program_history", {})
+        archive._cell_program_history = {int(k): list(v) for k, v in saved_history.items()}
         return archive
 
 

@@ -26,6 +26,8 @@ SparseArchive(k_neighbors, novelty_threshold)
     .get_archive_summary() -> dict
     .batch_lookup(programs, current_generation, half_life) -> dict[int, float]
     .get_novelty_stats() -> dict[str, float]
+    .get_novelty_trajectory(program_key) -> list[dict]
+    .get_novelty_distribution_stats() -> dict[str, Any]
     .size -> int
 """
 
@@ -591,6 +593,154 @@ class SparseArchive:
                         decay = math.exp(-0.693 * age / half_life)
                         return base_novelty * decay
         return 0.0
+
+    # ------------------------------------------------------------------
+    # Trajectory & distribution diagnostics
+    # ------------------------------------------------------------------
+
+    def get_novelty_trajectory(self, program_key: list[int]) -> list[dict[str, Any]]:
+        """Return the novelty trajectory for a specific program across generations.
+
+        Scans all archive entries that match *program_key* (by content equality)
+        and returns a list of dicts sorted by generation, each containing:
+
+        - ``generation``: the generation at which the entry was recorded
+        - ``novelty_score``: the k-NN novelty score at the time of that entry
+        - ``metadata``: the full metadata dict for that entry
+
+        This lets callers track whether a program's novelty is increasing or
+        decreasing over time.  An empty list means the program was never
+        recorded in the archive.
+
+        Parameters
+        ----------
+        program_key:
+            The program as a ``list[int]`` of instruction words.
+        """
+        if self.size == 0:
+            return []
+
+        _prog_hash = hash(tuple(program_key))
+        indices = self._prog_hash_index.get(_prog_hash, [])
+        if not indices:
+            return []
+
+        if self._tree_dirty:
+            self._rebuild_tree()
+        if self._tree is None:
+            return []
+
+        trajectory: list[dict[str, Any]] = []
+        k = min(self.k_neighbors, self.size)
+        for idx in indices:
+            if idx >= len(self._entries):
+                continue
+            entry = self._entries[idx]
+            meta = entry[2]
+            stored_prog = meta.get("program") if isinstance(meta, dict) else None
+            if stored_prog is None or stored_prog != program_key:
+                continue
+
+            flat = entry[0]
+            dists, _ = self._tree.query(np.array(flat), k=k)
+            score = float(dists) if k == 1 else float(np.mean(dists))
+
+            generation = meta.get("generation") if isinstance(meta, dict) else None
+            trajectory.append({
+                "generation": generation,
+                "novelty_score": score,
+                "metadata": meta,
+            })
+
+        # Sort by generation (entries without generation go last).
+        trajectory.sort(key=lambda d: (d["generation"] is None, d["generation"] or 0))
+        return trajectory
+
+    def get_novelty_distribution_stats(self) -> dict[str, Any]:
+        """Return comprehensive distribution statistics of archive novelty scores.
+
+        Unlike :meth:`get_novelty_stats` (which focuses on basic percentiles),
+        this method returns additional diagnostics useful for tuning novelty
+        pressure:
+
+        - ``mean``, ``median``, ``std``, ``min``, ``max``: basic moments
+        - ``q10``, ``q25``, ``q75``, ``q90``: decile/percentile spread
+        - ``iqr``: inter-quartile range (Q75 - Q25), measures central spread
+        - ``skewness``: Fisher skewness — positive means long right tail
+        - ``cv``: coefficient of variation (std / mean) — dispersion relative
+          to the mean
+        - ``novelty_pressure``: heuristic string ("high", "moderate", "low")
+          based on the coefficient of variation
+
+        Returns an empty dict if the archive has fewer than 2 entries.
+
+        Returns
+        -------
+        dict[str, Any]
+            Distribution statistics or ``{}`` for degenerate archives.
+        """
+        if self.size < 2:
+            return {}
+
+        if self._tree_dirty:
+            self._rebuild_tree()
+        if self._tree is None:
+            return {}
+
+        k = min(self.k_neighbors, self.size)
+        scores: list[float] = []
+        for entry in self._entries:
+            flat = entry[0]
+            dists, _ = self._tree.query(np.array(flat), k=k)
+            score = float(dists) if k == 1 else float(np.mean(dists))
+            scores.append(score)
+
+        arr = np.array(scores)
+        mean_val = float(np.mean(arr))
+        std_val = float(np.std(arr, ddof=1))  # sample std for n>=2
+        median_val = float(np.median(arr))
+
+        # Percentiles
+        q10 = float(np.percentile(arr, 10))
+        q25 = float(np.percentile(arr, 25))
+        q75 = float(np.percentile(arr, 75))
+        q90 = float(np.percentile(arr, 90))
+
+        # IQR
+        iqr = q75 - q25
+
+        # Skewness (Fisher): E[((X-mean)/std)^3]
+        if std_val > 0:
+            skew = float(np.mean(((arr - mean_val) / std_val) ** 3))
+        else:
+            skew = 0.0
+
+        # Coefficient of variation
+        cv = std_val / mean_val if mean_val > 0 else 0.0
+
+        # Heuristic novelty pressure label
+        if cv < 0.3:
+            pressure = "high"     # Low variance → scores cluster → strong pressure
+        elif cv > 0.8:
+            pressure = "low"      # High variance → scores scattered → weak pressure
+        else:
+            pressure = "moderate"
+
+        return {
+            "mean": mean_val,
+            "median": median_val,
+            "std": std_val,
+            "min": float(np.min(arr)),
+            "max": float(np.max(arr)),
+            "q10": q10,
+            "q25": q25,
+            "q75": q75,
+            "q90": q90,
+            "iqr": iqr,
+            "skewness": skew,
+            "cv": cv,
+            "novelty_pressure": pressure,
+        }
 
     # ------------------------------------------------------------------
     # Serialization

@@ -4180,6 +4180,11 @@ class EvolutionEngine:
         more training signal. Temperature-scaled to concentrate weight on
         the best programs while preserving relative ordering.
 
+        Phase 5: Training data quality validation — filters out
+        zero-length traces (0 executed instructions), error traces
+        (status != 'ok'), and trivial programs (< 3 instructions)
+        to prevent the predictor from learning from garbage data.
+
         Returns True if >= 50 examples accumulated (signal to retrain).
         """
         if not self._last_challengers:
@@ -4245,14 +4250,23 @@ class EvolutionEngine:
             if challenger_fitness <= MIN_FITNESS_FOR_TRACE and self.generations_stalled < 30:
                 rejected_count += 1
                 continue
-            if len(prog) < 2:
+            if len(prog) < 3:
+                continue
+
+            # Phase 5: Training data quality validation
+            # Filter out traces that are zero-length or contain no useful signal.
+            # A zero-length trace means the program executed zero instructions,
+            # giving the predictor nothing to learn from.
+            _trace_instr_count = trace.get('instructions_count', 0)
+            if _trace_instr_count <= 0:
+                rejected_count += 1
                 continue
 
             # Phase 3.3: Size diversity filter — prevent training on programs
             # of similar length to maintain diversity in training data.
-            _instr_count = trace.get('instructions_count', 0)
-            if _instr_count > 0 and hasattr(self, '_saved_size_counts'):
-                _size_bucket = (_instr_count // 5) * 5  # bucket to nearest 5
+            # _instr_count already set by Phase 5 zero-length check above.
+            if _trace_instr_count > 0 and hasattr(self, '_saved_size_counts'):
+                _size_bucket = (_trace_instr_count // 5) * 5  # bucket to nearest 5
                 _total_saved = sum(self._saved_size_counts.values()) if self._saved_size_counts else 0
                 if _total_saved > 20:  # only filter when buffer has enough data
                     _bucket_count = self._saved_size_counts.get(_size_bucket, 0)
@@ -4347,7 +4361,7 @@ class EvolutionEngine:
                 f"fitness-weighted={_weights is not None})"
             )
         if rejected_count > 0:
-            self._log(f"Rejected {rejected_count} low-quality traces " f"(fitness < {MIN_FITNESS_FOR_TRACE})")
+            self._log(f"Rejected {rejected_count} low-quality traces (fitness/length/trivial)")
 
         # Phase 3.3: Quality-based eviction when buffer exceeds limit
         # Evicts lowest-fitness traces (not oldest) to maintain training quality.

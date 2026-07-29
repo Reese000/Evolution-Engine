@@ -61,7 +61,7 @@ class TestSelectEliteDedupAlignment:
         # Patch _refresh_task_instance (not needed)
         engine.task_instance = {"inputs": {}, "expected_output": {"registers": {}}}
 
-        elites, elite_fits = engine._select_elite(programs, results)
+        elites, elite_fits, _idxs = engine._select_elite(programs, results)
 
         # Elites should be unique programs
         seen = set()
@@ -105,7 +105,7 @@ class TestSelectEliteDedupAlignment:
         engine._compute_fitness = lambda prog, trace, eval_budget=None, raw_only=False: float(sum(prog))
         engine.task_instance = {"inputs": {}, "expected_output": {"registers": {}}}
 
-        elites, elite_fits = engine._select_elite(programs, results)
+        elites, elite_fits, _idxs = engine._select_elite(programs, results)
         assert len(elites) <= len(programs), f"Elite count {len(elites)} exceeds population {len(programs)}"
 
 
@@ -231,11 +231,13 @@ class TestCloseLogHandle:
         engine.config = config
         engine.rng = random.Random(42)
         engine._log_file = None
+        engine._log_path_cache = None
+        engine._log_handle_closed = False
         engine.champion = None
         engine.champion_level = 0
         engine.champion_fitness = 0.0
         engine.champion_trace = None
-        engine._raw_task_task_score = 0.0
+        engine._raw_task_score = 0.0
         engine._current_diversity = 0.5
         engine._prefix_generator = None
         engine._external_evolution_params = {}
@@ -298,9 +300,9 @@ class TestRecurrentFeedbackGen0:
         engine.champion_fitness = 0.0
         engine.current_generation = 0
         engine.generations_stalled = 0  # not stalled at all
-        # Program must have 2+ instructions (len(prog) < 2 is skipped)
-        engine._last_challengers = [[0x00100073, 0x00100073]]
-        engine._last_results = [{"status": "ok", "final_regs": {}, "instructions_count": 1}]
+        # Program must have 3+ instructions (len(prog) < 3 is skipped)
+        engine._last_challengers = [[0x00100073, 0x00100073, 0x00100073]]
+        engine._last_results = [{"status": "ok", "final_regs": {}, "instructions_count": 3}]
         engine._last_challenger_fitnesses = [50.0]  # positive fitness
         engine.recurrent_examples_count = 0
         engine._saved_sha256s = {}
@@ -391,7 +393,7 @@ class TestRunPartialSummary:
 
         engine._generate_challengers = failing_challengers
         engine._evaluate_batch = lambda p: [{"status": "ok", "final_regs": {}, "instructions_count": 1} for _ in p]
-        engine._select_elite = lambda c, r: ([c[0]], [0.0])
+        engine._select_elite = lambda c, r: ([c[0]], [0.0], [0])
         engine._evaluate_batch_detailed = lambda p: [
             {"status": "ok", "final_regs": {}, "instructions_count": 1} for _ in p
         ]
