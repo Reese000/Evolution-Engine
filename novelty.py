@@ -662,13 +662,22 @@ class SparseArchive:
         current_generation: int,
         half_life: int = 500,
     ) -> float:
-        """Compute novelty with exponential time-decay.
+        """Compute novelty with exponential time-decay and archive-diversity weighting.
 
         Uses hash index for O(1) program lookup instead of O(N) linear scan.
 
         The decay rate is adaptive based on the program's fitness:
         - High-fitness programs decay slower (worth preserving novel)
         - Low-fitness programs decay faster (less important)
+
+        The novelty score is also weighted by archive diversity:
+        - Diverse archive (high Shannon entropy) → lower novelty weight,
+          because many unique programs already exist and novelty is less
+          critical for maintaining population variety.
+        - Homogeneous archive (low entropy) → higher novelty weight,
+          because programs are similar and novelty pressure is needed to
+          push exploration into under-represented regions of behaviour
+          space.
         """
         _prog_hash = hash(tuple(program))
         indices = self._prog_hash_index.get(_prog_hash, [])
@@ -696,7 +705,16 @@ class SparseArchive:
 
                         effective_half_life = half_life * fitness_multiplier
                         decay = math.exp(-0.693 * age / effective_half_life)
-                        return base_novelty * decay
+
+                        # Archive-diversity weighting.
+                        # get_diversity_score() returns Shannon entropy in [0, 1].
+                        # diversity_weight maps entropy → novelty importance:
+                        #   entropy=0 (homogeneous) → weight=1.0 (max pressure)
+                        #   entropy=1 (diverse)    → weight=0.1 (floor, never zero)
+                        diversity = self.get_diversity_score()
+                        diversity_weight = max(0.1, 1.0 - diversity)
+
+                        return base_novelty * decay * diversity_weight
         return 0.0
 
     # ------------------------------------------------------------------
