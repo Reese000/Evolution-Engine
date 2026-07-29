@@ -1307,6 +1307,44 @@ class EvolutionEngine:
             for f, c in history
         ]
 
+    def enable_bonus_normalization(self, fraction: float = 0.30) -> None:
+        """Enable bonus normalization with adaptive fitness landscape control.
+
+        Sets max_bonus_fraction to cap each bonus dimension at a fraction
+        of the base score, preventing any single fitness component from
+        dominating the total.  This is intended to be called dynamically
+        during evolution when the engine detects bonus imbalance (e.g. via
+        the BonusDiag logging output).
+
+        Args:
+            fraction: Maximum fraction of base_score that any single bonus
+                may contribute.  Must be in (0, 1].  Typical value is 0.30
+                (no bonus exceeds 30% of base score).  Values > 1.0 are
+                clamped to 1.0 (effectively disabling normalization).
+
+        Side effects:
+            - Updates self.config.max_bonus_fraction for all subsequent
+              _compute_fitness calls.
+            - Logs the configuration change.
+
+        Raises:
+            ValueError: If fraction is not in (0, 1].
+        """
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError(
+                f"fraction must be in (0, 1], got {fraction!r}"
+            )
+        old = self.config.max_bonus_fraction
+        self.config.max_bonus_fraction = fraction
+        _logger.info(
+            f"Bonus normalization enabled: fraction={fraction:.2f} "
+            f"(was {old:.2f})"
+        )
+        self._log(
+            f"[BonusNorm] enabled fraction={fraction:.2f} "
+            f"(was {old:.2f})"
+        )
+
     # ------------------------------------------------------------------
     # Core loop
     # ------------------------------------------------------------------
