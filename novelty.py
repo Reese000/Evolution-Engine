@@ -30,6 +30,7 @@ SparseArchive(k_neighbors, novelty_threshold)
     .get_novelty_distribution_stats() -> dict[str, Any]
     .record_distribution_snapshot(generation) -> dict[str, Any]
     .get_novelty_distribution_history(max_snapshots) -> list[dict[str, Any]]
+    .track_distribution_evolution(window) -> dict[str, Any]
     .get_novelty_impact_correlation() -> dict[str, Any]
     .size -> int
 """
@@ -662,6 +663,135 @@ class SparseArchive:
         if max_snapshots > 0:
             return populated[-max_snapshots:]
         return list(populated)
+
+    # ------------------------------------------------------------------
+    # Distribution evolution tracking
+    # ------------------------------------------------------------------
+
+    # Metrics contributing to composite score: (key, weight, direction).
+    # direction=+1 means upward slope is "improving"; -1 means upward
+    # slope is "declining".
+    _EVOLUTION_METRICS: list[tuple[str, float, int]] = [
+        ("mean",     0.30, +1),
+        ("median",   0.20, +1),
+        ("std",      0.15, +1),
+        ("cv",       0.15, -1),
+        ("iqr",      0.10, +1),
+        ("skewness", 0.10, -1),
+    ]
+
+    @staticmethod
+    def _metric_slope(
+        values: list[float], gens: np.ndarray,
+    ) -> tuple[float, str]:
+        """Normalised linear slope of *values* over *gens*.
+
+        Returns ``(norm_slope, direction)`` where direction is one of
+        ``"increasing"``, ``"decreasing"``, or ``"flat"``.
+        """
+        arr = np.array(values)
+        valid = ~np.isnan(arr)
+        if valid.sum() < 2:
+            return 0.0, "flat"
+        g, y = gens[valid], arr[valid]
+        if g[-1] == g[0]:
+            return 0.0, "flat"
+        g_norm = (g - g[0]) / (g[-1] - g[0])
+        raw_slope = float(np.polyfit(g_norm, y, 1)[0])
+        y_range = float(np.max(y) - np.min(y))
+        ns = raw_slope / y_range if y_range > 0 else 0.0
+        d = "increasing" if ns > 0.05 else ("decreasing" if ns < -0.05 else "flat")
+        return ns, d
+
+    def track_distribution_evolution(
+        self,
+        window: int = 0,
+    ) -> dict[str, Any]:
+        """Analyze how the novelty distribution evolves and classify the trend.
+
+        Computes linear-trend slopes for key distribution metrics across
+        recorded snapshots and produces a composite score classifying
+        evolution as **improving** (>+0.15), **declining** (<-0.15),
+        or **stable**.
+
+        Parameters
+        ----------
+        window:
+            If > 0, only the last *window* snapshots are used.
+            ``0`` (default) uses all available data.
+
+        Returns
+        -------
+        dict[str, Any]
+            Keys: ``trend``, ``composite_score``, ``confidence``,
+            ``n_snapshots``, ``n_generations``, ``metrics``,
+            ``interpretation``, ``recommendation``.
+
+        Returns an empty dict when fewer than 2 populated snapshots exist.
+        """
+        populated = [s for s in self._distribution_history if s.get("populated")]
+        if window > 0:
+            populated = populated[-window:]
+        if len(populated) < 2:
+            return {}
+
+        gens = np.array([s["generation"] for s in populated], dtype=float)
+        gen_span = int(gens[-1] - gens[0])
+
+        # Per-metric slope analysis
+        metric_trends: dict[str, dict[str, Any]] = {}
+        weighted_slopes: list[float] = []
+        total_weight = 0.0
+        for key, weight, direction in self._EVOLUTION_METRICS:
+            vals = [float(s.get(key, float("nan"))) for s in populated]
+            ns, d = self._metric_slope(vals, gens)
+            adj = ns * direction
+            metric_trends[key] = {
+                "slope": round(ns, 6), "direction": d,
+                "adjusted_slope": round(adj, 6),
+            }
+            weighted_slopes.append(weight * adj)
+            total_weight += weight
+
+        composite = sum(weighted_slopes) / total_weight if total_weight else 0.0
+        composite = max(-1.0, min(1.0, composite))
+        trend = "improving" if composite > 0.15 else ("declining" if composite < -0.15 else "stable")
+
+        n = len(populated)
+        confidence = "high" if n >= 10 and gen_span >= 10 else ("medium" if n >= 5 else "low")
+
+        improving = [k for k, v in metric_trends.items() if v["adjusted_slope"] > 0.05]
+        declining = [k for k, v in metric_trends.items() if v["adjusted_slope"] < -0.05]
+
+        interp = (
+            f"Novelty distribution trend is {trend} (composite score: "
+            f"{composite:+.3f}) across {n} snapshots spanning {gen_span} generations."
+        )
+        if improving:
+            interp += f" Improving metrics: {', '.join(improving)}."
+        if declining:
+            interp += f" Declining metrics: {', '.join(declining)}."
+
+        recs = {
+            "improving": (
+                "Novelty pressure is effective -- continue current strategy. "
+                "Monitor for diminishing returns as the archive matures."),
+            "declining": (
+                "Novelty scores are falling. Consider increasing mutation "
+                "rate, widening the behavioural descriptor space, or "
+                "adjusting the novelty threshold to maintain exploration."),
+            "stable": (
+                "Novelty pressure is stable. No immediate action needed. "
+                "If diversity stagnates, consider periodic resets or "
+                "adaptive threshold adjustments."),
+        }
+
+        return {
+            "trend": trend, "composite_score": round(composite, 4),
+            "confidence": confidence, "n_snapshots": n,
+            "n_generations": gen_span, "metrics": metric_trends,
+            "interpretation": interp, "recommendation": recs[trend],
+        }
 
     # ------------------------------------------------------------------
     # Capacity management & decayed novelty
