@@ -37,7 +37,7 @@ _TIMEOUT_STATUSES: frozenset[str] = frozenset(("timeout",))
 # Phase 3: Training signal quality thresholds
 # Only save traces with fitness above this threshold to the recurrent buffer.
 # Prevents training on low-quality/crash traces that contaminate the model.
-MIN_FITNESS_FOR_TRACE: float = 0.0
+MIN_FITNESS_FOR_TRACE: float = 0.1
 # Maximum entries in recurrent_data.jsonl before quality-based eviction kicks in.
 # Evicts lowest-fitness traces when exceeded.
 MAX_RECURRENT_ENTRIES: int = 500
@@ -2033,6 +2033,14 @@ class EvolutionEngine:
 
         base_score = reg_match * 100.0 - bloat_penalty + exec_credit + solved_bonus
 
+        # D1: Loop structure bonus for L5+ tasks (rewards structural progress)
+        loop_bonus = 0.0
+        if self.champion_level >= 5 and status == "ok" and instr_count > 0:
+            n_loops = self._count_backward_branches(program)
+            if n_loops > 0:
+                loop_bonus = min(5.0, n_loops * 2.0)  # up to 5 points for loops
+        base_score += loop_bonus
+
         # ── Level advancement bonus (PRIMARY signal) ────────────────────
         # Each curriculum level adds 25 points. This ensures level 17
         # always scores higher than level 0, even with fewer instructions.
@@ -2235,11 +2243,18 @@ class EvolutionEngine:
                         # Linear scaling: 1.0x at stall=10, 2.5x at stall=50+
                         stall_multiplier = min(2.5, 1.0 + 0.0375 * (stall - 10))
                         qd_weight *= stall_multiplier
-                    # R32: Coverage multiplier -- boost when coverage is low
+                    # R32: Illumination diversity multiplier — uses both coverage AND uniformity
+                    # to scale the QD bonus. A well-filled, uniform archive gets less bonus
+                    # (most niches explored) while a sparse, uneven archive gets more.
                     cov = self._qd_coverage
-                    if cov < 0.20:
-                        # Low coverage: up to 1.5x boost (linear from 1.0 at 20% to 1.5 at 0%)
-                        qd_weight *= 1.0 + 2.5 * (0.20 - cov)
+                    try:
+                        _illum = self.qd_archive.get_illumination_diversity()
+                        _div_score = _illum.get('overall_diversity_score', cov)
+                    except Exception:
+                        _div_score = cov
+                    if _div_score < 0.20:
+                        # Low diversity: up to 1.5x boost
+                        qd_weight *= 1.0 + 2.5 * (0.20 - _div_score)
                     fitness += qd_bonus * qd_weight
             except (TypeError, ValueError, RuntimeError):
                 pass
