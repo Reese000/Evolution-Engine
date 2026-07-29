@@ -694,6 +694,9 @@ class EvolutionConfig:
     # to prevent any single fitness dimension from dominating the total.
     # 0.30 = no single bonus can contribute more than 30% of the base score.
     max_bonus_fraction: float = 1.0
+    # How often (in generations) to log bonus distribution when normalization
+    # is active. 0 = never log; 50 = log every 50th generation.
+    bonus_log_interval: int = 50
 
     diversity_threshold: float = 0.3
     diversity_inject_ratio: float = 0.1
@@ -2291,6 +2294,44 @@ class EvolutionEngine:
         graduated_bonus = 0.0
         if reg_match >= bonus_threshold:
             graduated_bonus = 50.0 * (reg_match - bonus_threshold) / (1.0 - bonus_threshold)
+
+        # ── Bonus distribution diagnostics ──────────────────────────────
+        # When bonus normalization is active (max_bonus_fraction < 1.0),
+        # log the per-dimension bonus breakdown every N generations so we
+        # can diagnose which bonuses dominate and whether normalization is
+        # actually needed.  Disabled by default (interval=50, fraction=1.0)
+        # so there is zero cost unless normalization is opted into.
+        _mbf = getattr(self.config, "max_bonus_fraction", 1.0)
+        _blog_int = getattr(self.config, "bonus_log_interval", 50)
+        if _mbf < 1.0 and _blog_int > 0 and self.current_generation % _blog_int == 0:
+            _gen = self.current_generation
+            _names = [
+                "loop", "mem", "div", "level",
+                "efficiency", "multi_task", "time_credit", "smc",
+                "graduated",
+            ]
+            _vals = [
+                loop_bonus, mem_bonus, div_bonus, level_bonus,
+                efficiency_score, multi_task_score, time_credit, smc_bonus,
+                graduated_bonus,
+            ]
+            _cap = _mbf * _base_for_norm
+            _parts = []
+            _capped_names = []
+            for _n, _v in zip(_names, _vals):
+                _parts.append(f"{_n}={_v:.2f}")
+                if _v > _cap:
+                    _capped_names.append(_n)
+            _raw_total = sum(_vals)
+            _norm_total = sum(min(_v, _cap) for _v in _vals)
+            _capped_str = ",".join(_capped_names) if _capped_names else "none"
+            self._log(
+                f"[BonusDiag] gen={_gen} base={base_score:.2f} "
+                f"fraction={_mbf:.2f} cap={_cap:.2f} "
+                f"capped=[{_capped_str}] "
+                f"raw_total={_raw_total:.2f} norm_total={_norm_total:.2f} "
+                f"{' '.join(_parts)}"
+            )
 
         # ── Bonus normalization ──────────────────────────────────────────
         # Cap each bonus at max_bonus_fraction of base_score to prevent

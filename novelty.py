@@ -576,6 +576,10 @@ class SparseArchive:
         """Compute novelty with exponential time-decay.
 
         Uses hash index for O(1) program lookup instead of O(N) linear scan.
+
+        The decay rate is adaptive based on the program's fitness:
+        - High-fitness programs decay slower (worth preserving novel)
+        - Low-fitness programs decay faster (less important)
         """
         _prog_hash = hash(tuple(program))
         indices = self._prog_hash_index.get(_prog_hash, [])
@@ -590,7 +594,19 @@ class SparseArchive:
                     if program_generation is not None and flat_descriptor is not None:
                         base_novelty = self._k_nn_distance(flat_descriptor)
                         age = current_generation - int(program_generation)
-                        decay = math.exp(-0.693 * age / half_life)
+
+                        # Adaptive decay: fitness modulates the effective half-life.
+                        # fitness=0 -> multiplier=0.25  (fast decay)
+                        # fitness=1 -> multiplier=2.0   (slow decay)
+                        fitness = meta.get("fitness") if isinstance(meta, dict) else None
+                        if fitness is not None and isinstance(fitness, (int, float)):
+                            clamped = max(0.0, min(1.0, float(fitness)))
+                            fitness_multiplier = 0.25 + 1.75 * clamped
+                        else:
+                            fitness_multiplier = 1.0  # no fitness data -> unchanged decay
+
+                        effective_half_life = half_life * fitness_multiplier
+                        decay = math.exp(-0.693 * age / effective_half_life)
                         return base_novelty * decay
         return 0.0
 
