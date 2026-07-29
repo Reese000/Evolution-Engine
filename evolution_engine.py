@@ -1020,6 +1020,13 @@ class EvolutionEngine:
         self._cached_expected_total = 0
         self._cached_task_instance_id = None
 
+        # Backward branch count cache: keyed by program hash, stores
+        # _count_backward_branches result.  Populated lazily during
+        # _compute_fitness / batch_compute_fitness and invalidated when
+        # the generation counter changes (programs mutate every gen).
+        self._backward_branch_cache: dict[int, int] = {}
+        self._backward_branch_cache_gen: int = -1
+
         # Cached lazy imports for hot-path functions (avoids repeated
         # import lookups on every _compute_fitness / _update_novelty_archive call)
         self._extract_behavioral_descriptor = None
@@ -2106,7 +2113,21 @@ class EvolutionEngine:
         # D1: Loop structure bonus for L5+ tasks (rewards structural progress)
         loop_bonus = 0.0
         if self.champion_level >= 5 and status == "ok" and instr_count > 0:
-            n_loops = self._count_backward_branches(program)
+            # R__: Cache backward branch counts keyed by program hash.
+            # The count is deterministic for a given program and avoids
+            # re-scanning the instruction list on every fitness call.
+            _gen = self.current_generation
+            if not hasattr(self, '_backward_branch_cache') or self._backward_branch_cache_gen != _gen:
+                if not hasattr(self, '_backward_branch_cache'):
+                    self._backward_branch_cache = {}
+                    self._backward_branch_cache_gen = -1
+                self._backward_branch_cache.clear()
+                self._backward_branch_cache_gen = _gen
+            _prog_key = hash(tuple(program))
+            n_loops = self._backward_branch_cache.get(_prog_key)
+            if n_loops is None:
+                n_loops = self._count_backward_branches(program)
+                self._backward_branch_cache[_prog_key] = n_loops
             if n_loops > 0:
                 loop_bonus = min(5.0, n_loops * 2.0)  # up to 5 points for loops
         loop_bonus *= _bonus_scale
@@ -2616,11 +2637,23 @@ class EvolutionEngine:
         # D1: Structural progress bonuses (vectorized)
         lvl = self.champion_level
 
-        # Loop structure bonus for L5+
+        # Loop structure bonus for L5+ — uses backward branch cache
         if lvl >= 5:
+            _gen = self.current_generation
+            if not hasattr(self, '_backward_branch_cache') or self._backward_branch_cache_gen != _gen:
+                if not hasattr(self, '_backward_branch_cache'):
+                    self._backward_branch_cache = {}
+                    self._backward_branch_cache_gen = -1
+                self._backward_branch_cache.clear()
+                self._backward_branch_cache_gen = _gen
+            _bb_cache = self._backward_branch_cache
             loop_bonuses = np.zeros(n_ok, dtype=np.float64)
             for j, prog in enumerate(ok_programs):
-                n_loops = self._count_backward_branches(prog)
+                _prog_key = hash(tuple(prog))
+                n_loops = _bb_cache.get(_prog_key)
+                if n_loops is None:
+                    n_loops = self._count_backward_branches(prog)
+                    _bb_cache[_prog_key] = n_loops
                 if n_loops > 0:
                     loop_bonuses[j] = min(5.0, n_loops * 2.0)
             loop_bonuses *= _bonus_scale
@@ -3173,6 +3206,9 @@ class EvolutionEngine:
             if self.rng.random() < self.config.perturbation_capped_probability_unsolved:
                 chosen = MutationStrategy.PERTURBATION_CAPPED
 
+        # Level-aware strategy weighting: bias selection based on task difficulty.
+        chosen = self._apply_level_aware_strategy_bias(chosen)
+
         # D3: Track consecutive usage
         strat_val = chosen.value
         if strat_val == self._last_strategy_used:
@@ -3181,6 +3217,82 @@ class EvolutionEngine:
             self._last_strategy_used = strat_val
             self._consecutive_same_strategy = 1
 
+        return chosen
+
+    # --------------------------------------------------------------
+    # Level-aware strategy weighting
+    # --------------------------------------------------------------
+
+    # Weight profiles per level tier: {strategy_name: weight_multiplier}.
+    # Higher weight = higher probability of selection at that tier.
+    _LEVEL_WEIGHT_PROFILES: dict[str, dict[str, float]] = {
+        "L1_L4": {  # Simple programs: small, targeted mutations
+            "RANDOM": 1.3, "TASK_AWARE": 1.4, "DIRECTED": 1.2,
+            "PERTURBATION_CAPPED": 0.7, "GROW": 0.5,
+            "HYBRID": 0.8, "MODEL_GUIDED": 0.4,
+        },
+        "L5_L6": {  # Structural mutations: loops, memory
+            "RANDOM": 0.8, "TASK_AWARE": 0.9, "DIRECTED": 0.9,
+            "PERTURBATION_CAPPED": 1.3, "GROW": 1.5,
+            "HYBRID": 1.1, "MODEL_GUIDED": 0.7,
+        },
+        "L7_L11": {  # Complex operations: memory, conditionals
+            "RANDOM": 0.6, "TASK_AWARE": 0.7, "DIRECTED": 0.8,
+            "PERTURBATION_CAPPED": 1.4, "GROW": 1.6,
+            "HYBRID": 1.2, "MODEL_GUIDED": 1.0,
+        },
+        "L12_plus": {  # Full program redesign: model-guided heavy
+            "RANDOM": 0.3, "TASK_AWARE": 0.4, "DIRECTED": 0.5,
+            "PERTURBATION_CAPPED": 1.2, "GROW": 1.5,
+            "HYBRID": 1.3, "MODEL_GUIDED": 2.0,
+        },
+    }
+
+    # Override probability per tier — higher tiers bias more aggressively
+    _LEVEL_OVERRIDE_PROBS: dict[str, float] = {
+        "L1_L4": 0.20, "L5_L6": 0.25, "L7_L11": 0.30, "L12_plus": 0.35,
+    }
+
+    def _apply_level_aware_strategy_bias(self, chosen: MutationStrategy) -> MutationStrategy:
+        """Apply level-aware strategy weighting to bias selection by task difficulty.
+
+        Different levels benefit from different mutation strategies:
+          L1-L4:  Simple programs — small changes (RANDOM, TASK_AWARE, DIRECTED)
+          L5-L6:  Structural mutations needed (GROW, PERTURBATION_CAPPED)
+          L7-L11: Complex operations (GROW, PERTURBATION_CAPPED, HYBRID)
+          L12+:   Full program redesign (MODEL_GUIDED, GROW, HYBRID)
+
+        Returns the (possibly modified) chosen strategy.
+        """
+        try:
+            lvl = self.champion_level
+            if lvl <= 4:
+                tier_key = "L1_L4"
+            elif lvl <= 6:
+                tier_key = "L5_L6"
+            elif lvl <= 11:
+                tier_key = "L7_L11"
+            else:
+                tier_key = "L12_plus"
+
+            _lvl_weights = self._LEVEL_WEIGHT_PROFILES[tier_key]
+            _lvl_prob = self._LEVEL_OVERRIDE_PROBS[tier_key]
+
+            if self.rng.random() < _lvl_prob:
+                _candidates = [s for s in MutationStrategy if s.value in _lvl_weights]
+                if _candidates:
+                    _weighted: list[MutationStrategy] = []
+                    for _s in _candidates:
+                        _w = _lvl_weights.get(_s.value, 1.0)
+                        _count = max(1, int(round(_w * 4)))
+                        _weighted.extend([_s] * _count)
+                    chosen = self.rng.choice(_weighted)
+                    self._log(
+                        f"[Strategy] Level-aware bias: L{lvl}, "
+                        f"prob={_lvl_prob:.2f}, chosen={chosen.value}"
+                    )
+        except Exception:
+            pass
         return chosen
 
     # --------------------------------------------------------------
