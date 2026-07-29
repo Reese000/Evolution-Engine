@@ -22,6 +22,7 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict
 
 from paths import M1_CHECKPOINTS, M1_RECURRENT, PROJECT_ROOT
 
@@ -48,6 +49,79 @@ _LIVE_REPORT_FILE: str = "progress_report.json"
 _TIMESTAMP_FMT: str = "%Y%m%d_%H%M%S"
 
 logger = logging.getLogger("ee.data_rotation")
+
+
+# ── Disk Usage Reporting ─────────────────────────────────────────────
+
+
+def get_disk_usage(self_path: str | Path | None = None) -> Dict[str, Any]:
+    """Report disk usage for the partition containing rotation targets.
+
+    Uses :func:`shutil.disk_usage` on the partition that contains the
+    given path (or ``PROJECT_ROOT`` when *self_path* is ``None``).
+
+    Args:
+        self_path: Any path on the target partition.  Defaults to
+            ``PROJECT_ROOT``.
+
+    Returns:
+        Dict with keys:
+          - ``total_bytes`` (int): total partition size in bytes.
+          - ``used_bytes`` (int): used space in bytes.
+          - ``free_bytes`` (int): free space in bytes.
+          - ``usage_percent`` (float): ``used / total * 100``.
+          - ``checkpoint_size`` (int): sum of ``.pt`` file sizes in
+            ``M1_CHECKPOINTS`` in bytes.
+          - ``recurrent_size`` (int): sum of file sizes in
+            ``M1_RECURRENT`` in bytes.
+          - ``total_project_size`` (int): sum of all ``.py`` file sizes
+            in ``PROJECT_ROOT`` in bytes.
+    """
+    target = Path(self_path) if self_path is not None else Path(PROJECT_ROOT)
+    usage = shutil.disk_usage(target)
+
+    # Sum .pt files in M1_CHECKPOINTS
+    checkpoint_size = 0
+    ckpt_dir = Path(M1_CHECKPOINTS)
+    if ckpt_dir.is_dir():
+        for f in ckpt_dir.iterdir():
+            if f.is_file() and f.suffix == ".pt":
+                try:
+                    checkpoint_size += f.stat().st_size
+                except OSError:
+                    pass
+
+    # Sum all files in M1_RECURRENT
+    recurrent_size = 0
+    recurrent_dir = Path(M1_RECURRENT)
+    if recurrent_dir.is_dir():
+        for f in recurrent_dir.iterdir():
+            if f.is_file():
+                try:
+                    recurrent_size += f.stat().st_size
+                except OSError:
+                    pass
+
+    # Sum all .py files in PROJECT_ROOT (non-recursive)
+    total_project_size = 0
+    proj_root = Path(PROJECT_ROOT)
+    if proj_root.is_dir():
+        for f in proj_root.iterdir():
+            if f.is_file() and f.suffix == ".py":
+                try:
+                    total_project_size += f.stat().st_size
+                except OSError:
+                    pass
+
+    return {
+        "total_bytes": usage.total,
+        "used_bytes": usage.used,
+        "free_bytes": usage.free,
+        "usage_percent": (usage.used / usage.total) * 100,
+        "checkpoint_size": checkpoint_size,
+        "recurrent_size": recurrent_size,
+        "total_project_size": total_project_size,
+    }
 
 
 # ── Checkpoint Rotation ──────────────────────────────────────────────
@@ -101,6 +175,78 @@ def rotate_checkpoints(keep_n: int = DEFAULT_CHECKPOINT_KEEP) -> list[str]:
             path.unlink()
             deleted.append(str(path))
             logger.info("Deleted checkpoint: %s", path.name)
+        except OSError as exc:
+            logger.warning("Failed to delete checkpoint %s: %s", path.name, exc)
+
+    return deleted
+
+
+# ── Quality-Aware Checkpoint Rotation ────────────────────────────────
+
+
+def quality_aware_rotate_checkpoints(keep_n: int = 5, fitness_scores: Dict[str, float] | None = None) -> list[str]:
+    """Rotate checkpoints while considering fitness scores.
+
+    When *fitness_scores* is provided, checkpoints are ranked by their
+    associated fitness value (highest retained) instead of by mtime.
+    Sacred files (``checkpoint_best.pt``, ``checkpoint_current.pt``) are
+    always preserved regardless of fitness.
+
+    Args:
+        keep_n: Number of non-sacred checkpoint files to retain.
+        fitness_scores: Optional mapping of checkpoint filename (str) to
+            fitness score (float).  Higher scores are retained.  When
+            ``None``, falls back to standard mtime-based rotation via
+            :func:`rotate_checkpoints`.
+
+    Returns:
+        List of absolute paths (str) that were deleted.
+    """
+    if fitness_scores is None:
+        return rotate_checkpoints(keep_n=keep_n)
+
+    deleted: list[str] = []
+    ckpt_dir = Path(M1_CHECKPOINTS)
+
+    if not ckpt_dir.is_dir():
+        logger.warning("Checkpoint directory does not exist: %s", ckpt_dir)
+        return deleted
+
+    pt_files: list[Path] = []
+    for entry in ckpt_dir.iterdir():
+        if not entry.is_file():
+            continue
+        if not (entry.name.endswith(".pt") or entry.name.endswith(".pt.regressed")):
+            continue
+        if entry.name in _SACRED_CHECKPOINT_FILES:
+            continue
+        pt_files.append(entry)
+
+    if len(pt_files) <= keep_n:
+        logger.info(
+            "Quality-aware: checkpoint count (%d) <= keep_n (%d), nothing to rotate.",
+            len(pt_files),
+            keep_n,
+        )
+        return deleted
+
+    # Assign fitness scores; files without a score get -inf so they are
+    # the first candidates for deletion.
+    _sentinel = float("-inf")
+    pt_files.sort(key=lambda p: fitness_scores.get(p.name, _sentinel), reverse=True)
+
+    # Everything beyond keep_n is a deletion candidate (lowest fitness)
+    candidates = pt_files[keep_n:]
+
+    for path in candidates:
+        try:
+            path.unlink()
+            deleted.append(str(path))
+            logger.info(
+                "Quality-aware deleted checkpoint: %s (fitness=%s)",
+                path.name,
+                fitness_scores.get(path.name, "N/A"),
+            )
         except OSError as exc:
             logger.warning("Failed to delete checkpoint %s: %s", path.name, exc)
 

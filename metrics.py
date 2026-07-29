@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict, List
 
 
 class MetricsCollector:
@@ -214,3 +214,170 @@ class MetricsCollector:
         if os.path.isfile(self.path):
             os.remove(self.path)
         self._cached_records = None
+
+    def detect_anomalies(self, metric: str, window: int = 20, threshold: float = 2.0) -> List[Dict]:
+        """Detect anomalous values in a metric using z-score analysis.
+
+        Uses a rolling window to compute mean and standard deviation, then
+        flags any value whose absolute z-score exceeds the threshold.
+
+        Args:
+            metric: Key name in the cycle data dict (e.g., "fitness", "level").
+            window: Number of records to use for the rolling statistics.
+            threshold: Z-score threshold for anomaly detection (default 2.0).
+
+        Returns:
+            List of anomaly dicts, each containing:
+              - index: position in the full metric series
+              - value: the anomalous value
+              - z_score: computed z-score (absolute > threshold)
+              - direction: 'high' if z_score > 0, 'low' if z_score < 0
+              - timestamp: ISO timestamp of the record, or None
+        """
+        records = self.get_history()
+
+        # Extract metric values and timestamps in order
+        values: list[float] = []
+        timestamps: list[str | None] = []
+        for r in records:
+            v = r.get(metric)
+            if isinstance(v, (int, float)):
+                values.append(float(v))
+                timestamps.append(r.get("timestamp"))
+
+        anomalies: List[Dict] = []
+        n = len(values)
+
+        if n == 0:
+            return anomalies
+
+        # Compute rolling z-scores over the full series
+        for i in range(n):
+            # Determine the window slice: up to `window` most recent values ending at i
+            start = max(0, i - window + 1)
+            window_slice = values[start : i + 1]
+            w = len(window_slice)
+
+            if w < 2:
+                # Need at least 2 points for a meaningful stddev
+                continue
+
+            mean = sum(window_slice) / w
+            variance = sum((v - mean) ** 2 for v in window_slice) / w
+            stddev = variance**0.5
+
+            if stddev > 0:
+                z_score = (values[i] - mean) / stddev
+            else:
+                z_score = 0.0
+
+            if abs(z_score) > threshold:
+                anomalies.append(
+                    {
+                        "index": i,
+                        "value": values[i],
+                        "z_score": round(z_score, 6),
+                        "direction": "high" if z_score > 0 else "low",
+                        "timestamp": timestamps[i],
+                    }
+                )
+
+        return anomalies
+
+    def correlate_metrics(self, metric_a: str, metric_b: str, window: int = 20) -> Dict[str, Any]:
+        """Compute Pearson correlation between two metrics over a window.
+
+        Extracts paired values for both metrics from the most recent records,
+        then computes the Pearson correlation coefficient (r).
+
+        Args:
+            metric_a: First metric key name.
+            metric_b: Second metric key name.
+            window: Number of recent records to use (default 20).
+
+        Returns:
+            Dict with:
+              - metric_a: name of first metric
+              - metric_b: name of second metric
+              - correlation: Pearson r (-1.0 to 1.0)
+              - strength: 'strong' (|r| >= 0.7), 'moderate' (0.4 <= |r| < 0.7),
+                          'weak' (0.2 <= |r| < 0.4), 'none' (|r| < 0.2)
+              - direction: 'positive' (r > 0), 'negative' (r < 0), 'none' (r == 0)
+              - sample_size: number of paired observations used
+        """
+        records = self.get_history(last_n=window)
+
+        # Extract paired values (only records where both metrics are present)
+        a_vals: list[float] = []
+        b_vals: list[float] = []
+        for r in records:
+            va = r.get(metric_a)
+            vb = r.get(metric_b)
+            if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+                a_vals.append(float(va))
+                b_vals.append(float(vb))
+
+        n = len(a_vals)
+
+        # Not enough data
+        if n < 2:
+            return {
+                "metric_a": metric_a,
+                "metric_b": metric_b,
+                "correlation": 0.0,
+                "strength": "none",
+                "direction": "none",
+                "sample_size": n,
+            }
+
+        # Compute means
+        mean_a = sum(a_vals) / n
+        mean_b = sum(b_vals) / n
+
+        # Compute Pearson r using the formula:
+        #   r = sum((a - mean_a)*(b - mean_b)) / (sqrt(sum((a - mean_a)^2)) * sqrt(sum((b - mean_b)^2)))
+        sum_ab = 0.0
+        sum_a2 = 0.0
+        sum_b2 = 0.0
+        for i in range(n):
+            da = a_vals[i] - mean_a
+            db = b_vals[i] - mean_b
+            sum_ab += da * db
+            sum_a2 += da * da
+            sum_b2 += db * db
+
+        denom = (sum_a2**0.5) * (sum_b2**0.5)
+
+        if denom > 0:
+            r = sum_ab / denom
+        else:
+            r = 0.0
+
+        r = max(-1.0, min(1.0, r))  # Clamp to valid range
+
+        # Determine strength and direction
+        abs_r = abs(r)
+        if abs_r >= 0.7:
+            strength = "strong"
+        elif abs_r >= 0.4:
+            strength = "moderate"
+        elif abs_r >= 0.2:
+            strength = "weak"
+        else:
+            strength = "none"
+
+        if r > 0:
+            direction = "positive"
+        elif r < 0:
+            direction = "negative"
+        else:
+            direction = "none"
+
+        return {
+            "metric_a": metric_a,
+            "metric_b": metric_b,
+            "correlation": round(r, 6),
+            "strength": strength,
+            "direction": direction,
+            "sample_size": n,
+        }

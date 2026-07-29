@@ -23,7 +23,7 @@ import argparse
 import json
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Dict, List
 
 from paths import PROJECT_ROOT
 
@@ -78,6 +78,54 @@ class EvolutionSection:
     temperature_start: float = 2.0
     temperature_end: float = 0.5
     temperature_schedule_generations: int = 200
+
+    def get_config_summary(self) -> Dict[str, Any]:
+        """Return a human-readable summary of the evolution configuration."""
+        archives_enabled = self.use_novelty_archive or self.use_qd_archive or self.use_strategy_archive
+        return {
+            "seed": self.seed,
+            "use_gpu": self.use_gpu,
+            "auto_curriculum": self.auto_curriculum,
+            "archives_enabled": archives_enabled,
+            "novelty_weight": self.novelty_weight,
+            "qd_bonus_weight": self.qd_bonus_weight,
+            "mutation_rate": self.mutation_rate,
+            "population_size": self.population_size,
+            "eval_budget": self.eval_budget,
+            "max_consecutive_same_strategy": self.max_consecutive_same_strategy,
+            "total_config_fields": len(self.__dataclass_fields__),
+        }
+
+    def validate_config(self) -> List[str]:
+        """Validate the configuration and return a list of warnings/errors."""
+        warnings: List[str] = []
+
+        if self.novelty_weight > 0.8:
+            warnings.append(
+                f"novelty_weight={self.novelty_weight} > 0.8: "
+                "novelty may dominate fitness, reducing selection pressure"
+            )
+        if self.population_size < 10:
+            warnings.append(
+                f"population_size={self.population_size} < 10: "
+                "population is too small for effective evolutionary search"
+            )
+        if self.eval_budget < 100:
+            warnings.append(
+                f"eval_budget={self.eval_budget} < 100: " "evaluation budget is low, may limit fitness accuracy"
+            )
+        if self.max_consecutive_same_strategy < 5:
+            warnings.append(
+                f"max_consecutive_same_strategy={self.max_consecutive_same_strategy} < 5: "
+                "strategy changes too frequently, may prevent convergence"
+            )
+        if not (self.use_novelty_archive or self.use_qd_archive or self.use_strategy_archive):
+            warnings.append(
+                "No diversity mechanisms enabled "
+                "(use_novelty_archive, use_qd_archive, use_strategy_archive are all False)"
+            )
+
+        return warnings
 
 
 @dataclass

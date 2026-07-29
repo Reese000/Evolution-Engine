@@ -54,6 +54,8 @@ class StrategyArchive:
         # Avoids rebuilding from _level_strategies on every recommend_strategy
         # call (pop_size times per generation). Invalidated on record/trim.
         self._global_strategy_set: set = set()
+        # Delta tracking: champion quality deltas per strategy for tiebreaking.
+        self._champion_deltas: Dict[str, List[float]] = {}
 
     def refresh_timestamp(self) -> None:
         """Refresh the cached timestamp (call once per generation)."""
@@ -292,6 +294,49 @@ class StrategyArchive:
 
         return raw_rate
 
+    def time_weighted_success_rate(self, strategy: str, decay_halflife: int = 100) -> float:
+        """Compute success rate with exponential time-decay.
+
+        Recent records count more than old ones using exponential decay.
+        Formula: weight = exp(-0.693 * age_records / decay_halflife)
+        where age_records is distance from end of records list (0 = most recent).
+
+        Args:
+            strategy: Strategy name.
+            decay_halflife: Number of records after which weight halves
+                (default 100). Smaller values emphasize recency more.
+
+        Returns:
+            Float in [0.0, 1.0] representing time-weighted success rate,
+            or 0.0 if no records exist for this strategy.
+        """
+        import math
+
+        strat_indices = self._strategy_record_idx.get(strategy)
+        if not strat_indices:
+            return 0.0
+
+        records = self._records
+        n_records = len(records)
+        if n_records == 0:
+            return 0.0
+
+        total_weight = 0.0
+        weighted_success = 0.0
+        for i in sorted(strat_indices):
+            if i >= n_records:
+                continue
+            age = n_records - 1 - i
+            weight = math.exp(-0.693 * age / decay_halflife)
+            total_weight += weight
+            if records[i]["success"]:
+                weighted_success += weight
+
+        if total_weight <= 0:
+            return 0.0
+
+        return weighted_success / total_weight
+
     def exploration_bonus(
         self,
         strategy: str,
@@ -365,6 +410,8 @@ class StrategyArchive:
 
         best_strat = None
         best_score = -float("inf")
+        second_strat = None
+        second_score = -float("inf")
         for s in strategies_used:
             if s == skip_strategy:
                 continue
@@ -372,11 +419,29 @@ class StrategyArchive:
             bonus = self.exploration_bonus(s, level=level)
             score = rate + (bonus * exploration_weight)
             if score > best_score:
+                second_strat = best_strat
+                second_score = best_score
                 best_score = score
                 best_strat = s
+            elif score > second_score:
+                second_strat = s
+                second_score = score
 
         if best_strat is None:
             return None
+
+        # Delta tiebreaker: when top 2 are within 5%, prefer higher avg_delta
+        if (
+            second_strat is not None
+            and best_score - second_score < 0.05
+            and best_strat is not None
+            and second_strat is not None
+        ):
+            d_best = self.avg_delta(best_strat)
+            d_second = self.avg_delta(second_strat)
+            if d_second > d_best:
+                return (second_strat, second_score)
+
         return (best_strat, best_score)
 
     def recommend_strategy(self, level: int, skip_strategy: Optional[str] = None) -> str:
@@ -407,15 +472,33 @@ class StrategyArchive:
         # and avoids mutating the shared cache)
         best_global = None
         best_rate = -1.0
+        second_global = None
+        second_rate = -1.0
         for s in candidates:
             if s == skip_strategy:
                 continue
             rate = self.success_rate(s, window=100)
             if rate > best_rate:
+                second_global = best_global
+                second_rate = best_rate
                 best_rate = rate
                 best_global = s
+            elif rate > second_rate:
+                second_global = s
+                second_rate = rate
 
         if best_global is not None and best_rate > 0.0:
+            # Delta tiebreaker: when top 2 are within 5%, prefer higher avg_delta
+            if (
+                second_global is not None
+                and best_rate - second_rate < 0.05
+                and best_global is not None
+                and second_global is not None
+            ):
+                d_best = self.avg_delta(best_global)
+                d_second = self.avg_delta(second_global)
+                if d_second > d_best:
+                    return second_global
             return best_global
 
         return "RANDOM"
@@ -453,6 +536,19 @@ class StrategyArchive:
         records = self._records
         return [records[i] for i in indices if i < len(records)]
 
+    def get_strategy_history(self, strategy: str, level: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return recent records for a specific strategy."""
+        result: List[Dict[str, Any]] = []
+        for r in reversed(self._records):
+            if r["strategy"] != strategy:
+                continue
+            if level is not None and r["level"] != level:
+                continue
+            result.append(r)
+            if len(result) >= 20:
+                break
+        return result
+
     def summary(self) -> Dict[str, Any]:
         """Return a summary dict of all recorded strategies.
 
@@ -483,9 +579,11 @@ class StrategyArchive:
                     "successes": info["successes"],
                     "rate": info["successes"] / info["count"] if info["count"] > 0 else 0.0,
                     "levels": sorted(info["levels"]),
+                    "time_weighted_success_rate": self.time_weighted_success_rate(name),
                 }
                 for name, info in strategies.items()
             },
+            "dominance": self.get_dominance_report(),
         }
 
     # ── Persistence ───────────────────────────────────────────────────
@@ -570,7 +668,9 @@ class StrategyArchive:
         for strats in self._level_strategies.values():
             self._global_strategy_set.update(strats)
 
-    def decay_level_records(self, level: int, factor: float = 0.5, rng: Optional[random.Random] = None) -> int:
+    def decay_level_records(
+        self, level: int, factor: float = 0.5, rng: Optional[random.Random] = None, level_dependent: bool = False
+    ) -> int:
         """Decay records at a given level by flipping `success` toward False.
 
         Called on curriculum level advance (D3 fix) to prevent lower-level
@@ -586,14 +686,25 @@ class StrategyArchive:
         Args:
             level: Curriculum level whose records to decay.
             factor: Retention probability -- 0.5 means ~50% of successes survive.
+                    Ignored when level_dependent=True.
             rng: Optional seeded RNG for reproducibility. If None, uses
                 the global random module (non-deterministic).
+            level_dependent: If True, use level-dependent decay rates:
+                L0-L4: 0.3, L5-L8: 0.5, L9+: 0.7.
 
         Returns:
             Number of records modified.
         """
         modified = 0
         rng_local = rng if rng is not None else random
+        # Level-dependent decay overrides the factor parameter
+        if level_dependent:
+            if level <= 4:
+                factor = 0.3
+            elif level <= 8:
+                factor = 0.5
+            else:
+                factor = 0.7
         records = self._records
         # Use _level_strategies index to iterate only strategies present at this level
         strategies_at_level = self._level_strategies.get(level)
@@ -620,3 +731,205 @@ class StrategyArchive:
         self._strategy_total.clear()
         self._global_total = 0
         self._global_strategy_set.clear()
+        self._champion_deltas.clear()
+
+    # ── Delta tracking ──────────────────────────────────────────────
+
+    def record_delta(self, strategy: str, delta: float) -> None:
+        """Record a champion quality delta for a strategy.
+
+        Args:
+            strategy: Strategy name.
+            delta: Quality improvement delta (success_value - baseline).
+        """
+        deltas = self._champion_deltas.get(strategy)
+        if deltas is None:
+            self._champion_deltas[strategy] = [delta]
+        else:
+            deltas.append(delta)
+
+    def avg_delta(self, strategy: str) -> float:
+        """Return average champion quality delta for a strategy.
+
+        Returns 0.0 if no deltas have been recorded for this strategy.
+        """
+        deltas = self._champion_deltas.get(strategy)
+        if not deltas:
+            return 0.0
+        return sum(deltas) / len(deltas)
+
+    def per_level_effectiveness(self, strategy: str) -> Dict[int, float]:
+        """Return effectiveness score per level for a given strategy.
+
+        Effectiveness = successful_delta_count / total_records_at_level,
+        where successful means avg_delta > 0 (i.e. the record succeeded).
+
+        Args:
+            strategy: Strategy name to evaluate.
+
+        Returns:
+            Dict mapping level -> effectiveness score in [0.0, 1.0].
+            Empty dict if strategy has no records.
+        """
+        indices = self._strategy_record_idx.get(strategy)
+        if not indices:
+            return {}
+
+        level_counts: Dict[int, int] = {}
+        level_successes: Dict[int, int] = {}
+        for idx in indices:
+            rec = self._records[idx]
+            lev = rec["level"]
+            level_counts[lev] = level_counts.get(lev, 0) + 1
+            if rec.get("success", False):
+                level_successes[lev] = level_successes.get(lev, 0) + 1
+
+        result: Dict[int, float] = {}
+        for lev, total in level_counts.items():
+            successful = level_successes.get(lev, 0)
+            result[lev] = successful / total if total > 0 else 0.0
+        return result
+
+    def adaptive_exploration_bonus(
+        self,
+        strategy: str,
+        level: int,
+        base_bonus: float = 0.1,
+    ) -> float:
+        """Return an exploration bonus that increases for underperforming strategies.
+
+        Uses per_level_effectiveness to gauge how well a strategy performs at
+        the given level:
+          - effectiveness < 0.3  ->  bonus = base_bonus * 2  (underperforming)
+          - effectiveness > 0.7  ->  bonus = base_bonus * 0.5 (well-performing)
+          - otherwise             ->  bonus = base_bonus
+
+        Args:
+            strategy: Strategy name.
+            level: Curriculum level.
+            base_bonus: Base exploration bonus value (default 0.1).
+
+        Returns:
+            Scaled exploration bonus for the strategy at the given level.
+        """
+        effectiveness = self.per_level_effectiveness(strategy).get(level, 0.0)
+        if effectiveness < 0.3:
+            return base_bonus * 2.0
+        elif effectiveness > 0.7:
+            return base_bonus * 0.5
+        return base_bonus
+
+    # ── Diversity ────────────────────────────────────────────────────
+
+    def get_strategy_diversity(self, level: Optional[int] = None) -> float:
+        """Compute Shannon entropy of strategy distribution, normalized to [0, 1].
+
+        1.0 = perfectly uniform distribution (maximum diversity).
+        0.0 = all records are one strategy (no diversity).
+
+        Args:
+            level: Optional level filter. If None, uses all records.
+        """
+        # Count records per strategy
+        counts: Dict[str, int] = {}
+        if level is not None:
+            strategies = self._level_strategies.get(level)
+            if not strategies:
+                return 0.0
+            for strat in strategies:
+                idx = self._level_strategy_counts.get((level, strat), 0)
+                if idx > 0:
+                    counts[strat] = idx
+        else:
+            for strat, cnt in self._strategy_total.items():
+                if cnt > 0:
+                    counts[strat] = cnt
+
+        total = sum(counts.values())
+        if total == 0:
+            return 0.0
+
+        import math
+
+        entropy = 0.0
+        for c in counts.values():
+            if c > 0:
+                p = c / total
+                entropy -= p * math.log(p)
+
+        max_entropy = math.log(len(counts)) if len(counts) > 1 else 1.0
+        return entropy / max_entropy if max_entropy > 0 else 0.0
+
+    def get_dominance_report(self) -> Dict[str, Any]:
+        """Detect monoculture in strategy usage.
+
+        Returns dict with:
+            dominant_strategy: strategy with highest success_rate
+            dominance_ratio: its success_rate / total of all success_rates
+            is_monoculture: True if dominance_ratio > 0.6
+            consecutive_usage: int from self._consecutive_same_strategy
+                if available, else 0
+            recommendation: 'explore' if monoculture else 'balanced'
+        """
+        strategies = self._global_strategy_set
+        if not strategies:
+            return {
+                "dominant_strategy": None,
+                "dominance_ratio": 0.0,
+                "is_monoculture": False,
+                "consecutive_usage": 0,
+                "recommendation": "balanced",
+                "all_strategy_rates": {},
+            }
+
+        strat_rates: Dict[str, float] = {}
+        for strat in strategies:
+            strat_rates[strat] = self.success_rate(strat, window=100)
+
+        dominant = max(strat_rates, key=strat_rates.get)
+        total_rate = sum(strat_rates.values())
+        dominance_ratio = strat_rates[dominant] / total_rate if total_rate > 0 else 0.0
+
+        consecutive = getattr(self, "_consecutive_same_strategy", 0)
+
+        is_monoculture = dominance_ratio > 0.6
+
+        return {
+            "dominant_strategy": dominant,
+            "dominance_ratio": dominance_ratio,
+            "is_monoculture": is_monoculture,
+            "consecutive_usage": consecutive,
+            "recommendation": "explore" if is_monoculture else "balanced",
+            "all_strategy_rates": strat_rates,
+        }
+
+    # ── Archive summary ─────────────────────────────────────────────
+
+    def get_archive_summary(self) -> Dict[str, Any]:
+        """Return a comprehensive archive summary.
+
+        Returns dict with: total_records, unique_strategies, levels_covered,
+        global_diversity, per_level_diversity, top_strategies.
+        """
+        global_div = self.get_strategy_diversity()
+
+        per_level_div: Dict[int, float] = {}
+        for lev in self._level_strategies:
+            per_level_div[lev] = self.get_strategy_diversity(level=lev)
+
+        # Top strategies: best-per-strategy global success rate, up to 5
+        strat_rates: List[Tuple[str, float]] = []
+        for strat in self._global_strategy_set:
+            rate = self.success_rate(strat, window=100)
+            strat_rates.append((strat, rate))
+        strat_rates.sort(key=lambda x: x[1], reverse=True)
+        top_strategies = strat_rates[:5]
+
+        return {
+            "total_records": len(self._records),
+            "unique_strategies": len(self._global_strategy_set),
+            "levels_covered": sorted(self._level_strategies.keys()),
+            "global_diversity": global_div,
+            "per_level_diversity": per_level_div,
+            "top_strategies": top_strategies,
+        }

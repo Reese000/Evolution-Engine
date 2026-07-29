@@ -142,7 +142,7 @@ BRANCH_SWAP_PAIRS: Dict[str, str] = {
     "BGEU": "BLTU",
 }
 
-# ALU swap pairs (flip funct7 to swap ADD↔SUB, SRL↔SRA)
+# ALU swap pairs (flip funct7 to swap ADD<->SUB, SRL↔SRA)
 ALU_SWAP_PAIRS: Dict[str, str] = {
     "ADD": "SUB",
     "SUB": "ADD",
@@ -602,11 +602,49 @@ class DirectedMutator:
     Proposes targeted changes based on trace analysis:
       - Task-aware instruction injection (LUI/ADDI for reg init,
         ADD/SUB for computation, load/store for memory access)
-      - Single-op funct3/funct7 swapping (ADD↔SUB, BEQ↔BNE, SRL↔SRA)
+      - Single-op funct3/funct7 swapping (ADD<->SUB, BEQ<->BNE, SRL↔SRA)
       - Insert / delete N instructions
       - Reorder contiguous blocks (3-10 instructions)
       - All mutations produce valid RV32I encodings
     """
+
+    # ── Mutation success tracking ───────────────────────────
+    _mutation_success: Dict[str, int] = {}  # description prefix -> success count
+    _mutation_attempts: Dict[str, int] = {}  # description prefix -> attempt count
+    _mutation_history: list = []  # recent (description, fitness_delta) tuples, max 200
+
+    @staticmethod
+    def record_mutation_outcome(description: str, fitness_delta: float) -> None:
+        """Record the outcome of a mutation for success tracking."""
+        prefix = description.split("_")[0] if "_" in description else description
+        DirectedMutator._mutation_attempts[prefix] = DirectedMutator._mutation_attempts.get(prefix, 0) + 1
+        if fitness_delta > 0:
+            DirectedMutator._mutation_success[prefix] = DirectedMutator._mutation_success.get(prefix, 0) + 1
+        DirectedMutator._mutation_history.append((description, fitness_delta))
+        if len(DirectedMutator._mutation_history) > 200:
+            DirectedMutator._mutation_history = DirectedMutator._mutation_history[-200:]
+
+    @staticmethod
+    def get_mutation_stats() -> Dict[str, Any]:
+        """Get mutation success statistics."""
+        stats = {}
+        for prefix in set(
+            list(DirectedMutator._mutation_success.keys()) + list(DirectedMutator._mutation_attempts.keys())
+        ):
+            attempts = DirectedMutator._mutation_attempts.get(prefix, 0)
+            successes = DirectedMutator._mutation_success.get(prefix, 0)
+            stats[prefix] = {
+                "attempts": attempts,
+                "successes": successes,
+                "success_rate": successes / attempts if attempts > 0 else 0.0,
+            }
+        recent_deltas = [d for _, d in DirectedMutator._mutation_history[-50:]]
+        return {
+            "by_type": stats,
+            "recent_avg_delta": sum(recent_deltas) / len(recent_deltas) if recent_deltas else 0.0,
+            "total_attempts": sum(DirectedMutator._mutation_attempts.values()),
+            "total_successes": sum(DirectedMutator._mutation_success.values()),
+        }
 
     # ── Structural helpers ─────────────────────────────────
 
@@ -1053,7 +1091,7 @@ class DirectedMutator:
 
     @staticmethod
     def _swap_operation(prog: List[int], rng: random.Random) -> Tuple[List[int], str]:
-        """Swap funct3/funct7 of an instruction (ADD↔SUB, BEQ↔BNE, etc.).
+        """Swap funct3/funct7 of an instruction (ADD<->SUB, BEQ<->BNE, etc.).
 
         Optimized: decode instructions lazily — only decode the one chosen
         for mutation, not every instruction in the program. Uses opcode

@@ -989,6 +989,7 @@ class EvolutionEngine:
         # R28: Champion oscillation tracking -- prevents rapid A<->B replacement
         # by requiring a minimum fitness improvement to beat the champion.
         self._champion_replacement_count: int = 0  # replacements this run
+        self._champion_replacement_history: list[tuple[float, int]] = []  # (delta_fitness, generation)
         # R31: Use deque for O(1) popleft (was list.pop(0) = O(n) per generation).
         self._champion_oscillation_window: collections.deque[float] = collections.deque(maxlen=10)
         self._oscillation_window_size: int = 10
@@ -1168,6 +1169,19 @@ class EvolutionEngine:
         alpha = self._velocity_alpha
         self._fitness_velocity = alpha * delta_fitness + (1.0 - alpha) * self._fitness_velocity
 
+    def get_generation_stats(self) -> dict:
+        """Return per-generation statistics for the current run."""
+        return {
+            'current_generation': self.current_generation,
+            'generations_stalled': self.generations_stalled,
+            'champion_fitness': self.champion_fitness,
+            'champion_level': self.champion_level,
+            'mutation_rate': self.config.mutation_rate,
+            'population_size': self.config.population_size,
+            'novelty_weight': self.config.novelty_weight,
+            'fitness_velocity': getattr(self, '_fitness_velocity', 0.0),
+        }
+
     def _should_replace_champion(self, candidate_fitness: float) -> bool:
         """Decide whether a candidate should replace the champion.
 
@@ -1252,7 +1266,23 @@ class EvolutionEngine:
         # R35: Cap replacement count for long-run memory safety
         if self._champion_replacement_count > 10000:
             self._champion_replacement_count = 10000
+        history = getattr(self, '_champion_replacement_history', None)
+        if history is not None:
+            history.append((delta_fitness, self.current_generation))
         # Oscillation window is already maintained by _should_replace_champion
+
+    def get_champion_history(self) -> list[dict]:
+        """Return history of champion fitness improvements.
+
+        Each entry is a dict with 'fitness' (delta_fitness) and 'cycle' (generation).
+        """
+        history = getattr(self, '_champion_replacement_history', None)
+        if history is None:
+            return []
+        return [
+            {'fitness': f, 'cycle': c}
+            for f, c in history
+        ]
 
     # ------------------------------------------------------------------
     # Core loop
@@ -1392,7 +1422,7 @@ class EvolutionEngine:
                 results = self._evaluate_batch(challengers)
                 self._last_challengers = challengers
                 self._last_results = results
-                elite, elite_fitnesses = self._select_elite(challengers, results)
+                elite, elite_fitnesses, _elite_indices = self._select_elite(challengers, results)
                 detailed_results = self._evaluate_batch_detailed(elite)
 
                 # 4. Update champion -- pass cached stage-1 fitnesses for fast skip
@@ -1404,11 +1434,30 @@ class EvolutionEngine:
                     stage1_fitnesses=elite_fitnesses,
                 )
 
+                # Quality-weighted champion pruning
+                if improved and hasattr(self, 'champion_archive') and self.champion_archive is not None:
+                    try:
+                        _pruned = self.champion_archive.quality_weighted_prune()
+                        if _pruned > 0:
+                            self._log(f"[Champion] Quality prune: removed {_pruned} low-quality champions")
+                    except Exception:
+                        pass
+
                 # R28: Update fitness velocity and record champion replacement
                 delta = self.champion_fitness - prev_fitness
                 self._update_fitness_velocity(delta)
                 if improved and delta > 0:
                     self._record_champion_replacement(delta)
+                # Record mutation outcomes for success tracking
+                try:
+                    from mutation_proposer import DirectedMutator as _DM
+                    for _res in results:
+                        _desc = _res.get('description', '') if isinstance(_res, dict) else ''
+                        if _desc:
+                            _fd = _res.get('fitness_delta', 0.0) if isinstance(_res, dict) else 0.0
+                            _DM.record_mutation_outcome(_desc, _fd)
+                except Exception:
+                    pass
 
                 # 5. Log progress
                 self._log_generation(gen, gen_start)
@@ -1445,8 +1494,42 @@ class EvolutionEngine:
                 if auto_curriculum:
                     self._try_curriculum_advance()
 
+                # Recovery confidence monitoring
+                if hasattr(self, 'meta_controller') and self.meta_controller is not None and gen > 0 and gen % 25 == 0:
+                    try:
+                        _rc = self.meta_controller.get_recovery_confidence()
+                        if _rc['is_recovering']:
+                            self._log(f"[Recovery] confidence={_rc['confidence']:.2f} trend={_rc['fitness_trend_during_recovery']} exit={_rc['should_exit_recovery']}")
+                            if _rc['should_exit_recovery']:
+                                self.meta_controller.recovery_mode = False
+                                self._log("[Recovery] Exiting recovery mode — fitness not improving")
+                            if _rc['cycles_in_recovery'] >= 5:
+                                try:
+                                    from monitoring_alerts import AlertManager as _AM
+                                    _am = _AM()
+                                    _am.send_recovery_stuck_alert(_rc['cycles_in_recovery'], _rc['fitness_trend_during_recovery'], _rc['confidence'])
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
                 # 9. Strategy archive record
                 self._record_strategy_outcomes()
+
+                # Monoculture detection via dominance report
+                if self.config.use_strategy_archive and self.strategy_archive is not None:
+                    try:
+                        _dom = self.strategy_archive.get_dominance_report()
+                        if _dom.get('is_monoculture') and gen > 0 and gen % 10 == 0:
+                            self._log(f"[Strategy] Monoculture detected: {_dom['dominant_strategy']} at {_dom['dominance_ratio']:.0%} — recommendation: {_dom['recommendation']}")
+                            try:
+                                from monitoring_alerts import AlertManager as _AM
+                                _am = _AM()
+                                _am.send_monoculture_alert(_dom['dominant_strategy'], _dom['dominance_ratio'], _dom['recommendation'])
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
 
                 # 10. QD archive update
                 self._update_qd_archive()
@@ -1458,6 +1541,56 @@ class EvolutionEngine:
 
                 # 12. Novelty archive update
                 self._update_novelty_archive()
+
+                # Periodic diagnostics — cross-cycle trends and QD metrics
+                if gen > 0 and gen % 25 == 0 and hasattr(self, 'meta_controller') and self.meta_controller is not None:
+                    try:
+                        _trends = self.meta_controller.get_cross_cycle_trends()
+                        for _metric, _data in _trends.items():
+                            if isinstance(_data, dict) and _data.get('direction') != 'stable':
+                                self._log(f"[Trend] {_metric}: {_data['direction']} (slope={_data.get('slope', 0):.4f}, confidence={_data.get('confidence', 0):.2f})")
+                    except Exception:
+                        pass
+                if gen > 0 and gen % 25 == 0 and self.qd_archive is not None:
+                    try:
+                        _vel = self.qd_archive.get_improvement_velocity()
+                        _illum = self.qd_archive.get_illumination_diversity()
+                        self._log(f"[QD] velocity_avg={_vel.get('avg_velocity', 0):.4f} illumination={_illum.get('overall_diversity_score', 0):.4f}")
+                    except Exception:
+                        pass
+
+                # Mutation success tracking
+                if gen > 0 and gen % 25 == 0:
+                    try:
+                        from mutation_proposer import DirectedMutator as _DM
+                        _mstats = _DM.get_mutation_stats()
+                        if _mstats['total_attempts'] > 0:
+                            _rate = _mstats['total_successes'] / _mstats['total_attempts']
+                            self._log(f"[Mutation] success_rate={_rate:.1%} attempts={_mstats['total_attempts']}")
+                    except Exception:
+                        pass
+
+                # Progression tracker plateau analysis
+                if gen > 0 and gen % 50 == 0 and hasattr(self, 'progression_tracker') and self.progression_tracker is not None:
+                    try:
+                        _pa = self.progression_tracker.get_plateau_analysis()
+                        if _pa.get('status') == 'plateau':
+                            self._log(f"[Progression] Plateau detected: duration={_pa.get('plateau_duration', 0)} cycles, slope={_pa.get('trend_slope', 0):.6f}")
+                        elif _pa.get('status') == 'declining':
+                            self._log(f"[Progression] Declining: slope={_pa.get('trend_slope', 0):.6f}")
+                    except Exception:
+                        pass
+
+                # Fitness anomaly detection
+                if hasattr(self, '_last_challenger_fitnesses') and self._last_challenger_fitnesses:
+                    try:
+                        _fits = self._last_challenger_fitnesses
+                        _mean_fit = sum(_fits) / len(_fits) if _fits else 0
+                        _anomalies = [f for f in _fits if abs(f - _mean_fit) > 2.0 * (max(_fits) - min(_fits) + 1e-6)]
+                        if _anomalies:
+                            self._log(f"[Anomaly] {len(_anomalies)}/{len(_fits)} challengers deviate significantly from mean fitness {_mean_fit:.2f}")
+                    except Exception:
+                        pass
 
                 # R37: Clear generation-state lists after all consumers are done.
                 # These lists (challengers, results, programs, fitnesses) can
@@ -2064,9 +2197,14 @@ class EvolutionEngine:
                     program,
                     budget=self.config.eval_budget,
                 )
-                novelty_val = self.novelty_archive.novelty_score(descriptor)
+                try:
+                    novelty_val = self.novelty_archive.decayed_novelty(program, self.current_generation)
+                except Exception:
+                    novelty_val = self.novelty_archive.novelty_score(descriptor)
                 norm = max_score / 10.0
                 fitness = fitness * (1.0 - nw) + novelty_val * norm * nw
+                if self.current_generation > 0 and self.current_generation % 100 == 0:
+                    self._log(f"[Novelty] gen={self.current_generation} novelty_val={novelty_val:.4f}")
             except (TypeError, ValueError, RuntimeError):
                 pass  # fall through to raw fitness
 
@@ -2404,7 +2542,10 @@ class EvolutionEngine:
             if nw > 0.0 and self.novelty_archive is not None and _extract_fn is not None:
                 try:
                     descriptor = _extract_fn(trace, prog, budget=self.config.eval_budget)
-                    novelty_val = self.novelty_archive.novelty_score(descriptor)
+                    try:
+                        novelty_val = self.novelty_archive.decayed_novelty(prog, self.current_generation)
+                    except Exception:
+                        novelty_val = self.novelty_archive.novelty_score(descriptor)
                     norm = max_score_val / 10.0
                     fj = fj * (1.0 - nw) + novelty_val * norm * nw
                 except (TypeError, ValueError, RuntimeError):
@@ -2783,6 +2924,33 @@ class EvolutionEngine:
             chosen = _STRATEGY_ENUM_CACHE.get(rec, MutationStrategy.HYBRID)
         else:
             chosen = MutationStrategy.HYBRID
+
+        # Wire adaptive exploration bonus — boost underperforming strategies at this level
+        if self.config.use_strategy_archive and self.strategy_archive is not None:
+            try:
+                _bonus = self.strategy_archive.adaptive_exploration_bonus(rec, self.champion_level)
+                if _bonus > 0.15 and self.rng.random() < _bonus:
+                    # Override to a random non-GROW strategy for exploration
+                    _alt_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
+                    if _alt_strats:
+                        chosen = self.rng.choice(_alt_strats)
+            except Exception:
+                pass
+
+        # Mutation stats awareness: if recent mutations are failing, bias exploration
+        try:
+            from mutation_proposer import DirectedMutator as _DM
+            _mstats = _DM.get_mutation_stats()
+            if _mstats['total_attempts'] > 50:
+                _recent_rate = _mstats['recent_avg_delta']
+                if _recent_rate < -0.5 and self.rng.random() < 0.3:
+                    # Recent mutations are hurting fitness — force exploration
+                    _exploration_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
+                    if _exploration_strats:
+                        chosen = self.rng.choice(_exploration_strats)
+                        self._log(f"[Strategy] Mutation stats override: recent_avg_delta={_recent_rate:.3f}")
+        except Exception:
+            pass
 
         # Unsolved levels 9-11: use higher PERTURBATION_CAPPED probability
         if self.champion_level in self._unsolved_levels_set and self.generations_stalled > 2:
@@ -3314,11 +3482,19 @@ class EvolutionEngine:
         except (TypeError, ValueError, RuntimeError) as exc:
             self._log(f"[Novelty] Skipped: {exc}")
 
+        # Manage novelty archive capacity
+        try:
+            removed = self.novelty_archive.manage_capacity()
+            if removed > 0:
+                self._log(f"[Novelty] Capacity management: removed {removed} low-novelty entries")
+        except Exception:
+            pass
+
     def _select_elite(
         self,
         challengers: list[list[int]],
         results: list[dict[str, Any]],
-    ) -> tuple[list[list[int]], list[float]]:
+    ) -> tuple[list[list[int]], list[float], list[int]]:
         """Select elite challengers for detailed evaluation.
 
         Implements tournament selection with elitism:
@@ -3337,10 +3513,10 @@ class EvolutionEngine:
         full O(N log N) sort. For population=50, elite_size=5, this
         avoids sorting 45 unnecessary elements every generation.
 
-        Returns a tuple of (elite_programs, elite_fitnesses) where
-        elite_fitnesses contains the stage-1 fitness for each elite program
-        (in the same order), enabling _update_champion to skip recomputation
-        for candidates clearly below the champion.
+        Returns a tuple of (elite_programs, elite_fitnesses, elite_indices)
+        where elite_fitnesses contains the stage-1 fitness for each elite
+        program (in the same order), and elite_indices contains the original
+        indices of the selected programs in the challengers list.
         """
         # Compute fitness for stage 1 results and cache for archive recording.
         # Pass half-budget so exec_credit scaling matches the actual evaluation
@@ -3348,7 +3524,7 @@ class EvolutionEngine:
         stage1_budget = self.config.eval_budget // 2
         # R16: Pre-allocate with known size (avoids ~50 list appends per gen)
         n_challengers = len(challengers)
-        scored: list[tuple[float, list[int], dict[str, Any]]] = [None] * n_challengers  # type: ignore[list-item]
+        scored: list[tuple[float, int, list[int], dict[str, Any]]] = [None] * n_challengers  # type: ignore[list-item]
         fitness_cache: list[float] = [0.0] * n_challengers
         _compute = self._compute_fitness  # hoist to local for hot loop
         _use_sec = self.config.use_secondary_tasks
@@ -3378,7 +3554,7 @@ class EvolutionEngine:
                 raw_only=raw_only,
             )
             for idx in range(n_challengers):
-                scored[idx] = (batch_fitnesses[idx], challengers[idx], results[idx])
+                scored[idx] = (batch_fitnesses[idx], idx, challengers[idx], results[idx])
                 fitness_cache[idx] = batch_fitnesses[idx]
         except Exception:
             # Fallback to per-program evaluation on any batch failure
@@ -3396,7 +3572,7 @@ class EvolutionEngine:
                     else:
                         self._secondary_task_results = None
                     fit = _compute(challengers[idx], trace, eval_budget=stage1_budget, raw_only=raw_only)
-                scored[idx] = (fit, challengers[idx], results[idx])
+                scored[idx] = (fit, idx, challengers[idx], results[idx])
                 fitness_cache[idx] = fit
         finally:
             self._secondary_task_results_per_program = None
@@ -3410,8 +3586,9 @@ class EvolutionEngine:
         # comparisons.
         top_k = heapq.nsmallest(elite_size, scored, key=lambda x: -x[0])
 
-        elites = [prog for _, prog, _ in top_k]
-        elite_fits = [fit for fit, _, _ in top_k]
+        elites = [prog for _, _, prog, _ in top_k]
+        elite_fits = [fit for fit, _, _, _ in top_k]
+        elite_indices = [idx for _, idx, _, _ in top_k]
 
         # Also include tournament selection -- but only programs not already
         # in the top-k, to avoid dedup-induced fitness misalignment.
@@ -3428,6 +3605,7 @@ class EvolutionEngine:
         seen_fps: set[int] = {
             (len(p) << 32) ^ (p[0] if p else 0) ^ ((p[-1] << 16) if len(p) > 1 else 0) for p in elites
         }
+        seen_indices: set[int] = set(elite_indices)
         n_scored = len(scored)
         rng = self.rng  # hoist to local
 
@@ -3462,18 +3640,20 @@ class EvolutionEngine:
                 if cf > best_f:
                     best_f = cf
                     best_i = ci
-            win_prog = _scored_get(best_i)[1]
+            win_prog = _scored_get(best_i)[2]
             fp = (
                 (len(win_prog) << 32)
                 ^ (win_prog[0] if win_prog else 0)
                 ^ ((win_prog[-1] << 16) if len(win_prog) > 1 else 0)
             )
-            if fp not in seen_fps:
+            if fp not in seen_fps and best_i not in seen_indices:
                 seen_fps.add(fp)
+                seen_indices.add(best_i)
                 elites.append(win_prog)
                 elite_fits.append(best_f)
+                elite_indices.append(best_i)
 
-        return elites, elite_fits
+        return elites, elite_fits, elite_indices
 
     def _update_champion(
         self,
@@ -4137,6 +4317,310 @@ class EvolutionEngine:
             f"Stalled={self.generations_stalled:2d}  "
             f"T={elapsed:.2f}s"
         )
+
+    @staticmethod
+    def _count_backward_branches(program: list[int]) -> int:
+        """Count backward branches (loop structures) in RV32I bytecode.
+
+        Decodes B-type instructions (BEQ, BNE, BLT, BGE, BLTU, BGEU)
+        by extracting the 13-bit signed immediate and checking for
+        negative offsets (which indicate backward jumps / loops).
+        """
+        if not program:
+            return 0
+        count = 0
+        for word in program:
+            if not isinstance(word, int):
+                continue
+            opcode = word & 0x7F
+            # B-type instructions: opcode = 0x63 (0b1100011)
+            if opcode == 0x63:
+                # B-type immediate encoding (bits 31,7,30:25,11:8 → 12-bit signed)
+                imm = (
+                    ((word >> 31) & 0x1) << 12
+                    | ((word >> 7) & 0x1) << 11
+                    | ((word >> 25) & 0x3F) << 5
+                    | ((word >> 8) & 0xF) << 1
+                )
+                # Sign-extend 13-bit immediate
+                if imm & 0x1000:
+                    imm -= 0x2000
+                if imm < 0:
+                    count += 1
+        return count
+
+    def get_champion_program_analysis(self) -> dict:
+        """Analyze the current champion program structure."""
+        if self.champion is None:
+            return {'exists': False}
+        program = self.champion
+        backward_branches = self._count_backward_branches(program)
+        n_ops = len(program)
+        # Count distinct opcodes
+        opcodes = set()
+        for word in program:
+            if isinstance(word, int):
+                opcodes.add(word & 0x7F)
+        return {
+            'exists': True,
+            'word_count': n_ops,
+            'unique_opcodes': len(opcodes),
+            'backward_branches': backward_branches,
+            'has_ebreak': any(isinstance(w, int) and w == 0x00100073 for w in program),
+            'estimated_complexity': 'simple' if n_ops <= 5 else 'moderate' if n_ops <= 15 else 'complex',
+        }
+
+    def get_champion_summary(self) -> str:
+        """Return a one-line champion summary string."""
+        if self.champion is None:
+            return "No champion"
+        return (
+            f"L{self.champion_level} F={self.champion_fitness} "
+            f"W={len(self.champion)} verified={getattr(self, '_champion_verified', False)}"
+        )
+
+    def get_run_diagnostics(self) -> dict:
+        """Return comprehensive diagnostics for the current run state."""
+        # Graceful None handling for archives
+        novelty_size = 0
+        if self.novelty_archive is not None:
+            try:
+                novelty_size = self.novelty_archive.size
+            except Exception:
+                novelty_size = 0
+
+        strategy_records = 0
+        if self.strategy_archive is not None:
+            try:
+                strategy_records = self.strategy_archive.total_records()
+            except Exception:
+                strategy_records = 0
+
+        strategy_div = 0.0
+        if self.strategy_archive is not None:
+            try:
+                strategy_div = self.strategy_archive.get_strategy_diversity(self.champion_level)
+                if strategy_div is None:
+                    strategy_div = 0.0
+            except Exception:
+                strategy_div = 0.0
+
+        qd_size = 0
+        if self.qd_archive is not None:
+            try:
+                qd_size = self.qd_archive.size
+            except Exception:
+                qd_size = 0
+
+        return {
+            # Champion state
+            'champion_level': self.champion_level,
+            'champion_fitness': self.champion_fitness,
+            'champion_words': len(self.champion) if self.champion else 0,
+            'champion_verified': getattr(self, '_champion_verified', False),
+            'generations_stalled': self.generations_stalled,
+            'current_generation': self.current_generation,
+            # Archive sizes
+            'novelty_archive_size': novelty_size,
+            'qd_archive_size': qd_size,
+            'strategy_archive_records': strategy_records,
+            'hall_of_fame_size': len(self._hall_of_fame._heap),
+            # Strategy diversity
+            'strategy_diversity': strategy_div,
+            # Training data
+            'recurrent_examples': self.recurrent_examples_count,
+            # Fitness velocity
+            'fitness_velocity': getattr(self, '_fitness_velocity', 0.0),
+            'fitness_momentum': getattr(self, '_fitness_momentum', 0.0),
+            # Mutation stats
+            'mutation_rate': self.config.mutation_rate,
+            'population_size': self.config.population_size,
+            'elite_ratio': self.config.elite_ratio,
+        }
+
+    def get_performance_metrics(self) -> dict:
+        """Return performance metrics for the current run."""
+        return {
+            'current_generation': self.current_generation,
+            'population_size': self.config.population_size,
+            'elite_ratio': self.config.elite_ratio,
+            'eval_budget': self.config.eval_budget,
+            'model_guided_ratio': self._get_model_guided_ratio(),
+            'mutation_rate': self.config.mutation_rate,
+            'champion_words': len(self.champion) if self.champion else 0,
+            'novelty_weight': self.config.novelty_weight,
+            'qd_bonus_weight': self.config.qd_bonus_weight,
+            'total_recurrent_examples': self.recurrent_examples_count,
+            'hof_size': len(self._hall_of_fame._heap),
+        }
+
+    def get_archive_summary(self) -> dict:
+        """Aggregate summary of all archive states."""
+        novelty = self.novelty_archive
+        qd = self.qd_archive
+        sa = self.strategy_archive
+        return {
+            'novelty': {
+                'size': novelty.size if novelty else 0,
+                'threshold': novelty.novelty_threshold if novelty else 0,
+                'diversity': novelty.get_diversity_score() if novelty else 0.0,
+            },
+            'qd': {
+                'coverage': qd.coverage() if qd else 0.0,
+                'size': qd.size if qd else 0,
+                'cells': qd.num_bins * qd.num_bins if qd else 0,
+                'fitness_dist': qd.get_fitness_distribution() if qd else {},
+            },
+            'strategy': {
+                'total_records': sa.total_records() if sa else 0,
+                'diversity': sa.get_strategy_diversity(self.champion_level) if sa else 0.0,
+            },
+            'hall_of_fame': len(self._hall_of_fame._heap),
+        }
+
+    def get_training_summary(self) -> dict:
+        """Return training-relevant metrics for the retrain pipeline."""
+        return {
+            'recurrent_examples': self.recurrent_examples_count,
+            'champion_fitness': self.champion_fitness,
+            'champion_level': self.champion_level,
+            'generations_stalled': self.generations_stalled,
+            'fitness_velocity': getattr(self, '_fitness_velocity', 0.0),
+            'champion_verified': getattr(self, '_champion_verified', False),
+            'champion_verify_score': getattr(self, '_champion_verify_score', 0.0),
+            'strategy_diversity': self.strategy_archive.get_strategy_diversity(self.champion_level) if self.strategy_archive else 0.0,
+            'novelty_diversity': self.novelty_archive.get_diversity_score() if self.novelty_archive else 0.0,
+            'qd_coverage': self.qd_archive.coverage() if self.qd_archive else 0.0,
+        }
+
+    def get_run_summary(self) -> dict:
+        """Single consolidated summary of the entire run state."""
+        return {
+            'diagnostics': self.get_run_diagnostics(),
+            'performance': self.get_performance_metrics(),
+            'training': self.get_training_summary(),
+            'archives': self.get_archive_summary(),
+            'champion_summary': self.get_champion_summary(),
+        }
+
+    def get_evolution_state(self) -> dict:
+        """Full evolution state for serialization/debugging."""
+        return {
+            'champion': self.get_champion_program_analysis(),
+            'run_summary': self.get_run_summary(),
+            'state': {
+                'current_generation': self.current_generation,
+                'champion_level': self.champion_level,
+                'champion_fitness': self.champion_fitness,
+                'generations_stalled': self.generations_stalled,
+            },
+            'config': {
+                'max_generations': self.config.max_generations,
+                'population_size': self.config.population_size,
+                'elite_ratio': self.config.elite_ratio,
+                'mutation_rate': self.config.mutation_rate,
+                'auto_curriculum': self.config.auto_curriculum,
+                'use_gpu': self.config.use_gpu,
+            },
+        }
+
+    def get_comprehensive_state(self) -> dict:
+        """All-in-one state snapshot for dashboards, export, and debugging."""
+        return {
+            'evolution': self.get_evolution_state(),
+            'champion_program': self.get_champion_program_analysis(),
+            'run_diagnostics': self.get_run_diagnostics(),
+            'performance': self.get_performance_metrics(),
+            'training': self.get_training_summary(),
+            'archives': self.get_archive_summary(),
+            'champion_summary': self.get_champion_summary(),
+        }
+
+    def log_comprehensive_diagnostics(self) -> None:
+        """Log comprehensive diagnostics for debugging and analysis."""
+        state = self.get_comprehensive_state()
+        evo = state.get("evolution", {})
+        evo_state = evo.get("state", {})
+        self._log('=== Comprehensive Diagnostics ===')
+        self._log(f'  Champion: {self.get_champion_summary()}')
+        self._log(f'  Generation: {evo_state.get("current_generation", 0)}')
+        self._log(f'  Fitness velocity: {evo_state.get("fitness_velocity", 0):.4f}')
+        archives = state.get("archives", {})
+        novelty = archives.get("novelty", {})
+        qd = archives.get("qd", {})
+        strategy = archives.get("strategy", {})
+        self._log(f'  Archives: novelty={novelty.get("size", 0)}, '
+                  f'qd_coverage={qd.get("coverage", 0.0):.2%}')
+        self._log(f'  Strategy diversity: {strategy.get("diversity", 0.0):.3f}')
+        perf = state.get("performance", {})
+        self._log(f'  Performance: mut_rate={perf.get("mutation_rate", 0.0):.2f}, '
+                  f'pop={perf.get("population_size", 0)}')
+        self._log('=== End Diagnostics ===')
+
+    def log_diagnostics(self) -> None:
+        """Log run diagnostics in a readable format."""
+        diag = self.get_run_diagnostics()
+        lines = [
+            "=== Run Diagnostics ===",
+            f"  Champion: L{diag['champion_level']} fitness={diag['champion_fitness']:.2f} "
+            f"words={diag['champion_words']} verified={diag['champion_verified']}",
+            f"  Generation: {diag['current_generation']} stalled={diag['generations_stalled']}",
+            f"  Archives: novelty={diag['novelty_archive_size']} qd={diag['qd_archive_size']} "
+            f"strategy={diag['strategy_archive_records']} hof={diag['hall_of_fame_size']}",
+            f"  Strategy diversity: {diag['strategy_diversity']:.3f}",
+            f"  Recurrent examples: {diag['recurrent_examples']}",
+            f"  Fitness velocity: {diag['fitness_velocity']:.4f} momentum={diag['fitness_momentum']:.4f}",
+            f"  Mutation rate: {diag['mutation_rate']:.3f} pop={diag['population_size']} elite={diag['elite_ratio']:.2f}",
+        ]
+        self._log("\n".join(lines))
+
+    def export_state_for_analysis(self) -> dict:
+        """Export full engine state for external analysis.
+
+        Returns a serializable dict with all key metrics, archive contents,
+        and configuration for use in Jupyter notebooks or dashboards.
+        """
+        state = {
+            'timestamp': __import__('time').time(),
+            'generation': self.current_generation,
+            'champion': {
+                'level': self.champion_level,
+                'fitness': self.champion_fitness,
+                'words': len(self.champion) if self.champion else 0,
+                'program_hex': [hex(w) for w in (self.champion or [])],
+                'verified': getattr(self, '_champion_verified', False),
+            },
+            'config': {
+                'population_size': self.config.population_size,
+                'elite_ratio': self.config.elite_ratio,
+                'mutation_rate': self.config.mutation_rate,
+                'novelty_weight': self.config.novelty_weight,
+            },
+            'archives': {
+                'novelty_size': self.novelty_archive.size if self.novelty_archive else 0,
+                'qd_occupied': self.qd_archive.size if self.qd_archive else 0,
+                'qd_coverage': self.qd_archive.coverage() if self.qd_archive else 0.0,
+                'hof_size': len(self._hall_of_fame._heap),
+            },
+            'stall': {
+                'generations_stalled': self.generations_stalled,
+                'fitness_velocity': getattr(self, '_fitness_velocity', 0.0),
+            },
+            'diagnostics': self.get_run_diagnostics(),
+        }
+        return state
+
+    def save_state_to_file(self, path: str) -> bool:
+        """Save comprehensive state to a JSON file for analysis."""
+        try:
+            state = self.get_comprehensive_state()
+            import json
+            with open(path, 'w') as f:
+                json.dump(state, f, indent=2, default=str)
+            return True
+        except Exception as e:
+            self._log(f"[StateExport] Failed to save to {path}: {e}")
+            return False
 
     def _close_log_handle(self) -> None:
         """Close the lazy log file handle if open.

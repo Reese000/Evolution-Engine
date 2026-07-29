@@ -20,6 +20,10 @@ extract_behavioral_descriptor(trace, program, budget) -> dict
 SparseArchive(k_neighbors, novelty_threshold)
     .add_to_archive(descriptor, metadata, check_threshold) -> (bool, float)
     .novelty_score(descriptor) -> float
+    .get_diversity_score() -> float
+    .recent_novelty_scores(n) -> list[float]
+    .trim_archive(max_entries) -> int
+    .get_archive_summary() -> dict
     .size -> int
 """
 
@@ -323,6 +327,154 @@ class SparseArchive:
     def recent_descriptors(self, n: int = 10) -> list[dict[str, float]]:
         """Return the last *n* descriptor dicts added to the archive."""
         return [entry[1] for entry in self._entries[-n:]]
+
+    def recent_novelty_scores(self, n: int = 10) -> list[float]:
+        """Return the novelty scores of the last *n* entries added to the archive."""
+        if self.size == 0:
+            return []
+        if self._tree_dirty:
+            self._rebuild_tree()
+        if self._tree is None:
+            return [0.0] * min(n, self.size)
+        n = min(n, self.size)
+        scores = []
+        for entry in self._entries[-n:]:
+            flat = entry[0]
+            k = min(self.k_neighbors, self.size)
+            dists, _ = self._tree.query(np.array(flat), k=k)
+            if k == 1:
+                scores.append(float(dists))
+            else:
+                scores.append(float(np.mean(dists)))
+        return scores
+
+    def trim_archive(self, max_entries: int = 500) -> int:
+        """FIFO-evict oldest entries when the archive exceeds *max_entries*.
+
+        Returns the number of entries removed.
+        """
+        if self.size <= max_entries:
+            return 0
+        excess = self.size - max_entries
+        self._entries = self._entries[excess:]
+        self.size = len(self._entries)
+        self._tree_dirty = True
+        return excess
+
+    def get_diversity_score(self) -> float:
+        """Shannon entropy of the distribution of descriptor values, normalised to [0, 1].
+
+        Quantifies how spread-out the archive is in descriptor space.
+        Returns 0.0 for an empty or single-entry archive.
+        """
+        if self.size <= 1:
+            return 0.0
+        # Build a coarse histogram across all descriptor dimensions.
+        # Each descriptor value is binned into 10 buckets over [0, 1].
+        n_bins = 10
+        bin_counts: dict[int, int] = {}
+        total = 0
+        for entry in self._entries:
+            for v in entry[1].values():
+                b = int(min(v, 0.9999) * n_bins)
+                bin_counts[b] = bin_counts.get(b, 0) + 1
+                total += 1
+        if total == 0:
+            return 0.0
+        entropy = 0.0
+        for count in bin_counts.values():
+            if count > 0:
+                p = count / total
+                entropy -= p * math.log2(p)
+        # Normalise by the maximum possible entropy (uniform distribution)
+        max_entropy = math.log2(n_bins) if n_bins > 1 else 1.0
+        return entropy / max_entropy if max_entropy > 0 else 0.0
+
+    def get_archive_summary(self) -> dict:
+        """Return archive summary for diagnostics."""
+        recent = self.recent_novelty_scores(10)
+        return {
+            "size": self.size,
+            "k_neighbors": self.k_neighbors,
+            "novelty_threshold": self.novelty_threshold,
+            "diversity_score": self.get_diversity_score(),
+            "avg_novelty": sum(recent) / len(recent) if recent else 0.0,
+        }
+
+    # ------------------------------------------------------------------
+    # Capacity management & decayed novelty
+    # ------------------------------------------------------------------
+
+    def manage_capacity(self, max_size: int | None = None) -> int:
+        """Trim the archive to *max_size* by removing lowest-novelty entries first.
+
+        *max_size* defaults to ``self.max_archive_size`` if that attribute
+        exists, otherwise ``1000``.
+
+        Returns the number of entries removed.
+        """
+        effective = max_size if max_size is not None else getattr(self, "max_archive_size", 1000)
+        if self.size <= effective:
+            return 0
+
+        if self._tree_dirty:
+            self._rebuild_tree()
+
+        # Compute novelty score for every entry against the *current* archive.
+        scored: list[tuple[float, int]] = []
+        k = min(self.k_neighbors, self.size)
+        for idx, entry in enumerate(self._entries):
+            flat = entry[0]
+            if self._tree is not None and self.size > 0:
+                dists, _ = self._tree.query(np.array(flat), k=k)
+                score = float(np.mean(dists)) if k > 1 else float(dists)
+            else:
+                score = 0.0
+            scored.append((score, idx))
+
+        # Sort ascending by novelty – lowest-novelty entries go first.
+        scored.sort(key=lambda t: t[0])
+
+        n_remove = self.size - effective
+        remove_indices = {idx for _, idx in scored[:n_remove]}
+        self._entries = [e for i, e in enumerate(self._entries) if i not in remove_indices]
+        self.size = len(self._entries)
+        self._tree_dirty = True
+        return n_remove
+
+    def decayed_novelty(
+        self,
+        program: list[int],
+        current_generation: int,
+        half_life: int = 500,
+    ) -> float:
+        """Compute novelty with exponential time-decay.
+
+        Finds *program* in the archive (by matching the program stored in
+        each entry's metadata), retrieves its base novelty score, and
+        applies the decay factor ``exp(-0.693 * age / half_life)``
+        where ``age = current_generation - program_generation``.
+
+        Returns ``0.0`` if the program is not found in the archive.
+        """
+        # Locate the entry whose stored program matches.
+        program_generation: int | None = None
+        flat_descriptor: list[float] | None = None
+        for entry in self._entries:
+            meta = entry[2]
+            stored_prog = meta.get("program") if isinstance(meta, dict) else None
+            if stored_prog is not None and stored_prog == program:
+                program_generation = meta.get("generation") if isinstance(meta, dict) else None
+                flat_descriptor = entry[0]
+                break
+
+        if flat_descriptor is None or program_generation is None:
+            return 0.0
+
+        base_novelty = self._k_nn_distance(flat_descriptor)
+        age = current_generation - int(program_generation)
+        decay = math.exp(-0.693 * age / half_life)
+        return base_novelty * decay
 
     # ------------------------------------------------------------------
     # Serialization

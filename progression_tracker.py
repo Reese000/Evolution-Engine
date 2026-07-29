@@ -204,6 +204,182 @@ class ProgressionTracker:
                 break
         return count
 
+    def get_plateau_analysis(self, window: int = 10) -> Dict[str, Any]:
+        """Detailed plateau analysis over the last *window* cycles.
+
+        Returns
+        -------
+        dict with keys:
+            is_plateau          – True when max-min < 5 % of mean fitness
+            plateau_start_cycle – cycle number where fitness first stopped improving
+            plateau_duration    – number of cycles since the plateau started
+            fitness_variance    – variance of fitness values in the window
+            trend_slope         – linear-regression slope (fitness per cycle)
+            status              – 'plateau' | 'improving' | 'declining'
+        When fewer than *window* entries exist:
+            status              – 'insufficient_data'
+            cycles_available    – how many entries exist
+        """
+        if len(self.history) < window:
+            return {
+                "status": "insufficient_data",
+                "cycles_available": len(self.history),
+            }
+
+        recent = self.history[-window:]
+        fitness_values = [m.fitness for m in recent]
+        cycle_numbers = [m.cycle for m in recent]
+
+        n = len(fitness_values)
+        mean_val = sum(fitness_values) / n
+        min_val = min(fitness_values)
+        max_val = max(fitness_values)
+
+        # --- is_plateau: range < threshold * mean (5 % relative variation) ---
+        threshold = 0.05
+        is_plateau = (max_val - min_val) < (threshold * mean_val) if mean_val != 0 else False
+
+        # --- fitness_variance ---
+        fitness_variance = sum((v - mean_val) ** 2 for v in fitness_values) / n
+
+        # --- trend_slope via ordinary least-squares linear regression ---
+        #   y = slope * x + intercept
+        x = list(range(n))
+        x_mean = sum(x) / n
+        slope_num = sum((x[i] - x_mean) * (fitness_values[i] - mean_val) for i in range(n))
+        slope_den = sum((x[i] - x_mean) ** 2 for i in range(n))
+        trend_slope = slope_num / slope_den if slope_den != 0 else 0.0
+
+        # --- plateau_start_cycle ---
+        #   First cycle in the window after which fitness never exceeded
+        #   the current running maximum.
+        running_max = float("-inf")
+        plateau_start_cycle = cycle_numbers[-1]  # default: no plateau
+        for i, fv in enumerate(fitness_values):
+            if fv > running_max:
+                running_max = fv
+                plateau_start_cycle = cycle_numbers[i]
+
+        # If the peak is the very first entry, the plateau spans the
+        # entire window – report the first cycle.
+        plateau_duration = cycle_numbers[-1] - plateau_start_cycle
+
+        # --- status classification ---
+        if is_plateau:
+            status = "plateau"
+        elif trend_slope > 0:
+            status = "improving"
+        else:
+            status = "declining"
+
+        return {
+            "is_plateau": is_plateau,
+            "plateau_start_cycle": plateau_start_cycle,
+            "plateau_duration": plateau_duration,
+            "fitness_variance": fitness_variance,
+            "trend_slope": trend_slope,
+            "status": status,
+        }
+
+    def compare_windows(
+        self,
+        metric: str,
+        window_a: int = 5,
+        window_b: int = 5,
+    ) -> Dict[str, Any]:
+        """Compare a metric across two consecutive time windows.
+
+        *window_b* is the older slice, *window_a* the newer.
+
+        Parameters
+        ----------
+        metric : str
+            CycleMetrics field name (e.g. 'fitness', 'val_loss', 'words').
+        window_a, window_b : int
+            Number of cycles in each window.
+
+        Returns
+        -------
+        dict with keys:
+            metric          – the metric name
+            window_a_mean   – mean of the newer window
+            window_b_mean   – mean of the older window
+            improvement     – mean_a − mean_b
+            percent_change  – (improvement / mean_b) × 100
+            direction       – 'improving' | 'stable' | 'declining'
+            window_a_stddev – standard deviation of the newer window
+            window_b_stddev – standard deviation of the older window
+        """
+        if not self.history:
+            return {
+                "metric": metric,
+                "window_a_mean": 0.0,
+                "window_b_mean": 0.0,
+                "improvement": 0.0,
+                "percent_change": 0.0,
+                "direction": "stable",
+                "window_a_stddev": 0.0,
+                "window_b_stddev": 0.0,
+            }
+
+        needed = window_a + window_b
+        if len(self.history) < needed:
+            # Fall back: use whatever is available, split as evenly as possible
+            total = len(self.history)
+            window_b_actual = min(window_b, total)
+            window_a_actual = min(window_a, total - window_b_actual)
+        else:
+            window_a_actual = window_a
+            window_b_actual = window_b
+
+        # Slice: older (window_b) then newer (window_a)
+        start_b = len(self.history) - window_a_actual - window_b_actual
+        end_b = start_b + window_b_actual
+        slice_b = self.history[start_b:end_b]  # older window
+        slice_a = self.history[end_b:]  # newer window
+
+        def _extract(entries: list, attr_name: str) -> List[float]:
+            values = []
+            for m in entries:
+                v = getattr(m, attr_name, None)
+                if v is not None:
+                    values.append(float(v))
+            return values
+
+        vals_b = _extract(slice_b, metric)
+        vals_a = _extract(slice_a, metric)
+
+        def _stats(values: List[float]):
+            if not values:
+                return 0.0, 0.0
+            mean = sum(values) / len(values)
+            variance = sum((v - mean) ** 2 for v in values) / len(values)
+            return mean, variance**0.5
+
+        mean_b, std_b = _stats(vals_b)
+        mean_a, std_a = _stats(vals_a)
+
+        improvement = mean_a - mean_b
+        percent_change = (improvement / mean_b * 100) if mean_b != 0 else 0.0
+
+        if improvement > 0:
+            direction = "improving"
+        elif improvement < 0:
+            direction = "declining"
+        else:
+            direction = "stable"
+
+        return {
+            "metric": metric,
+            "window_a_mean": mean_a,
+            "window_b_mean": mean_b,
+            "improvement": improvement,
+            "percent_change": percent_change,
+            "direction": direction,
+            "window_a_stddev": std_a,
+            "window_b_stddev": std_b,
+        }
+
     def emit_snapshot(self, window: int = 20, current_archive_size: int = None) -> "TrendSnapshot":
         """Create a TrendSnapshot from the tracker's history for SaturationDetector.
 

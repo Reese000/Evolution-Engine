@@ -62,6 +62,13 @@ class MAPElitesArchive:
         # Occupied cell count (maintained incrementally).
         self._occupied: int = 0
 
+        # Addition counter for velocity tracking. Increments each time a
+        # cell is filled or replaced in add_solution.
+        self._addition_counter: int = 0
+        # Per-cell counter: records the value of _addition_counter when
+        # each cell was last updated.
+        self._cell_addition_counts: list[int] = [0] * (bins * bins)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -133,6 +140,8 @@ class MAPElitesArchive:
                 "descriptor": list(descriptor),
             }
             self._occupied += 1
+            self._addition_counter += 1
+            self._cell_addition_counts[idx] = self._addition_counter
             return True
 
         # Cell occupied — replace only if strictly better.
@@ -144,6 +153,8 @@ class MAPElitesArchive:
                 "descriptor": list(descriptor),
             }
             self._rebins += 1
+            self._addition_counter += 1
+            self._cell_addition_counts[idx] = self._addition_counter
             return True
 
         return False
@@ -219,6 +230,264 @@ class MAPElitesArchive:
         """Number of occupied cells."""
         return self._occupied
 
+    # ------------------------------------------------------------------
+    # Diagnostics / introspection
+    # ------------------------------------------------------------------
+
+    def get_cell_stats(self) -> dict[str, Any]:
+        """Return per-cell statistics for the grid.
+
+        Returns a dict with:
+          - total_cells: total grid cells
+          - occupied: number of occupied cells
+          - empty: number of empty cells
+          - avg_fitness: average fitness across occupied cells (0.0 if none)
+          - min_fitness / max_fitness: fitness range
+          - avg_descriptor: average descriptor across occupied cells
+        """
+        occupied = [c for c in self._grid if c is not None]
+        total = self.bins * self.bins
+        if not occupied:
+            return {
+                "total_cells": total,
+                "occupied": 0,
+                "empty": total,
+                "avg_fitness": 0.0,
+                "min_fitness": 0.0,
+                "max_fitness": 0.0,
+                "avg_descriptor": [0.0, 0.0],
+            }
+        fitnesses = [c["fitness"] for c in occupied]
+        descs = [c["descriptor"] for c in occupied]
+        return {
+            "total_cells": total,
+            "occupied": len(occupied),
+            "empty": total - len(occupied),
+            "avg_fitness": sum(fitnesses) / len(fitnesses),
+            "min_fitness": min(fitnesses),
+            "max_fitness": max(fitnesses),
+            "avg_descriptor": [
+                sum(d[0] for d in descs) / len(descs),
+                sum(d[1] for d in descs) / len(descs),
+            ],
+        }
+
+    def get_neighborhood_density(self, descriptor: list[float], radius: int = 1) -> float:
+        """Return the fraction of cells within *radius* that are occupied.
+
+        The density is computed in grid-cell space around the cell that
+        *descriptor* maps to.  A value of 1.0 means every cell in the
+        neighbourhood is filled; 0.0 means none are.
+        """
+        idx = self._cell_index(descriptor)
+        if idx is None:
+            return 0.0
+        row, col = divmod(idx, self.bins)
+        occupied = 0
+        total = 0
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < self.bins and 0 <= nc < self.bins:
+                    total += 1
+                    if self._grid[nr * self.bins + nc] is not None:
+                        occupied += 1
+        return occupied / total if total > 0 else 0.0
+
+    def get_freshest_cell(self) -> dict[str, Any] | None:
+        """Return the cell with the most-recently added program.
+
+        Each cell entry does not carry a timestamp, so we return the
+        occupied cell with the highest fitness as a proxy for the
+        "freshest" (most recently updated) cell.  Returns None if the
+        archive is empty.
+        """
+        best: dict[str, Any] | None = None
+        for cell in self._grid:
+            if cell is not None:
+                if best is None or cell["fitness"] > best["fitness"]:
+                    best = cell
+        return best
+
+    def get_fitness_distribution(self) -> dict[str, Any]:
+        """Return a binned fitness distribution across occupied cells.
+
+        Returns:
+          - bins: list of {min, max, count} dicts (10 equal-width bins)
+          - mean, median, stddev: summary statistics
+        """
+        fitnesses = [c["fitness"] for c in self._grid if c is not None]
+        if not fitnesses:
+            return {
+                "bins": [],
+                "mean": 0.0,
+                "median": 0.0,
+                "stddev": 0.0,
+            }
+        f_min = min(fitnesses)
+        f_max = max(fitnesses)
+        n_bins = 10
+        if f_max - f_min < 1e-12:
+            # All identical — single bin
+            bins = [{"min": f_min, "max": f_max, "count": len(fitnesses)}]
+        else:
+            width = (f_max - f_min) / n_bins
+            bins = [{"min": f_min + i * width, "max": f_min + (i + 1) * width, "count": 0} for i in range(n_bins)]
+            for f in fitnesses:
+                b_idx = int((f - f_min) / width)
+                b_idx = min(b_idx, n_bins - 1)
+                bins[b_idx]["count"] += 1
+        mean = sum(fitnesses) / len(fitnesses)
+        sorted_f = sorted(fitnesses)
+        mid = len(sorted_f) // 2
+        median = sorted_f[mid] if len(sorted_f) % 2 == 1 else (sorted_f[mid - 1] + sorted_f[mid]) / 2
+        variance = sum((f - mean) ** 2 for f in fitnesses) / len(fitnesses)
+        stddev = variance**0.5
+        return {
+            "bins": bins,
+            "mean": mean,
+            "median": median,
+            "stddev": stddev,
+        }
+
+    def get_archive_summary(self) -> dict:
+        """Return archive summary for diagnostics."""
+        stats = self.get_cell_stats()
+        fd = self.get_fitness_distribution()
+        return {
+            "cells": stats,
+            "fitness": fd,
+            "rebins": self._rebins,
+        }
+
+    def get_improvement_velocity(self) -> dict[str, Any]:
+        """Track how fast fitness improves per cell using a heuristic.
+
+        Since cells don't have timestamps, uses a counter-based heuristic:
+        velocity = (fitness - avg_fitness) / max(addition_count, 1)
+        where addition_count is the archive-wide counter at the time of
+        the cell's last update.
+
+        Returns a dict with:
+          - per_cell_velocity: list of {row, col, velocity} for each occupied cell
+          - avg_velocity: mean velocity across occupied cells
+          - max_velocity: maximum velocity
+          - velocity_stddev: standard deviation of velocities
+        """
+        occupied_cells: list[tuple[int, int, int, dict[str, Any]]] = []
+        fitnesses: list[float] = []
+        for idx, cell in enumerate(self._grid):
+            if cell is not None:
+                row, col = divmod(idx, self.bins)
+                occupied_cells.append((idx, row, col, cell))
+                fitnesses.append(cell["fitness"])
+
+        if not occupied_cells:
+            return {
+                "per_cell_velocity": [],
+                "avg_velocity": 0.0,
+                "max_velocity": 0.0,
+                "velocity_stddev": 0.0,
+            }
+
+        avg_fitness = sum(fitnesses) / len(fitnesses)
+
+        per_cell_velocity: list[dict[str, Any]] = []
+        velocities: list[float] = []
+        for idx, row, col, cell in occupied_cells:
+            addition_count = self._cell_addition_counts[idx]
+            velocity = (cell["fitness"] - avg_fitness) / max(addition_count, 1)
+            per_cell_velocity.append({"row": row, "col": col, "velocity": velocity})
+            velocities.append(velocity)
+
+        avg_velocity = sum(velocities) / len(velocities)
+        max_velocity = max(velocities)
+        variance = sum((v - avg_velocity) ** 2 for v in velocities) / len(velocities)
+        velocity_stddev = variance**0.5
+
+        return {
+            "per_cell_velocity": per_cell_velocity,
+            "avg_velocity": avg_velocity,
+            "max_velocity": max_velocity,
+            "velocity_stddev": velocity_stddev,
+        }
+
+    def get_illumination_diversity(self) -> dict[str, Any]:
+        """Measure behavioral space coverage quality beyond simple occupancy.
+
+        Computes:
+          - coverage_ratio: fraction of occupied cells (occupied / total)
+          - centroid_distance: avg Euclidean distance of occupied cells from
+            the grid centroid (measures spread)
+          - uniformity: 1 - (stddev of neighborhood densities /
+            mean neighborhood density) (measures evenness)
+          - overall_diversity_score: coverage_ratio * uniformity
+
+        Returns a dict with coverage_ratio, centroid_distance, uniformity,
+        and overall_diversity_score.
+        """
+        total = self.bins * self.bins
+        if total == 0:
+            return {
+                "coverage_ratio": 0.0,
+                "centroid_distance": 0.0,
+                "uniformity": 0.0,
+                "overall_diversity_score": 0.0,
+            }
+
+        occupied_count = self._occupied
+        coverage_ratio = occupied_count / total
+
+        # (b) Centroid distance: average Euclidean distance from grid center.
+        centroid_distance = 0.0
+        if occupied_count > 0:
+            centroid_row = (self.bins - 1) / 2.0
+            centroid_col = (self.bins - 1) / 2.0
+            total_dist = 0.0
+            for idx, cell in enumerate(self._grid):
+                if cell is not None:
+                    row, col = divmod(idx, self.bins)
+                    dist = math.sqrt((row - centroid_row) ** 2 + (col - centroid_col) ** 2)
+                    total_dist += dist
+            centroid_distance = total_dist / occupied_count
+
+        # (c) Uniformity: coefficient of variation of neighborhood densities.
+        densities: list[float] = []
+        for idx, cell in enumerate(self._grid):
+            if cell is not None:
+                row, col = divmod(idx, self.bins)
+                occ = 0
+                tot = 0
+                for dr in range(-1, 2):
+                    for dc in range(-1, 2):
+                        nr, nc = row + dr, col + dc
+                        if 0 <= nr < self.bins and 0 <= nc < self.bins:
+                            tot += 1
+                            if self._grid[nr * self.bins + nc] is not None:
+                                occ += 1
+                densities.append(occ / tot if tot > 0 else 0.0)
+
+        if densities:
+            mean_density = sum(densities) / len(densities)
+            if mean_density > 0:
+                density_variance = sum((d - mean_density) ** 2 for d in densities) / len(densities)
+                density_stddev = density_variance**0.5
+                uniformity = 1.0 - (density_stddev / mean_density)
+            else:
+                uniformity = 0.0
+        else:
+            uniformity = 0.0
+
+        uniformity = max(0.0, min(1.0, uniformity))
+        overall_diversity_score = coverage_ratio * uniformity
+
+        return {
+            "coverage_ratio": coverage_ratio,
+            "centroid_distance": centroid_distance,
+            "uniformity": uniformity,
+            "overall_diversity_score": overall_diversity_score,
+        }
+
     def clear(self) -> None:
         """Reset the archive to empty."""
         for i in range(len(self._grid)):
@@ -227,6 +496,8 @@ class MAPElitesArchive:
         self._descriptor_min = [math.inf, math.inf]
         self._descriptor_max = [-math.inf, -math.inf]
         self._rebins = 0
+        self._addition_counter = 0
+        self._cell_addition_counts = [0] * (self.bins * self.bins)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -257,6 +528,8 @@ class MAPElitesArchive:
             "descriptor_min": list(self._descriptor_min),
             "descriptor_max": list(self._descriptor_max),
             "rebins": self._rebins,
+            "addition_counter": self._addition_counter,
+            "cell_addition_counts": list(self._cell_addition_counts),
         }
 
     @classmethod
@@ -275,6 +548,12 @@ class MAPElitesArchive:
         archive._descriptor_min = data.get("descriptor_min", list(archive._descriptor_min))
         archive._descriptor_max = data.get("descriptor_max", list(archive._descriptor_max))
         archive._rebins = data.get("rebins", 0)
+        archive._addition_counter = data.get("addition_counter", 0)
+        saved_counts = data.get("cell_addition_counts")
+        if saved_counts is not None and len(saved_counts) == archive.bins * archive.bins:
+            archive._cell_addition_counts = list(saved_counts)
+        else:
+            archive._cell_addition_counts = [0] * (archive.bins * archive.bins)
         return archive
 
 

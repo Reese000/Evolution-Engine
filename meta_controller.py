@@ -121,12 +121,13 @@ class TelemetrySnapshot:
 class TuningAction:
     """Record of a tuning decision made by the MetaController."""
 
-    def __init__(self, domain: str, param: str, old_value: Any, new_value: Any, reason: str):
+    def __init__(self, domain: str, param: str, old_value: Any, new_value: Any, reason: str, cycle: int = 0):
         self.domain = domain  # "retrain", "evolution", "recovery"
         self.param = param  # e.g. "retrain_lr"
         self.old_value = old_value
         self.new_value = new_value
         self.reason = reason  # e.g. "stagnation: fitness_plateau"
+        self.cycle = cycle  # which cycle this tuning was applied in
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -135,6 +136,7 @@ class TuningAction:
             "old": self.old_value,
             "new": self.new_value,
             "reason": self.reason,
+            "cycle": self.cycle,
         }
 
 
@@ -255,10 +257,19 @@ class MetaController:
         self._last_stagnation_state: str = ""
         self._state_ring: collections.deque = collections.deque(maxlen=16)
 
+        # Total consecutive stagnation events across the entire run.
+        # Unlike _consecutive_stagnation_counter (which resets on state change),
+        # this accumulates across all stagnation types for effectiveness scoring.
+        self._total_consecutive_stagnation: int = 0
+
         # R16: Cache stagnation detection result per cycle (both tune_retrain_params
         # and tune_evolution_params call detect_stagnation; cache avoids redundant scan).
         self._cached_stagnation: Optional[StagnationResult] = None
         self._cached_stagnation_len: int = -1  # len(self.telemetry) when cached
+
+        # Escalation event history — tracks stagnation detections that triggered
+        # tuning actions, with effectiveness score at time of detection.
+        self._escalation_history: List[Dict[str, Any]] = []
 
         # Lazy log file handle (avoids fd exhaustion on long runs)
         self._log_file = None
@@ -799,6 +810,13 @@ class MetaController:
         Rollback triggers when:
         - Val loss regression persists for 2+ cycles AND
         - Fitness hasn't improved for 2+ cycles
+        OR
+        - Effectiveness score is critically low (<0.2) AND
+        - Fitness hasn't improved for 3+ cycles (sustained stagnation)
+
+        The effectiveness check catches cases where tuning actions are
+        consistently ineffective and the system is stuck, even without
+        an explicit val_loss regression signal.
         """
         if len(self.telemetry) < 2:
             return False
@@ -813,6 +831,20 @@ class MetaController:
                 )
                 self._rollback_count += 1
                 return True
+
+        # Trigger on critically low effectiveness with sustained stagnation.
+        # Catches systems stuck in a local minimum where tuning actions
+        # are consistently ineffective, even without explicit regression.
+        effectiveness = self.get_effectiveness_score()
+        if effectiveness < 0.2 and self.cycles_since_fitness_improvement >= 3:
+            self._log(
+                f"ROLLBACK: effectiveness_score={effectiveness:.3f} < 0.2, "
+                f"cycles_since_fitness_improvement="
+                f"{self.cycles_since_fitness_improvement}"
+            )
+            self._rollback_count += 1
+            return True
+
         return False
 
     def get_best_checkpoint(self) -> Optional[str]:
@@ -930,6 +962,59 @@ class MetaController:
             "tuning_history": [a.to_dict() for a in self._tuning_log[-20:]],  # Last 20 actions
         }
 
+    def get_tuning_history_summary(self) -> Dict[str, Any]:
+        """Return a summary of the tuning history.
+
+        Provides aggregate stats and recent actions for dashboards
+        and debugging. Computed in O(N) over the tuning log.
+        """
+        log = self._tuning_log
+        total = len(log)
+
+        # Build per-domain counts
+        actions_by_domain: Dict[str, int] = {}
+        for action in log:
+            actions_by_domain[action.domain] = actions_by_domain.get(action.domain, 0) + 1
+
+        # Build per-stagnation-state counts from reason strings.
+        # Reasons follow patterns: "stagnation: <value>", "regression: <value>",
+        # "recovery", "fallback: <desc>". Extract the state label after the prefix.
+        actions_by_state: Dict[str, int] = {}
+        for action in log:
+            state_label: str
+            if action.reason.startswith("stagnation: "):
+                state_label = action.reason.split("(")[0].split(":")[1].strip()
+            elif action.reason.startswith("regression: "):
+                state_label = action.reason.split(":")[-1].strip()
+            elif action.reason.startswith("recovery"):
+                state_label = "recovery"
+            elif action.reason.startswith("fallback:"):
+                state_label = action.reason.split(":")[1].strip()
+            else:
+                state_label = "other"
+            actions_by_state[state_label] = actions_by_state.get(state_label, 0) + 1
+
+        # Recent actions: last 5 as dicts
+        recent_actions = [a.to_dict() for a in log[-5:]]
+
+        # Cycles since last tuning action
+        if total > 0 and self.telemetry:
+            current_cycle = self.telemetry[-1].cycle
+            last_action_cycle = log[-1].cycle
+            cycles_since = max(0, current_cycle - last_action_cycle)
+        elif self.telemetry:
+            cycles_since = self.telemetry[-1].cycle
+        else:
+            cycles_since = 0
+
+        return {
+            "total_actions": total,
+            "actions_by_domain": actions_by_domain,
+            "actions_by_state": actions_by_state,
+            "recent_actions": recent_actions,
+            "cycles_since_last_action": cycles_since,
+        }
+
     def save_state(self, path: str) -> None:
         """Save controller state to a JSON file (for resumption).
 
@@ -956,6 +1041,7 @@ class MetaController:
         state["cycles_since_level_up"] = self.cycles_since_level_up
         state["last_level"] = self.last_level
         state["best_champion_words"] = self.best_champion_words
+        state["_total_consecutive_stagnation"] = self._total_consecutive_stagnation
 
         try:
             dir_name = os.path.dirname(path) or "."
@@ -1017,6 +1103,7 @@ class MetaController:
             self.cycles_since_level_up = data.get("cycles_since_level_up", 0)
             self.last_level = data.get("last_level", -1)
             self.best_champion_words = data.get("best_champion_words", 0)
+            self._total_consecutive_stagnation = data.get("_total_consecutive_stagnation", 0)
 
             return True
         except (json.JSONDecodeError, KeyError, OSError) as e:
@@ -1091,9 +1178,11 @@ class MetaController:
                     break
         if _state is not None and _state == self._last_stagnation_state:
             self._consecutive_stagnation_counter += 1
+            self._total_consecutive_stagnation += 1
         elif _state is not None and _state in _STAGNATION_STATE_VALUES:
             self._last_stagnation_state = _state
             self._consecutive_stagnation_counter = 1
+            self._total_consecutive_stagnation += 1
         else:
             # Non-stagnation reason resets the counter
             self._last_stagnation_state = ""
@@ -1102,6 +1191,335 @@ class MetaController:
         # Maintain capped state buffer for O(K) consecutive count on
         # non-tracked states.  K <= 16, effectively O(1).
         self._state_ring.append(_state or "")
+
+        # Record escalation events: stagnation/regression detections that
+        # triggered tuning actions.  Captures effectiveness_before so callers
+        # can assess whether interventions are improving over time.
+        if _state is not None and _state != "" and _state != "recovery":
+            self._escalation_history.append(
+                {
+                    "cycle": len(self.telemetry),
+                    "stagnation_type": _state,
+                    "action_taken": f"{domain}.{param}={new}",
+                    "effectiveness_before": self.get_effectiveness_score(),
+                }
+            )
+
+    # ──────────────────────────────────────────────────────────────────
+    # Effectiveness / tuning introspection
+    # ──────────────────────────────────────────────────────────────────
+
+    def get_effectiveness_report(self) -> Dict[str, Any]:
+        """Return a comprehensive effectiveness report.
+
+        Aggregates stagnation events, tuning actions, and outcomes
+        to assess how well the meta-controller is performing.
+        """
+        total_tuning = len(self._tuning_log)
+        stagnation_actions = [a for a in self._tuning_log if "stagnation" in a.reason or "regression" in a.reason]
+        recovery_actions = [a for a in self._tuning_log if "recovery" in a.reason]
+        fallback_actions = [a for a in self._tuning_log if "fallback" in a.reason]
+
+        # Count actions by domain
+        domain_counts: Dict[str, int] = {}
+        for a in self._tuning_log:
+            domain_counts[a.domain] = domain_counts.get(a.domain, 0) + 1
+
+        return {
+            "total_tuning_actions": total_tuning,
+            "stagnation_actions": len(stagnation_actions),
+            "recovery_actions": len(recovery_actions),
+            "fallback_actions": len(fallback_actions),
+            "domain_counts": domain_counts,
+            "total_rollbacks": self._rollback_count,
+            "total_gated": self._gated_count,
+            "total_consecutive_stagnation": self._total_consecutive_stagnation,
+            "current_stagnation": self._last_stagnation.value,
+            "recovery_mode": self.recovery_mode,
+            "cycles_observed": len(self.telemetry),
+        }
+
+    def suggest_parameter_reset(self) -> Dict[str, Any]:
+        """Suggest whether parameters should be reset and to what values.
+
+        Returns a dict with:
+          - should_reset: bool
+          - reason: str
+          - suggested_params: dict of suggested parameter overrides
+        """
+        total_stag = self._total_consecutive_stagnation
+        cycles = len(self.telemetry)
+
+        if cycles == 0:
+            return {"should_reset": False, "reason": "no telemetry", "suggested_params": {}}
+
+        # Reset if stagnation dominates (>60% of cycles observed)
+        stag_ratio = total_stag / max(cycles, 1)
+        if stag_ratio > 0.6 and cycles >= 5:
+            return {
+                "should_reset": True,
+                "reason": f"stagnation dominates ({total_stag}/{cycles} cycles = {stag_ratio:.0%})",
+                "suggested_params": {
+                    "retrain_lr": 3e-4,
+                    "retrain_freeze_layers": 0,
+                    "retrain_patience": 5,
+                    "mutation_rate": 0.50,
+                },
+            }
+
+        # Reset if compound stall persists with many rollbacks
+        if self._compound_stall_counter >= 5 and self._rollback_count >= 3:
+            return {
+                "should_reset": True,
+                "reason": f"compound_stall x{self._compound_stall_counter}, rollbacks x{self._rollback_count}",
+                "suggested_params": {
+                    "retrain_lr": 1e-4,
+                    "retrain_freeze_layers": 2,
+                    "retrain_patience": 3,
+                    "mutation_rate": 0.60,
+                },
+            }
+
+        # Reset if cross-cycle fitness trend is declining with high confidence
+        if cycles >= 5:
+            trends = self.get_cross_cycle_trends()
+            fitness_trend = trends.get("fitness", {})
+            if fitness_trend.get("direction") == "declining" and fitness_trend.get("confidence", 0) > 0.5:
+                return {
+                    "should_reset": True,
+                    "reason": (
+                        f"cross-cycle fitness declining "
+                        f"(confidence={fitness_trend['confidence']:.2f}, "
+                        f"slope={fitness_trend['slope']:.4f})"
+                    ),
+                    "suggested_params": {
+                        "retrain_lr": 5e-5,
+                        "retrain_freeze_layers": 1,
+                        "retrain_patience": 4,
+                        "mutation_rate": 0.55,
+                    },
+                }
+
+        return {"should_reset": False, "reason": "no reset needed", "suggested_params": {}}
+
+    def get_effectiveness_score(self) -> float:
+        """Return a score in [0.0, 1.0] indicating tuning effectiveness.
+
+        1.0 = perfectly effective (no stagnation, frequent improvements).
+        0.0 = completely ineffective (all stagnation, no improvements).
+        """
+        cycles = len(self.telemetry)
+        if cycles == 0:
+            return 0.5  # neutral
+
+        improvement_cycles = cycles - self._total_consecutive_stagnation
+        base = max(0.0, improvement_cycles / max(cycles, 1))
+
+        # Bonus for avoiding rollbacks
+        rollback_penalty = min(0.3, self._rollback_count * 0.05)
+        # Bonus for recovery mode working
+        recovery_bonus = 0.1 if self._last_stagnation == StagnationResult.NORMAL else 0.0
+
+        score = max(0.0, min(1.0, base - rollback_penalty + recovery_bonus))
+        return score
+
+    def get_recovery_confidence(self) -> Dict[str, Any]:
+        """Assess whether recovery mode is working.
+
+        Returns a dict with:
+          - is_recovering (bool): True if recovery_mode is currently active
+          - cycles_in_recovery (int): count of consecutive cycles with recovery_mode=True
+          - fitness_trend_during_recovery (str): 'improving'/'stable'/'declining'/'unknown',
+            computed from telemetry during recovery cycles
+          - confidence (float 0-1): based on fitness trend
+          - should_exit_recovery (bool): True if cycles_in_recovery >= 5 AND
+            fitness_trend is 'stable' or 'declining'
+        """
+        is_recovering = self.recovery_mode
+
+        # Count consecutive recovery cycles from tuning log entries
+        cycles_in_recovery = 0
+        for action in reversed(self._tuning_log):
+            if "recovery" in action.reason:
+                cycles_in_recovery += 1
+            else:
+                break
+
+        # Collect recovery cycle numbers from tuning log
+        recovery_cycles: set = set()
+        for action in self._tuning_log:
+            if "recovery" in action.reason:
+                recovery_cycles.add(action.cycle)
+
+        # Determine fitness trend during recovery from telemetry
+        fitness_trend = "unknown"
+        confidence = 0.3
+
+        if recovery_cycles:
+            recovery_fitness = [t.fitness for t in self.telemetry if t.cycle in recovery_cycles]
+            if len(recovery_fitness) >= 3:
+                improving_count = sum(
+                    1 for i in range(1, len(recovery_fitness)) if recovery_fitness[i] > recovery_fitness[i - 1]
+                )
+                declining_count = sum(
+                    1 for i in range(1, len(recovery_fitness)) if recovery_fitness[i] < recovery_fitness[i - 1]
+                )
+
+                if improving_count > declining_count:
+                    fitness_trend = "improving"
+                    confidence = 0.8
+                elif declining_count > improving_count:
+                    fitness_trend = "declining"
+                    confidence = 0.1
+                else:
+                    fitness_trend = "stable"
+                    confidence = 0.4
+
+        should_exit_recovery = cycles_in_recovery >= 5 and fitness_trend in ("stable", "declining")
+
+        return {
+            "is_recovering": is_recovering,
+            "cycles_in_recovery": cycles_in_recovery,
+            "fitness_trend_during_recovery": fitness_trend,
+            "confidence": confidence,
+            "should_exit_recovery": should_exit_recovery,
+        }
+
+    def get_tuning_escalation_history(self) -> List[Dict[str, Any]]:
+        """Return a chronological list of all escalation events.
+
+        Each event is derived from the tuning log, representing a tuning action
+        that was taken in response to stagnation detection.
+        Returns a list of dicts with:
+          - cycle: the cycle number when the escalation occurred
+          - stagnation_type: the stagnation state value (e.g. 'fitness_plateau')
+          - action_taken: description of the tuning action applied
+          - effectiveness_before: effectiveness score at time of detection
+        """
+        history: List[Dict[str, Any]] = []
+        for a in self._tuning_log:
+            stagnation_type = a.reason.split(":")[0] if ":" in a.reason else a.reason
+            history.append(
+                {
+                    "cycle": a.cycle,
+                    "stagnation_type": stagnation_type,
+                    "action_taken": f"{a.domain}.{a.param} = {a.new_value}",
+                    "effectiveness_before": None,
+                }
+            )
+        return history
+
+    def get_cross_cycle_trends(self, window: int = 5) -> Dict[str, Any]:
+        """Analyze cross-cycle trends for fitness, val_loss, and diversity.
+
+        Uses linear regression across the telemetry history to compute trend
+        direction, slope, and confidence for each metric. Trends help identify
+        whether the system is improving, stable, or declining over time.
+
+        Args:
+            window: Minimum number of cycles for trend analysis. Default is 5.
+                With fewer cycles than this, confidence is reduced.
+
+        Returns:
+            Dict with keys 'fitness', 'val_loss', 'diversity', each containing:
+            - 'direction': 'improving', 'stable', or 'declining'
+            - 'slope': float (per-cycle change rate)
+            - 'confidence': float in [0, 1] (higher = more consistent trend)
+
+        Note:
+            Direction is interpreted relative to metric semantics:
+            - fitness: increasing slope -> improving
+            - diversity: increasing slope -> improving
+            - val_loss: decreasing slope -> improving (loss is getting better)
+        """
+
+        def _linear_regression(values):
+            """Compute slope and R-squared for a list of values."""
+            n = len(values)
+            if n < 2:
+                return (0.0, 0.0)
+
+            x_mean = (n - 1) / 2.0
+            y_mean = sum(values) / n
+
+            numerator = sum((i - x_mean) * (v - y_mean) for i, v in enumerate(values))
+            denominator = sum((i - x_mean) ** 2 for i in range(n))
+
+            if denominator == 0:
+                return (0.0, 0.0)
+
+            slope = numerator / denominator
+
+            # Compute R-squared
+            y_pred = [slope * (i - x_mean) + y_mean for i in range(n)]
+            ss_res = sum((v - p) ** 2 for v, p in zip(values, y_pred))
+            ss_tot = sum((v - y_mean) ** 2 for v in values)
+
+            if ss_tot == 0:
+                r_squared = 1.0 if ss_res == 0 else 0.0
+            else:
+                r_squared = max(0.0, 1.0 - (ss_res / ss_tot))
+
+            return (slope, r_squared)
+
+        def _compute_trend(values):
+            """Compute trend direction, slope, and confidence for a metric."""
+            if len(values) < 2:
+                return {"direction": "stable", "slope": 0.0, "confidence": 0.0}
+
+            slope, r_squared = _linear_regression(values)
+
+            # Adaptive threshold: 1% of the metric's range
+            value_range = max(values) - min(values)
+            slope_threshold = 0.01 * value_range if value_range > 0 else 1e-10
+
+            if slope > slope_threshold:
+                direction = "improving"
+            elif slope < -slope_threshold:
+                direction = "declining"
+            else:
+                direction = "stable"
+
+            # Confidence based on R-squared and sample size
+            sample_factor = min(1.0, len(values) / max(window, 1))
+            confidence = min(1.0, max(0.0, r_squared * sample_factor))
+
+            return {"direction": direction, "slope": slope, "confidence": confidence}
+
+        # Extract metric series from telemetry
+        fitness_values = [t.fitness for t in self.telemetry]
+        val_loss_values = [t.val_loss for t in self.telemetry if t.val_loss is not None]
+        diversity_values = [t.diversity for t in self.telemetry]
+
+        # Compute fitness and diversity trends (higher = better)
+        fitness_trend = _compute_trend(fitness_values)
+        diversity_trend = _compute_trend(diversity_values)
+
+        # Compute val_loss trend (lower = better, so invert direction)
+        if val_loss_values:
+            val_loss_trend = _compute_trend(val_loss_values)
+            # Invert direction for val_loss: decreasing slope = improving
+            if val_loss_trend["direction"] == "improving":
+                val_loss_trend["direction"] = "declining"
+            elif val_loss_trend["direction"] == "declining":
+                val_loss_trend["direction"] = "improving"
+        else:
+            val_loss_trend = {"direction": "stable", "slope": 0.0, "confidence": 0.0}
+
+        self._log(
+            f"Trends: fitness={fitness_trend['direction']} "
+            f"(slope={fitness_trend['slope']:.4f}, conf={fitness_trend['confidence']:.2f}), "
+            f"val_loss={val_loss_trend['direction']} "
+            f"(slope={val_loss_trend['slope']:.4f}, conf={val_loss_trend['confidence']:.2f}), "
+            f"diversity={diversity_trend['direction']} "
+            f"(slope={diversity_trend['slope']:.4f}, conf={diversity_trend['confidence']:.2f})"
+        )
+
+        return {
+            "fitness": fitness_trend,
+            "val_loss": val_loss_trend,
+            "diversity": diversity_trend,
+        }
 
     def _log(self, msg: str) -> None:
         """Log message via structured logger and optional log file.

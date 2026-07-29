@@ -270,6 +270,25 @@ class AlertManager:
             f"Retrain failed after {attempts} attempts in cycle {cycle}: {reason}",
         )
 
+    def send_monoculture_alert(self, dominant_strategy: str, dominance_ratio: float, recommendation: str) -> bool:
+        """Alert when a single strategy dominates the population."""
+        level = "warning" if dominance_ratio > 0.7 else "info"
+        return self.send_alert(
+            level=level,
+            title="Strategy Monoculture Detected",
+            message=f"{dominant_strategy} at {dominance_ratio:.0%} dominance. Recommendation: {recommendation}",
+            critical=(dominance_ratio > 0.8),
+        )
+
+    def send_recovery_stuck_alert(self, cycles_in_recovery: int, fitness_trend: str, confidence: float) -> bool:
+        """Alert when recovery mode is stuck and not progressing."""
+        return self.send_alert(
+            level="warning",
+            title="Recovery Mode Stuck",
+            message=f"Recovery active for {cycles_in_recovery} cycles. Trend: {fitness_trend}, confidence: {confidence:.2f}",
+            critical=(cycles_in_recovery >= 10),
+        )
+
     # ── Introspection ──────────────────────────────────────────────
 
     def get_alert_history(self) -> list[dict[str, Any]]:
