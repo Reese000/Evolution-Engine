@@ -2670,15 +2670,20 @@ class EvolutionEngine:
                 self._backward_branch_cache.clear()
                 self._backward_branch_cache_gen = _gen
             _bb_cache = self._backward_branch_cache
+            # Local variable bindings avoid repeated attribute/global lookups
+            # in the inner loop — saves ~5-10% on large batches (1000+).
+            _bb_get = _bb_cache.get
+            _count_bb = self._count_backward_branches
+            _loop_min = min
             loop_bonuses = np.zeros(n_ok, dtype=np.float64)
             for j, prog in enumerate(ok_programs):
                 _prog_key = hash(tuple(prog))
-                n_loops = _bb_cache.get(_prog_key)
+                n_loops = _bb_get(_prog_key)
                 if n_loops is None:
-                    n_loops = self._count_backward_branches(prog)
+                    n_loops = _count_bb(prog)
                     _bb_cache[_prog_key] = n_loops
                 if n_loops > 0:
-                    loop_bonuses[j] = min(5.0, n_loops * 2.0)
+                    loop_bonuses[j] = _loop_min(5.0, n_loops * 2.0)
             loop_bonuses *= _bonus_scale
             base += loop_bonuses
 
@@ -3196,29 +3201,69 @@ class EvolutionEngine:
         #
         # Priority levels (lowest to highest):
         #   0 = level-aware (baseline, always applied)
-        #   1 = cross-cycle trend (fitness declining)
-        #   2 = mutation stats (recent mutations hurt)
-        #   3 = plateau (stuck — highest priority)
+        #   1 = variance-aware (population fitness distribution)
+        #   2 = cross-cycle trend (fitness declining)
+        #   3 = mutation stats (recent mutations hurt)
+        #   4 = plateau (stuck — highest priority)
 
         override_priority: int = 0  # Start at baseline
         override_strategy: MutationStrategy | None = None
         override_log_msg: str = ""
 
-        # Priority 1: Cross-cycle fitness trend override (fitness declining)
+        # Priority 1: Variance-aware strategy selection.
+        # When population fitness has high variance (some programs very fit,
+        # others very unfit), favor exploitation strategies to refine the
+        # good programs. When variance is low (all programs similar), favor
+        # exploration strategies to break out of the current cluster.
+        # Uses coefficient of variation (std/mean) of the previous generation's
+        # fitness values from _last_challenger_fitnesses.
+        try:
+            _prev_fits = self._last_challenger_fitnesses
+            if _prev_fits and len(_prev_fits) >= 3:
+                _n = len(_prev_fits)
+                _sum = sum(_prev_fits)
+                _mean = _sum / _n
+                if abs(_mean) > 1e-9:
+                    _var = sum((f - _mean) ** 2 for f in _prev_fits) / _n
+                    _std = _var ** 0.5
+                    _cv = _std / abs(_mean)  # coefficient of variation
+                    if _cv > 1.0 and override_priority < 1:
+                        # High variance: exploit — favor targeted strategies
+                        _exploit_strats = [s for s in MutationStrategy
+                                           if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
+                        if _exploit_strats:
+                            override_priority = 1
+                            override_strategy = self.rng.choice(_exploit_strats)
+                            override_log_msg = (
+                                f"[Strategy] Variance-aware exploit: CV={_cv:.2f}, "
+                                f"std={_std:.2f}, mean={_mean:.2f}")
+                    elif _cv < 0.3 and override_priority < 1:
+                        # Low variance: explore — try new strategies
+                        _explore_strats = [s for s in MutationStrategy
+                                           if s.value in ('GROW', 'PERTURBATION_CAPPED',
+                                                          'MODEL_GUIDED', 'HYBRID')]
+                        if _explore_strats:
+                            override_priority = 1
+                            override_strategy = self.rng.choice(_explore_strats)
+                            override_log_msg = (
+                                f"[Strategy] Variance-aware explore: CV={_cv:.2f}, "
+                                f"std={_std:.2f}, mean={_mean:.2f}")
+        except Exception:
+            pass
+        # Priority 2: Cross-cycle fitness trend override (fitness declining)
         try:
             if hasattr(self, 'meta_controller') and self.meta_controller is not None:
                 _trends = self.meta_controller.get_cross_cycle_trends()
                 _fitness_trend = _trends.get('fitness', {})
                 if _fitness_trend.get('direction') == 'declining' and self.rng.random() < 0.25:
                     _explore = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _explore and override_priority < 1:
-                        override_priority = 1
+                    if _explore and override_priority < 2:
+                        override_priority = 2
                         override_strategy = self.rng.choice(_explore)
                         override_log_msg = f"[Strategy] Trend override: fitness declining, slope={_fitness_trend.get('slope', 0):.4f}"
         except Exception:
             pass
-
-        # Priority 2: Mutation stats override (recent mutations hurt)
+        # Priority 3: Mutation stats override (recent mutations hurt)
         try:
             from mutation_proposer import DirectedMutator as _DM
             _mstats = _DM.get_mutation_stats()
@@ -3226,21 +3271,20 @@ class EvolutionEngine:
                 _recent_rate = _mstats['recent_avg_delta']
                 if _recent_rate < -0.5 and self.rng.random() < 0.3:
                     _exploration_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _exploration_strats and override_priority < 2:
-                        override_priority = 2
+                    if _exploration_strats and override_priority < 3:
+                        override_priority = 3
                         override_strategy = self.rng.choice(_exploration_strats)
                         override_log_msg = f"[Strategy] Mutation stats override: recent_avg_delta={_recent_rate:.3f}"
         except Exception:
             pass
-
-        # Priority 3: Plateau override (stuck on plateau — highest priority)
+        # Priority 4: Plateau override (stuck on plateau — highest priority)
         try:
             if hasattr(self, 'progression_tracker') and self.progression_tracker is not None:
                 _pa = self.progression_tracker.get_plateau_analysis()
                 if _pa.get('status') == 'plateau' and _pa.get('plateau_duration', 0) > 10 and self.rng.random() < 0.3:
                     _explore2 = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _explore2 and override_priority < 3:
-                        override_priority = 3
+                    if _explore2 and override_priority < 4:
+                        override_priority = 4
                         override_strategy = self.rng.choice(_explore2)
                         override_log_msg = f"[Strategy] Plateau override: duration={_pa.get('plateau_duration', 0)}, slope={_pa.get('trend_slope', 0):.4f}"
         except Exception:
