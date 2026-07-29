@@ -228,6 +228,9 @@ class SparseArchive:
         self._tree: KDTree | None = None
         self._tree_dirty: bool = True
 
+        # Program hash index for O(1) lookup in decayed_novelty
+        self._prog_hash_index: dict[int, list[int]] = {}  # hash -> list of entry indices
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -240,6 +243,15 @@ class SparseArchive:
         points = [entry[0] for entry in self._entries]
         self._tree = KDTree(points)
         self._tree_dirty = False
+
+    def _rebuild_prog_hash_index(self) -> None:
+        """Rebuild the program hash index from current entries."""
+        self._prog_hash_index.clear()
+        for i, entry in enumerate(self._entries):
+            meta = entry[2]
+            if isinstance(meta, dict) and meta.get("program") is not None:
+                _ph = hash(tuple(meta["program"]))
+                self._prog_hash_index.setdefault(_ph, []).append(i)
 
     def _k_nn_distance(self, flat: list[float]) -> float:
         """Compute average distance to the k-nearest neighbours.
@@ -307,6 +319,10 @@ class SparseArchive:
             self._entries.append((flat, descriptor, metadata))
             self.size = 1
             self._tree_dirty = True
+            # Update program hash index
+            if isinstance(metadata, dict) and metadata.get("program") is not None:
+                _ph = hash(tuple(metadata["program"]))
+                self._prog_hash_index.setdefault(_ph, []).append(len(self._entries) - 1)
             return True, score
 
         threshold = self.adaptive_threshold()
@@ -316,6 +332,10 @@ class SparseArchive:
         self._entries.append((flat, descriptor, metadata))
         self.size = len(self._entries)
         self._tree_dirty = True
+        # Update program hash index
+        if isinstance(metadata, dict) and metadata.get("program") is not None:
+            _ph = hash(tuple(metadata["program"]))
+            self._prog_hash_index.setdefault(_ph, []).append(len(self._entries) - 1)
         return True, score
 
     def clear(self) -> None:
@@ -323,6 +343,7 @@ class SparseArchive:
         self._entries.clear()
         self.size = 0
         self._tree_dirty = True
+        self._prog_hash_index.clear()
 
     def recent_descriptors(self, n: int = 10) -> list[dict[str, float]]:
         """Return the last *n* descriptor dicts added to the archive."""
@@ -359,6 +380,7 @@ class SparseArchive:
         self._entries = self._entries[excess:]
         self.size = len(self._entries)
         self._tree_dirty = True
+        self._rebuild_prog_hash_index()
         return excess
 
     def get_diversity_score(self) -> float:
@@ -440,6 +462,7 @@ class SparseArchive:
         self._entries = [e for i, e in enumerate(self._entries) if i not in remove_indices]
         self.size = len(self._entries)
         self._tree_dirty = True
+        self._rebuild_prog_hash_index()
         return n_remove
 
     def decayed_novelty(
@@ -450,31 +473,24 @@ class SparseArchive:
     ) -> float:
         """Compute novelty with exponential time-decay.
 
-        Finds *program* in the archive (by matching the program stored in
-        each entry's metadata), retrieves its base novelty score, and
-        applies the decay factor ``exp(-0.693 * age / half_life)``
-        where ``age = current_generation - program_generation``.
-
-        Returns ``0.0`` if the program is not found in the archive.
+        Uses hash index for O(1) program lookup instead of O(N) linear scan.
         """
-        # Locate the entry whose stored program matches.
-        program_generation: int | None = None
-        flat_descriptor: list[float] | None = None
-        for entry in self._entries:
-            meta = entry[2]
-            stored_prog = meta.get("program") if isinstance(meta, dict) else None
-            if stored_prog is not None and stored_prog == program:
-                program_generation = meta.get("generation") if isinstance(meta, dict) else None
-                flat_descriptor = entry[0]
-                break
-
-        if flat_descriptor is None or program_generation is None:
-            return 0.0
-
-        base_novelty = self._k_nn_distance(flat_descriptor)
-        age = current_generation - int(program_generation)
-        decay = math.exp(-0.693 * age / half_life)
-        return base_novelty * decay
+        _prog_hash = hash(tuple(program))
+        indices = self._prog_hash_index.get(_prog_hash, [])
+        for idx in indices:
+            if idx < len(self._entries):
+                entry = self._entries[idx]
+                meta = entry[2]
+                stored_prog = meta.get("program") if isinstance(meta, dict) else None
+                if stored_prog is not None and stored_prog == program:
+                    program_generation = meta.get("generation") if isinstance(meta, dict) else None
+                    flat_descriptor = entry[0]
+                    if program_generation is not None and flat_descriptor is not None:
+                        base_novelty = self._k_nn_distance(flat_descriptor)
+                        age = current_generation - int(program_generation)
+                        decay = math.exp(-0.693 * age / half_life)
+                        return base_novelty * decay
+        return 0.0
 
     # ------------------------------------------------------------------
     # Serialization
