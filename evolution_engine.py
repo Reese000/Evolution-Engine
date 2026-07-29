@@ -1555,7 +1555,8 @@ class EvolutionEngine:
                     try:
                         _vel = self.qd_archive.get_improvement_velocity()
                         _illum = self.qd_archive.get_illumination_diversity()
-                        self._log(f"[QD] velocity_avg={_vel.get('avg_velocity', 0):.4f} illumination={_illum.get('overall_diversity_score', 0):.4f}")
+                        _fresh = self.qd_archive.get_cell_freshness(self.current_generation)
+                        self._log(f"[QD] velocity_avg={_vel.get('avg_velocity', 0):.4f} illumination={_illum.get('overall_diversity_score', 0):.4f} freshness={_fresh.get('avg_freshness', 0):.4f}")
                     except Exception:
                         pass
 
@@ -2637,8 +2638,12 @@ class EvolutionEngine:
                         if stall > 10:
                             qd_w *= min(2.5, 1.0 + 0.0375 * (stall - 10))
                         cov = self._qd_coverage
-                        if cov < 0.20:
-                            qd_w *= 1.0 + 2.5 * (0.20 - cov)
+                        try:
+                            _div_score = self.qd_archive.get_illumination_diversity().get('overall_diversity_score', cov)
+                        except Exception:
+                            _div_score = cov
+                        if _div_score < 0.20:
+                            qd_w *= 1.0 + 2.5 * (0.20 - _div_score)
                         fj += qd_bonus * qd_w
                         # Niche penalty
                         if self.champion is not None and self.champion_trace is not None:
@@ -3038,6 +3043,19 @@ class EvolutionEngine:
                     if _explore:
                         chosen = self.rng.choice(_explore)
                         self._log(f"[Strategy] Trend override: fitness declining, slope={_fitness_trend.get('slope', 0):.4f}")
+        except Exception:
+            pass
+
+        # Plateau-aware override: when progression tracker detects a long plateau,
+        # increase exploration to break out of stagnation
+        try:
+            if hasattr(self, 'progression_tracker') and self.progression_tracker is not None:
+                _pa = self.progression_tracker.get_plateau_analysis()
+                if _pa.get('status') == 'plateau' and _pa.get('plateau_duration', 0) > 10 and self.rng.random() < 0.3:
+                    _explore2 = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
+                    if _explore2:
+                        chosen = self.rng.choice(_explore2)
+                        self._log(f"[Strategy] Plateau override: duration={_pa.get('plateau_duration', 0)}, slope={_pa.get('trend_slope', 0):.4f}")
         except Exception:
             pass
 
