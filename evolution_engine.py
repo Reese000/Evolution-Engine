@@ -2356,7 +2356,7 @@ class EvolutionEngine:
         # 30% of the base score, preventing any one dimension from
         # dominating the fitness landscape.
         # _base_for_norm already computed above (used by diagnostics too).
-        _max_single = getattr(self.config, "max_bonus_fraction", 0.30) * _base_for_norm
+        _max_single = getattr(self.config, "max_bonus_fraction", 1.0) * _base_for_norm
 
         _structural_bonuses = [
             min(loop_bonus, _max_single),
