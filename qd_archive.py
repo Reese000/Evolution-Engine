@@ -212,6 +212,18 @@ class MAPElitesArchive:
         if cov < 0.10:
             base_bias *= 1.0 + 0.5 * (0.10 - cov) / 0.10
 
+        # Freshness modulation: stale cells get a bonus, fresh cells get reduced
+        try:
+            if hasattr(self, '_cell_last_updated') and hasattr(self, '_addition_counter'):
+                cell_age = max(0, self._addition_counter - self._cell_last_updated[idx]) if self._cell_last_updated[idx] > 0 else 100
+                # Stale cells (>50 updates ago) get up to 20% boost
+                # Fresh cells (last 10 updates) get up to 10% reduction
+                if cell_age > 50:
+                    base_bias *= 1.0 + min(0.2, cell_age / 500.0)
+                elif cell_age < 10:
+                    base_bias *= max(0.8, 1.0 - (10 - cell_age) * 0.02)
+        except Exception:
+            pass
         return max(0.1, min(1.0, base_bias))
 
     def coverage(self) -> float:
