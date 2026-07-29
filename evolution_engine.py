@@ -1205,6 +1205,387 @@ class EvolutionEngine:
             'fitness_velocity': getattr(self, '_fitness_velocity', 0.0),
         }
 
+    # ------------------------------------------------------------------
+    # Fitness landscape diagnostics
+    # ------------------------------------------------------------------
+
+    def get_fitness_diagnostic_summary(self) -> dict[str, Any]:
+        """Return a comprehensive diagnostic of the current fitness landscape.
+
+        Provides actionable visibility into the fitness function's behavior:
+        bonus distributions, normalization state, population fitness
+        statistics, and concrete recommendations for adjustment when the
+        population is stuck or the landscape is degenerate.
+
+        This method is *read-only* -- it never mutates engine state.
+        Safe to call at any point during or after a run.
+
+        Returns a dict with these top-level keys:
+
+        * ``generation`` -- current generation number
+        * ``champion`` -- champion fitness, level, raw task score
+        * ``bonus_config`` -- normalization settings and per-dimension caps
+        * ``bonus_thresholds`` -- level-aware graduated bonus thresholds
+        * ``structural_scaling`` -- adaptive bonus scale factors
+        * ``fitness_history`` -- trend statistics from best_fitness_history
+        * ``population_dynamics`` -- diversity, velocity, stall depth,
+          oscillation state, QD niche coverage
+        * ``hall_of_fame`` -- HoF size, best fitness, fitness spread
+        * ``recommendations`` -- list of human-readable suggestions derived
+          from the diagnostic data
+        """
+        # ── Champion state ────────────────────────────────────────────
+        lvl = self.champion_level
+        n_levels = len(LEVELS)
+        raw_task = getattr(self, '_raw_task_score', 0.0)
+        champion_raw = getattr(self, '_champion_raw_task_score', raw_task)
+
+        # ── Bonus normalization config ────────────────────────────────
+        mbf = getattr(self.config, 'max_bonus_fraction', 1.0)
+        norm_active = mbf < 1.0
+        # Simulate the cap for a hypothetical base_score of 100 to show
+        # what *would* happen at that fitness level.
+        _sim_base = max(champion_raw, 100.0)
+        sim_cap = mbf * _sim_base
+        bonus_names = [
+            'loop', 'mem', 'div', 'level', 'efficiency',
+            'multi_task', 'time_credit', 'smc', 'graduated',
+        ]
+
+        # Maximum possible contribution per dimension (design limits)
+        max_possible = {
+            'loop': 5.0,          # min(5.0, n_loops * 2.0)
+            'mem': 3.0,           # min(3.0, n_accesses * 0.5)
+            'div': 2.0,           # min(2.0, (n_cats - 2) * 0.5)
+            'level': 25.0 * lvl,  # champion_level * 25
+            'efficiency': 30.0,   # (instr_eff + opcode_bonus) * 30
+            'multi_task': 15.0,   # task_total/task_count * 5 * min(count,3)
+            'time_credit': 20.0,  # max when instr_count <= 5
+            'smc': 25.0,          # min(25.0, smc_count * 5.0)
+            'graduated': 50.0,    # 50 * (reg_match - threshold) / (1 - threshold)
+        }
+
+        bonus_config: dict[str, Any] = {
+            'normalization_active': norm_active,
+            'max_bonus_fraction': mbf,
+            'cap_at_simulated_base': sim_cap,
+            'simulated_base': _sim_base,
+            'bonus_log_interval': getattr(self.config, 'bonus_log_interval', 50),
+            'max_possible_contributions': max_possible,
+            'total_max_bonus': sum(max_possible.values()),
+        }
+
+        # ── Bonus thresholds ──────────────────────────────────────────
+        cached = self._bonus_threshold_cache
+        if cached is not None and cached[0] == lvl:
+            current_threshold = cached[1]
+        else:
+            current_threshold = max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1)))
+        graduated_headroom = max(0.0, 1.0 - current_threshold)
+
+        bonus_thresholds: dict[str, Any] = {
+            'current_level': lvl,
+            'graduated_bonus_threshold': current_threshold,
+            'graduated_headroom': graduated_headroom,
+            'max_graduated_bonus': 50.0 * graduated_headroom,
+            'level_advancement_bonus': lvl * 25.0,
+            'max_level_bonus': (n_levels - 1) * 25.0,
+        }
+
+        # ── Structural scaling ────────────────────────────────────────
+        try:
+            _scales = self._get_structural_bonus_scale()
+        except Exception:
+            _scales = {
+                'scale_factor': 1.0,
+                'loop_pressure': 0.33,
+                'mem_pressure': 0.33,
+                'div_pressure': 0.34,
+            }
+        structural_scaling: dict[str, Any] = {
+            'scale_factor': _scales.get('scale_factor', 1.0),
+            'loop_pressure': _scales.get('loop_pressure', 0.33),
+            'mem_pressure': _scales.get('mem_pressure', 0.33),
+            'div_pressure': _scales.get('div_pressure', 0.34),
+            'applies_to': ['loop', 'mem', 'div'] if lvl >= 5 else [],
+            'level_gating': {
+                'loop_bonus': 'L5+',
+                'mem_bonus': 'L7+',
+                'div_bonus': 'L5+',
+                'smc_bonus': 'L12+',
+                'efficiency_high_diversity': 'L8+',
+            },
+        }
+
+        # ── Fitness history trend ─────────────────────────────────────
+        hist = self.best_fitness_history
+        hist_len = len(hist)
+        if hist_len >= 2:
+            recent_n = min(hist_len, 20)
+            recent = hist[-recent_n:]
+            overall_min = min(hist)
+            overall_max = max(hist)
+            overall_mean = sum(hist) / hist_len
+            recent_min = min(recent)
+            recent_max = max(recent)
+            recent_mean = sum(recent) / recent_n
+            recent_trend = (recent[-1] - recent[0]) / max(1, recent_n - 1)
+            # Improvement count: number of times fitness increased
+            improvements = sum(
+                1 for i in range(1, hist_len) if hist[i] > hist[i - 1]
+            )
+            improvement_rate = improvements / max(1, hist_len - 1)
+            # Variance of recent fitness
+            recent_var = sum((f - recent_mean) ** 2 for f in recent) / recent_n
+        else:
+            overall_min = hist[0] if hist_len == 1 else 0.0
+            overall_max = overall_min
+            overall_mean = overall_min
+            recent_min = overall_min
+            recent_max = overall_min
+            recent_mean = overall_min
+            recent_trend = 0.0
+            improvements = 0
+            improvement_rate = 0.0
+            recent_var = 0.0
+
+        fitness_history: dict[str, Any] = {
+            'total_generations_with_data': hist_len,
+            'overall_min': round(overall_min, 4),
+            'overall_max': round(overall_max, 4),
+            'overall_mean': round(overall_mean, 4),
+            'overall_range': round(overall_max - overall_min, 4),
+            'recent_window': min(hist_len, 20),
+            'recent_min': round(recent_min, 4),
+            'recent_max': round(recent_max, 4),
+            'recent_mean': round(recent_mean, 4),
+            'recent_trend_per_gen': round(recent_trend, 4),
+            'improvement_count': improvements,
+            'improvement_rate': round(improvement_rate, 4),
+            'recent_variance': round(recent_var, 4),
+        }
+
+        # ── Population dynamics ───────────────────────────────────────
+        vel = getattr(self, '_fitness_velocity', 0.0)
+        stall = self.generations_stalled
+        div = getattr(self, '_current_diversity', 0.5)
+        qd_cov = getattr(self, '_qd_coverage', 0.0)
+        osc_window = list(self._champion_oscillation_window)
+        osc_count = getattr(self, '_oscillation_positive_count', 0)
+        osc_threshold = getattr(self, '_oscillation_threshold', 3)
+        rep_count = getattr(self, '_champion_replacement_count', 0)
+        hysteresis_active = osc_count >= osc_threshold
+
+        population_dynamics: dict[str, Any] = {
+            'fitness_velocity': round(vel, 4),
+            'fitness_velocity_regime': (
+                'fast_improvement' if vel > 5.0
+                else 'moderate_improvement' if vel > 1.0
+                else 'plateau' if vel > -1.0
+                else 'mild_regression' if vel > -5.0
+                else 'strong_regression'
+            ),
+            'generations_stalled': stall,
+            'stall_depth_category': (
+                'none' if stall < 5
+                else 'shallow' if stall < 15
+                else 'moderate' if stall < 30
+                else 'deep' if stall < 50
+                else 'critical'
+            ),
+            'diversity': round(div, 4),
+            'diversity_category': (
+                'critical' if div < 0.1
+                else 'low' if div < 0.2
+                else 'moderate' if div < 0.4
+                else 'high'
+            ),
+            'qd_niche_coverage': round(qd_cov, 4),
+            'qd_coverage_category': (
+                'sparse' if qd_cov < 0.1
+                else 'low' if qd_cov < 0.3
+                else 'moderate' if qd_cov < 0.6
+                else 'well_covered'
+            ),
+            'champion_replacements_total': rep_count,
+            'oscillation_window': [round(d, 4) for d in osc_window],
+            'oscillation_positive_count': osc_count,
+            'oscillation_threshold': osc_threshold,
+            'hysteresis_active': hysteresis_active,
+        }
+
+        # ── Hall of Fame ──────────────────────────────────────────────
+        hof = self._hall_of_fame
+        hof_heap = getattr(hof, '_heap', [])
+        hof_size = len(hof_heap)
+        if hof_size > 0:
+            hof_fitnesses = [entry[0] for entry in hof_heap]
+            hof_best = max(hof_fitnesses)
+            hof_worst = min(hof_fitnesses)
+            hof_mean = sum(hof_fitnesses) / hof_size
+            hof_spread = hof_best - hof_worst
+        else:
+            hof_best = 0.0
+            hof_worst = 0.0
+            hof_mean = 0.0
+            hof_spread = 0.0
+
+        hall_of_fame: dict[str, Any] = {
+            'capacity': hof.capacity,
+            'size': hof_size,
+            'best_fitness': round(hof_best, 4),
+            'worst_fitness': round(hof_worst, 4),
+            'mean_fitness': round(hof_mean, 4),
+            'fitness_spread': round(hof_spread, 4),
+        }
+
+        # ── Novelty / QD weight context ───────────────────────────────
+        nw = getattr(self, '_novelty_weight_cache', self.config.novelty_weight)
+        qd_w = self.config.qd_bonus_weight
+        novelty_qd: dict[str, Any] = {
+            'novelty_weight': nw,
+            'novelty_weight_effective': round(
+                min(nw * (1.0 + (1.0 - div / 0.2)), 0.8) if div < 0.2 and nw > 0 else nw,
+                4,
+            ),
+            'qd_bonus_weight': qd_w,
+            'novelty_archive_size': (
+                len(self.novelty_archive) if self.novelty_archive is not None else 0
+            ),
+            'qd_archive_occupied': (
+                getattr(self.qd_archive, '_occupied_count', 0)
+                if self.qd_archive is not None else 0
+            ),
+        }
+
+        # ── Recommendations ───────────────────────────────────────────
+        recommendations: list[str] = []
+
+        # Stall-based recommendations
+        if stall >= 50:
+            recommendations.append(
+                f"CRITICAL STALL ({stall} gens): Consider enabling bonus normalization "
+                f"(max_bonus_fraction=0.30) or increasing novelty_weight to break out."
+            )
+        elif stall >= 20:
+            recommendations.append(
+                f"Deep stall ({stall} gens): Bonus normalization could help redistribute "
+                f"selection pressure. Current max_bonus_fraction={mbf:.2f}."
+            )
+
+        # Diversity-based recommendations
+        if div < 0.1:
+            recommendations.append(
+                "CRITICAL LOW DIVERSITY (<0.1): Population nearly converged. "
+                "Boost novelty_weight, increase mutation rate, or inject Hall of Fame entries."
+            )
+        elif div < 0.2:
+            recommendations.append(
+                f"Low diversity ({div:.3f}): Novelty weight will be "
+                f"adaptively boosted. Consider diversity_inject_ratio > {self.config.diversity_inject_ratio}."
+            )
+
+        # Bonus dominance check -- if any single bonus dimension can exceed
+        # the base score, flag it as a potential dominance problem.
+        if not norm_active:
+            # Check level_bonus specifically -- it grows with champion_level
+            lvl_bon = lvl * 25.0
+            if champion_raw > 0 and lvl_bon > champion_raw * 0.5:
+                recommendations.append(
+                    f"Level bonus ({lvl_bon:.0f}) dominates base score ({champion_raw:.0f}). "
+                    f"Enable max_bonus_fraction to prevent level_bonus from overshadowing "
+                    f"task-solving fitness at L{lvl}."
+                )
+            if _sim_base > 0:
+                oversized = [n for n, m in max_possible.items() if m > _sim_base * mbf]
+                if oversized:
+                    recommendations.append(
+                        f"Unnormalized bonuses {oversized} can individually exceed "
+                        f"the base score ({_sim_base:.0f}). Consider enabling normalization."
+                    )
+
+        # Graduated bonus headroom
+        if graduated_headroom < 0.10:
+            recommendations.append(
+                f"Graduated bonus threshold ({current_threshold:.3f}) leaves only "
+                f"{graduated_headroom:.3f} headroom. Near-perfect register match is "
+                f"required for any graduated bonus. Consider raising the base threshold."
+            )
+
+        # QD coverage
+        if qd_cov < 0.1 and qd_w > 0:
+            recommendations.append(
+                f"QD niche coverage is sparse ({qd_cov:.3f}). The stall-scaled "
+                f"QD boost should help, but verify novelty_archive is populated."
+            )
+
+        # Oscillation
+        if hysteresis_active:
+            recommendations.append(
+                f"Oscillation detected: {osc_count} replacements in last "
+                f"{self._oscillation_window_size} gens (threshold={osc_threshold}). "
+                f"Hysteresis is active (min_delta={getattr(self, '_hysteresis_min_delta', 0.5):.2f})."
+            )
+
+        # Fitness velocity regime
+        vel_regime = population_dynamics['fitness_velocity_regime']
+        if vel_regime == 'strong_regression':
+            recommendations.append(
+                f"Strong fitness regression (velocity={vel:.2f}). "
+                f"Mutation rate will be maximized automatically. "
+                f"Consider Hall of Fame injection or champion anchor reset."
+            )
+        elif vel_regime == 'fast_improvement' and stall > 5:
+            recommendations.append(
+                f"Positive velocity ({vel:.2f}) but still stalled ({stall} gens). "
+                f"Recent gains may not have beaten the champion yet. "
+                f"Check oscillation hysteresis thresholds."
+            )
+
+        # Improvement rate
+        if hist_len > 10 and improvement_rate < 0.05:
+            recommendations.append(
+                f"Very low improvement rate ({improvement_rate:.1%}) over "
+                f"{hist_len} generations. The fitness landscape may be flat. "
+                f"Consider curriculum advancement or bonus weight rebalancing."
+            )
+
+        # HoF spread
+        if hof_size >= 2 and hof_spread < 1.0:
+            recommendations.append(
+                f"Hall of Fame fitness spread is narrow ({hof_spread:.2f}). "
+                f"Challengers are not diverse enough to diversify the HoF. "
+                f"Increase mutation rate or diversity injection."
+            )
+
+        # Bonus normalization opportunity
+        if not norm_active and hist_len > 20 and recent_trend <= 0:
+            recommendations.append(
+                "Normalization is off and fitness is flat/declining. "
+                "Enable bonus normalization (max_bonus_fraction=0.30) to "
+                "redistribute selection pressure across fitness dimensions."
+            )
+
+        if not recommendations:
+            recommendations.append("No issues detected. Fitness landscape appears healthy.")
+
+        return {
+            'generation': self.current_generation,
+            'champion': {
+                'fitness': round(self.champion_fitness, 4),
+                'level': lvl,
+                'raw_task_score': round(champion_raw, 4),
+            },
+            'bonus_config': bonus_config,
+            'bonus_thresholds': bonus_thresholds,
+            'structural_scaling': structural_scaling,
+            'fitness_history': fitness_history,
+            'population_dynamics': population_dynamics,
+            'hall_of_fame': hall_of_fame,
+            'novelty_qd': novelty_qd,
+            'recommendations': recommendations,
+        }
+
     def _should_replace_champion(self, candidate_fitness: float) -> bool:
         """Decide whether a candidate should replace the champion.
 

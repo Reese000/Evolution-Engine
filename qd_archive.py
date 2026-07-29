@@ -75,6 +75,14 @@ class MAPElitesArchive:
         # Tracks every program that has occupied each cell for diversity analysis.
         self._cell_program_history: dict[int, list[int]] = {}
 
+        # Illumination diversity history: list of snapshots taken at each
+        # record_illumination_snapshot() call.  Each entry is a dict with
+        # "generation" (value of _addition_counter at recording time) and
+        # "snapshot" (the full get_illumination_diversity() result).
+        # Capped to _MAX_ILLUMINATION_HISTORY entries to bound memory.
+        self._illumination_history: list[dict[str, Any]] = []
+        self._MAX_ILLUMINATION_HISTORY: int = 200
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -775,6 +783,66 @@ class MAPElitesArchive:
             "quality_weighted_illumination_diversity": quality_weighted_illumination_diversity,
         }
 
+    def record_illumination_snapshot(self) -> dict[str, Any]:
+        """Record the current illumination diversity as a history snapshot.
+
+        Call this at the end of each generation or evaluation epoch to
+        build up a longitudinal record of archive quality.  Each call
+        appends a snapshot containing:
+
+          - generation: the archive-wide ``_addition_counter`` value at
+            the time of recording (serves as a logical timestamp).
+          - snapshot: the full dict returned by ``get_illumination_diversity()``
+            at the moment of recording.
+
+        The history is capped at ``_MAX_ILLUMINATION_HISTORY`` entries
+        (oldest entries are dropped) to bound memory usage.
+
+        Returns the snapshot that was just recorded.
+        """
+        generation = self._addition_counter
+        snapshot = self.get_illumination_diversity()
+        entry: dict[str, Any] = {
+            "generation": generation,
+            "snapshot": snapshot,
+        }
+        self._illumination_history.append(entry)
+        # Enforce history cap — drop oldest entries first.
+        if len(self._illumination_history) > self._MAX_ILLUMINATION_HISTORY:
+            self._illumination_history = self._illumination_history[
+                -self._MAX_ILLUMINATION_HISTORY:
+            ]
+        return entry
+
+    def get_illumination_history(self) -> list[dict[str, Any]]:
+        """Return the longitudinal history of illumination diversity snapshots.
+
+        Each element is a dict with:
+
+          - ``generation``: the ``_addition_counter`` value when the
+            snapshot was recorded (logical timestamp).
+          - ``snapshot``: the full illumination diversity dict produced
+            by ``get_illumination_diversity()`` at that time, containing
+            keys such as ``coverage_ratio``, ``centroid_distance``,
+            ``uniformity``, ``overall_diversity_score``,
+            ``quality_weighted_uniformity``, ``quality_weighted_diversity``,
+            ``quality_weighted_shannon_entropy``, and
+            ``quality_weighted_illumination_diversity``.
+
+        The list is ordered chronologically (oldest first).  At most
+        ``_MAX_ILLUMINATION_HISTORY`` entries are retained.
+
+        Use this to analyse longitudinal trends:
+
+        - **Divergence**: compare early vs late snapshots to see if
+          the archive is becoming more or less diverse over time.
+        - **Plateau detection**: spot generations where diversity
+          metrics stop improving.
+        - **Regression alerts**: detect sudden drops in coverage or
+          quality-weighted diversity after replacement events.
+        """
+        return list(self._illumination_history)
+
     def clear(self) -> None:
         """Reset the archive to empty."""
         for i in range(len(self._grid)):
@@ -786,6 +854,7 @@ class MAPElitesArchive:
         self._addition_counter = 0
         self._cell_addition_counts = [0] * (self.bins * self.bins)
         self._cell_program_history.clear()
+        self._illumination_history.clear()
 
     # ------------------------------------------------------------------
     # Persistence
@@ -820,6 +889,7 @@ class MAPElitesArchive:
             "cell_addition_counts": list(self._cell_addition_counts),
             "cell_last_updated": self._cell_last_updated,
             "cell_program_history": {str(k): v for k, v in self._cell_program_history.items()},
+            "illumination_history": self._illumination_history,
         }
 
     @classmethod
@@ -851,6 +921,7 @@ class MAPElitesArchive:
         # Restore per-cell program history (stored as str keys for JSON compat).
         saved_history = data.get("cell_program_history", {})
         archive._cell_program_history = {int(k): list(v) for k, v in saved_history.items()}
+        archive._illumination_history = list(data.get("illumination_history", []))
         return archive
 
 
