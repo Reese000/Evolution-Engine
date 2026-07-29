@@ -2041,6 +2041,29 @@ class EvolutionEngine:
                 loop_bonus = min(5.0, n_loops * 2.0)  # up to 5 points for loops
         base_score += loop_bonus
 
+        # D1: Memory access credit for L7+ tasks (rewards memory operations)
+        mem_bonus = 0.0
+        if self.champion_level >= 7 and status == "ok":
+            mem_accesses = trace.get("memory_accesses", [])
+            if mem_accesses:
+                mem_bonus = min(3.0, len(mem_accesses) * 0.5)  # up to 3 points
+        base_score += mem_bonus
+
+        # D1: Instruction diversity credit for L5+ tasks (rewards diverse instruction usage)
+        div_bonus = 0.0
+        if self.champion_level >= 5 and status == "ok" and instr_count > 0:
+            # Count distinct opcode categories in the program
+            seen_cats = set()
+            for word in program:
+                if isinstance(word, int):
+                    cat = word & 0x7F
+                    if 0 <= cat < 128:
+                        seen_cats.add(_OPCODE_CAT_ARRAY[cat])
+            n_cats = len(seen_cats - {-1})  # exclude invalid
+            if n_cats >= 3:
+                div_bonus = min(2.0, (n_cats - 2) * 0.5)  # up to 2 points
+        base_score += div_bonus
+
         # ── Level advancement bonus (PRIMARY signal) ────────────────────
         # Each curriculum level adds 25 points. This ensures level 17
         # always scores higher than level 0, even with fewer instructions.
