@@ -28,6 +28,8 @@ SparseArchive(k_neighbors, novelty_threshold)
     .get_novelty_stats() -> dict[str, float]
     .get_novelty_trajectory(program_key) -> list[dict]
     .get_novelty_distribution_stats() -> dict[str, Any]
+    .record_distribution_snapshot(generation) -> dict[str, Any]
+    .get_novelty_distribution_history(max_snapshots) -> list[dict[str, Any]]
     .size -> int
 """
 
@@ -235,6 +237,9 @@ class SparseArchive:
         # Program hash index for O(1) lookup in decayed_novelty
         self._prog_hash_index: dict[int, list[int]] = {}  # hash -> list of entry indices
 
+        # Longitudinal distribution history: list of per-generation snapshots
+        self._distribution_history: list[dict[str, Any]] = []
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -348,6 +353,7 @@ class SparseArchive:
         self.size = 0
         self._tree_dirty = True
         self._prog_hash_index.clear()
+        self._distribution_history.clear()
 
     def recent_descriptors(self, n: int = 10) -> list[dict[str, float]]:
         """Return the last *n* descriptor dicts added to the archive."""
@@ -524,6 +530,89 @@ class SparseArchive:
             "q25": float(np.percentile(arr, 25)),
             "q75": float(np.percentile(arr, 75)),
         }
+
+    # ------------------------------------------------------------------
+    # Longitudinal distribution history
+    # ------------------------------------------------------------------
+
+    def record_distribution_snapshot(self, generation: int | None = None) -> dict[str, Any]:
+        """Capture a snapshot of the current distribution and append to history.
+
+        Call this once per generation (typically at the end of a generation
+        cycle) to build up a longitudinal record of how novelty pressure
+        evolves over time.
+
+        Parameters
+        ----------
+        generation:
+            The current generation number.  If ``None``, uses the number
+            of existing snapshots as a fallback counter.
+
+        Returns
+        -------
+        dict[str, Any]
+            The snapshot that was recorded (same shape as
+            :meth:`get_novelty_distribution_stats` output plus
+            ``generation`` and ``archive_size``).
+        """
+        stats = self.get_novelty_distribution_stats()
+        if not stats:
+            # Degenerate archive — still record a minimal snapshot so the
+            # timeline isn't interrupted.
+            snap: dict[str, Any] = {
+                "generation": generation if generation is not None else len(self._distribution_history),
+                "archive_size": self.size,
+                "populated": False,
+            }
+        else:
+            snap = {
+                "generation": generation if generation is not None else len(self._distribution_history),
+                "archive_size": self.size,
+                "populated": True,
+                **stats,
+            }
+
+        # Deduplicate: if the last snapshot has the same generation, replace it
+        # (allows callers to re-snapshot a generation in-place).
+        if self._distribution_history and self._distribution_history[-1]["generation"] == snap["generation"]:
+            self._distribution_history[-1] = snap
+        else:
+            self._distribution_history.append(snap)
+
+        return snap
+
+    def get_novelty_distribution_history(
+        self,
+        max_snapshots: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return longitudinal distribution snapshots over recent generations.
+
+        Each snapshot is a dict containing:
+          - ``generation``: the generation number
+          - ``archive_size``: how many entries were in the archive at that point
+          - ``populated``: ``True`` if full stats were available, ``False`` otherwise
+          - ``mean``, ``median``, ``std``, ``min``, ``max``: basic moments
+          - ``q10``, ``q25``, ``q75``, ``q90``: percentiles
+          - ``iqr``, ``skewness``, ``cv``, ``novelty_pressure``: advanced diagnostics
+
+        Returns an empty list if no snapshots have been recorded yet.
+
+        Parameters
+        ----------
+        max_snapshots:
+            Maximum number of recent snapshots to return (most recent first
+            in the output list).  Set to ``0`` or negative for no limit.
+        """
+        if not self._distribution_history:
+            return []
+
+        populated = [s for s in self._distribution_history if s.get("populated", False)]
+        if not populated:
+            return []
+
+        if max_snapshots > 0:
+            return populated[-max_snapshots:]
+        return list(populated)
 
     # ------------------------------------------------------------------
     # Capacity management & decayed novelty
