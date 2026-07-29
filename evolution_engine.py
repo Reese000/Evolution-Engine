@@ -4325,6 +4325,13 @@ class EvolutionEngine:
         (status != 'ok'), and trivial programs (< 3 instructions)
         to prevent the predictor from learning from garbage data.
 
+        Phase 3.5: Level pre-computation and diversity weighting —
+        determines each candidate's solved_level before fitness weighting,
+        then computes level-diversity weights using inverse-frequency.
+        Underrepresented levels get higher weight, improving predictor
+        generalization across difficulty levels. Combined multiplicatively
+        with fitness weights and normalized.
+
         Returns True if >= 50 examples accumulated (signal to retrain).
         """
         if not self._last_challengers:
@@ -4417,11 +4424,41 @@ class EvolutionEngine:
 
             _candidates.append((prog, challenger_fitness, trace, sha256))
 
-        # Phase 4: Fitness-weighted selection
-        # Compute softmax weights so higher-fitness programs get proportionally
-        # more training signal. Uses temperature-scaled softmax to concentrate
-        # weight on the best programs while preserving relative ordering.
+        # Phase 3.5: Level pre-computation for diversity weighting
+        # Determine solved_level for each candidate before fitness weighting
+        # so we can compute level-diversity weights to improve predictor
+        # generalization across difficulty levels.
+        _level_data = []  # list of (solved_level, task_score) per candidate
+        if _candidates:
+            if _verify_levels_sorted is None:
+                _verify_levels_sorted = sorted(_levels.keys())
+            for _prog, _fit, _trace, _sha in _candidates:
+                _task_score = 0.0
+                _solved_level = self.champion_level
+                _output = {
+                    "registers": _trace.get("final_regs", {}),
+                    "memory": _trace.get("final_memory", {}),
+                }
+                try:
+                    for lvl in _verify_levels_sorted:
+                        level_cls = _levels[lvl]
+                        try:
+                            score = level_cls(seed=lvl).verify(_output, self.task_instance)
+                            if score > _task_score:
+                                _task_score = score
+                                _solved_level = lvl
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                _level_data.append((_solved_level, _task_score))
+
+        # Phase 4: Fitness-weighted selection + Level-diversity weighting
+        # Compute softmax fitness weights AND level-diversity weights,
+        # then combine multiplicatively. Underrepresented levels get a
+        # boost to improve predictor generalization across levels.
         _weights = None
+        _n_levels_found = 1  # default for log message
         if _candidates:
             _fits = [c[1] for c in _candidates]
             _max_f = max(_fits)
@@ -4435,32 +4472,45 @@ class EvolutionEngine:
                 _max_logit = max(_logits)
                 _exp_logits = [math.exp(l - _max_logit) for l in _logits]
                 _sum_exp = sum(_exp_logits)
-                _weights = [e / _sum_exp for e in _exp_logits] if _sum_exp > 0 else [1.0 / len(_logits)] * len(_logits)
+                _fitness_weights = [e / _sum_exp for e in _exp_logits] if _sum_exp > 0 else [1.0 / len(_logits)] * len(_logits)
             else:
-                _weights = [1.0 / len(_fits)] * len(_fits)
+                _fitness_weights = [1.0 / len(_fits)] * len(_fits)
 
-        # Phase 2: Verify task levels and write training examples with weights
+            # Level-diversity weighting: boost underrepresented levels
+            # to improve predictor generalization across difficulty levels.
+            # Uses inverse-frequency weighting: levels with fewer candidates
+            # get proportionally higher weight in the training signal.
+            _level_counter = {}
+            for _sd, _ in _level_data:
+                _level_counter[_sd] = _level_counter.get(_sd, 0) + 1
+
+            _n_levels_found = len(_level_counter)
+            _avg_per_level = len(_candidates) / max(1, _n_levels_found)
+
+            # Diversity multiplier: avg_count / level_count
+            # Underrepresented levels (count < avg) get multiplier > 1
+            # Overrepresented levels (count > avg) get multiplier < 1
+            _level_div_mult = {}
+            for _lvl, _cnt in _level_counter.items():
+                _level_div_mult[_lvl] = _avg_per_level / max(1, _cnt)
+
+            # Combine: multiplicative blend of fitness and diversity weights,
+            # then normalize to sum to 1 for probability distribution.
+            _weights = []
+            for i in range(len(_candidates)):
+                _lvl = _level_data[i][0]
+                fw = _fitness_weights[i]
+                dw = _level_div_mult[_lvl]
+                _weights.append(fw * dw)
+            _w_sum = sum(_weights)
+            if _w_sum > 0:
+                _weights = [w / _w_sum for w in _weights]
+
+        # Phase 2: Write training examples with fitness+diversity weights
+        # (levels pre-computed in Phase 3.5 above)
         for i, (prog, challenger_fitness, trace, sha256) in enumerate(_candidates):
-            task_score = 0.0
-            solved_level = self.champion_level
-            output = {
-                "registers": trace.get("final_regs", {}),
-                "memory": trace.get("final_memory", {}),
-            }
-            try:
-                if _verify_levels_sorted is None:
-                    _verify_levels_sorted = sorted(_levels.keys())
-                for lvl in _verify_levels_sorted:
-                    level_cls = _levels[lvl]
-                    try:
-                        score = level_cls(seed=lvl).verify(output, self.task_instance)
-                        if score > task_score:
-                            task_score = score
-                            solved_level = lvl
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+            solved_level = _level_data[i][0] if _level_data else self.champion_level
+            task_score = _level_data[i][1] if _level_data else 0.0
 
             # Phase 3.2: Add timestamp for recency decay in training
             example = {
@@ -4476,8 +4526,8 @@ class EvolutionEngine:
                 "task_score": task_score,
                 "timestamp": time.time(),
                 "trace_quality_score": min(1.0, max(0.0, challenger_fitness / 100.0)),
-                # Phase 4: Fitness-proportional training weight (softmax-normalized)
-                # Higher fitness → higher weight → more influence on training
+                # Phase 4: Fitness+diversity training weight (softmax × inverse-freq)
+                # Higher fitness AND underrepresented level → higher weight
                 "training_weight": _weights[i] if _weights else 1.0,
             }
 
@@ -4498,7 +4548,8 @@ class EvolutionEngine:
             self._log(
                 f"Recurrent feedback saved ({self.recurrent_examples_count} total, "
                 f"{len(self._saved_sha256s)} unique, "
-                f"fitness-weighted={_weights is not None})"
+                f"fitness+diversity-weighted={_weights is not None}, "
+                f"levels_covered={_n_levels_found})"
             )
         if rejected_count > 0:
             self._log(f"Rejected {rejected_count} low-quality traces (fitness/length/trivial)")

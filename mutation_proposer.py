@@ -613,6 +613,16 @@ class DirectedMutator:
     _mutation_attempts: Dict[str, int] = {}  # description prefix -> attempt count
     _mutation_history: list = []  # recent (description, fitness_delta) tuples, max 200
 
+    # ── Per-program mutation affinity tracking ──────────────
+    # Maps program_hash -> mutation_type -> {successes, attempts, total_delta}
+    _program_mutation_outcomes: Dict[str, Dict[str, Dict[str, float]]] = {}
+    # Maps program_hash -> cached opcode category histogram (normalized feature vector)
+    _program_feature_cache: Dict[str, tuple] = {}
+    # Maximum number of program hashes to track (LRU eviction when exceeded)
+    _PROGRAM_AFFINITY_MAX_ENTRIES: int = 2000
+    # Cosine similarity threshold for "similar" programs
+    _SIMILARITY_THRESHOLD: float = 0.7
+
     @staticmethod
     def record_mutation_outcome(description: str, fitness_delta: float) -> None:
         """Record the outcome of a mutation for success tracking."""
@@ -644,6 +654,238 @@ class DirectedMutator:
             "recent_avg_delta": sum(recent_deltas) / len(recent_deltas) if recent_deltas else 0.0,
             "total_attempts": sum(DirectedMutator._mutation_attempts.values()),
             "total_successes": sum(DirectedMutator._mutation_success.values()),
+        }
+
+    # ── Per-program mutation affinity ──────────────────────
+
+    @staticmethod
+    def _compute_program_hash(program: List[int]) -> str:
+        """Compute a stable hash of the instruction sequence for affinity tracking.
+
+        Uses struct.pack for binary serialization (same approach as
+        champion_anchor.sha256_program) but truncated to 16 hex chars
+        for key efficiency in the outcomes dict.
+        """
+        import hashlib
+        import struct
+        data = struct.pack(f"<{len(program)}I", *program)
+        return hashlib.sha256(data).hexdigest()[:16]
+
+    @staticmethod
+    def _compute_program_features(program: List[int]) -> tuple:
+        """Compute a compact opcode-category feature vector for similarity.
+
+        Returns a tuple of 11 floats (normalized opcode category counts)
+        representing the program's instruction distribution. Categories
+        match OPCODE_CATEGORY_MAP:
+          0=LUI, 1=AUIPC, 2=JAL, 3=JALR, 4=BRANCH, 5=LOAD,
+          6=STORE, 7=ALU_IMM, 8=ALU_REG, 9=FENCE, 10=SYSTEM
+
+        The histogram is L2-normalised so cosine similarity can be computed
+        as a simple dot product. Falls back to a zero vector for empty
+        programs.
+        """
+        if not program:
+            return (0.0,) * NUM_OPCODE_CATEGORIES
+
+        counts = [0.0] * NUM_OPCODE_CATEGORIES
+        for word in program:
+            opcode = word & 0x7F
+            cat = OPCODE_CATEGORY_MAP.get(opcode, -1)
+            if 0 <= cat < NUM_OPCODE_CATEGORIES:
+                counts[cat] += 1.0
+
+        # L2-normalise
+        norm = sum(c * c for c in counts) ** 0.5
+        if norm < 1e-9:
+            return (0.0,) * NUM_OPCODE_CATEGORIES
+        return tuple(c / norm for c in counts)
+
+    @staticmethod
+    def _program_similarity(feat_a: tuple, feat_b: tuple) -> float:
+        """Compute cosine similarity between two L2-normalised feature vectors.
+
+        Since both vectors are pre-normalised, cosine similarity reduces to
+        a simple dot product.  Returns a value in [0.0, 1.0].
+        """
+        return sum(a * b for a, b in zip(feat_a, feat_b))
+
+    @staticmethod
+    def _evict_oldest_program_outcome() -> None:
+        """Remove the oldest program entry when the affinity cache exceeds capacity.
+
+        Simple FIFO eviction: remove the first key inserted.  Python dicts
+        preserve insertion order (3.7+), so popitem(last=False) is O(1).
+        """
+        if len(DirectedMutator._program_mutation_outcomes) > DirectedMutator._PROGRAM_AFFINITY_MAX_ENTRIES:
+            oldest = next(iter(DirectedMutator._program_mutation_outcomes))
+            del DirectedMutator._program_mutation_outcomes[oldest]
+            DirectedMutator._program_feature_cache.pop(oldest, None)
+
+    @staticmethod
+    def record_program_mutation_outcome(
+        program: List[int],
+        mutation_type: str,
+        success: bool,
+        fitness_delta: float = 0.0,
+    ) -> None:
+        """Record a mutation outcome keyed by program identity.
+
+        This parallels ``record_mutation_outcome`` but indexes results by
+        the originating program's hash, enabling per-program affinity
+        queries via ``get_program_mutation_affinity``.
+
+        Args:
+            program:        The *original* program (before mutation).
+            mutation_type:  Descriptive mutation tag (e.g. "swap_ADD_to_SUB",
+                            "inject_addi_r10_42", or the strategy prefix).
+            success:        Whether the mutation improved fitness.
+            fitness_delta:  Signed fitness change (positive = improvement).
+        """
+        prog_hash = DirectedMutator._compute_program_hash(program)
+
+        # Ensure feature vector is cached
+        if prog_hash not in DirectedMutator._program_feature_cache:
+            DirectedMutator._program_feature_cache[prog_hash] = (
+                DirectedMutator._compute_program_features(program)
+            )
+
+        # Normalise mutation_type to a coarse prefix for grouping
+        prefix = mutation_type.split("_")[0] if "_" in mutation_type else mutation_type
+
+        outcomes = DirectedMutator._program_mutation_outcomes
+        if prog_hash not in outcomes:
+            outcomes[prog_hash] = {}
+        if prefix not in outcomes[prog_hash]:
+            outcomes[prog_hash][prefix] = {
+                "successes": 0.0,
+                "attempts": 0.0,
+                "total_delta": 0.0,
+            }
+
+        entry = outcomes[prog_hash][prefix]
+        entry["attempts"] += 1.0
+        entry["total_delta"] += fitness_delta
+        if success:
+            entry["successes"] += 1.0
+
+        DirectedMutator._evict_oldest_program_outcome()
+
+    @staticmethod
+    def get_program_mutation_affinity(
+        program: List[int],
+        top_n: int = 5,
+        similarity_threshold: Optional[float] = None,
+    ) -> List[Tuple[str, float, int]]:
+        """Return mutation strategies ranked by historical success for similar programs.
+
+        Finds all previously-tracked programs whose opcode-category
+        histogram is at least *similarity_threshold* similar (cosine) to
+        the given program, aggregates their per-mutation-type success
+        statistics, and returns the top *top_n* strategies sorted by
+        success rate (descending).
+
+        Args:
+            program:               The program to find affinities for.
+            top_n:                 Number of top strategies to return (default 5).
+            similarity_threshold:  Minimum cosine similarity to consider a
+                                   previously-tracked program "similar".
+                                   Defaults to ``_SIMILARITY_THRESHOLD`` (0.7).
+
+        Returns:
+            List of ``(mutation_type, success_rate, total_attempts)`` tuples
+            sorted by ``success_rate`` descending.  ``success_rate`` is in
+            [0.0, 1.0].  ``total_attempts`` is the raw count of recorded
+            attempts across all similar programs.
+
+            If no data is available, returns an empty list.
+        """
+        if not DirectedMutator._program_mutation_outcomes:
+            return []
+
+        threshold = (
+            similarity_threshold
+            if similarity_threshold is not None
+            else DirectedMutator._SIMILARITY_THRESHOLD
+        )
+
+        query_features = DirectedMutator._compute_program_features(program)
+
+        # Aggregate stats from all similar programs
+        aggregated: Dict[str, Dict[str, float]] = {}  # prefix -> {successes, attempts}
+
+        for prog_hash, type_stats in DirectedMutator._program_mutation_outcomes.items():
+            cached_features = DirectedMutator._program_feature_cache.get(prog_hash)
+            if cached_features is None:
+                continue
+
+            sim = DirectedMutator._program_similarity(query_features, cached_features)
+            if sim < threshold:
+                continue
+
+            for prefix, stats in type_stats.items():
+                if prefix not in aggregated:
+                    aggregated[prefix] = {"successes": 0.0, "attempts": 0.0}
+                aggregated[prefix]["successes"] += stats["successes"]
+                aggregated[prefix]["attempts"] += stats["attempts"]
+
+        # Sort by success rate, then by attempts (tiebreak)
+        results: List[Tuple[str, float, int]] = []
+        for prefix, agg in aggregated.items():
+            attempts = agg["attempts"]
+            if attempts < 1.0:
+                continue
+            rate = agg["successes"] / attempts
+            results.append((prefix, rate, int(attempts)))
+
+        results.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        return results[:top_n]
+
+    @staticmethod
+    def get_program_affinity_stats() -> Dict[str, Any]:
+        """Return summary statistics for the per-program affinity tracker.
+
+        Useful for dashboarding and debugging.  Reports total tracked
+        programs, total mutation records, and the top 5 most-tracked
+        mutation types globally.
+        """
+        outcomes = DirectedMutator._program_mutation_outcomes
+        total_programs = len(outcomes)
+        total_records = sum(
+            len(type_stats) for type_stats in outcomes.values()
+        )
+
+        # Global top mutation types (across all programs)
+        global_stats: Dict[str, Dict[str, float]] = {}
+        for type_stats in outcomes.values():
+            for prefix, stats in type_stats.items():
+                if prefix not in global_stats:
+                    global_stats[prefix] = {"successes": 0.0, "attempts": 0.0}
+                global_stats[prefix]["successes"] += stats["successes"]
+                global_stats[prefix]["attempts"] += stats["attempts"]
+
+        top_types = sorted(
+            global_stats.items(),
+            key=lambda x: (
+                x[1]["successes"] / x[1]["attempts"] if x[1]["attempts"] > 0 else 0.0,
+                x[1]["attempts"],
+            ),
+            reverse=True,
+        )[:5]
+
+        return {
+            "total_programs_tracked": total_programs,
+            "total_mutation_type_records": total_records,
+            "top_mutation_types": [
+                {
+                    "type": prefix,
+                    "success_rate": s["successes"] / s["attempts"] if s["attempts"] > 0 else 0.0,
+                    "attempts": int(s["attempts"]),
+                }
+                for prefix, s in top_types
+            ],
+            "cache_capacity": DirectedMutator._PROGRAM_AFFINITY_MAX_ENTRIES,
+            "similarity_threshold": DirectedMutator._SIMILARITY_THRESHOLD,
         }
 
     # ── Structural helpers ─────────────────────────────────
