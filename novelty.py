@@ -24,6 +24,8 @@ SparseArchive(k_neighbors, novelty_threshold)
     .recent_novelty_scores(n) -> list[float]
     .trim_archive(max_entries) -> int
     .get_archive_summary() -> dict
+    .batch_lookup(programs, current_generation, half_life) -> dict[int, float]
+    .get_novelty_stats() -> dict[str, float]
     .size -> int
 """
 
@@ -421,6 +423,104 @@ class SparseArchive:
             "novelty_threshold": self.novelty_threshold,
             "diversity_score": self.get_diversity_score(),
             "avg_novelty": sum(recent) / len(recent) if recent else 0.0,
+        }
+
+    def batch_lookup(
+        self,
+        programs: list[list[int]],
+        current_generation: int | None = None,
+        half_life: int = 500,
+    ) -> dict[int, float]:
+        """Look up novelty scores for multiple programs in one call.
+
+        Uses the program hash index for O(1) per lookup instead of
+        scanning the full archive.  For programs found in the archive,
+        returns their novelty score (optionally with exponential time-decay
+        if *current_generation* is provided).  Programs not found get 0.0.
+
+        Parameters
+        ----------
+        programs:
+            List of programs (each a ``list[int]`` of instruction words).
+        current_generation:
+            If given, apply exponential time-decay to scores using
+            ``half_life``.  If ``None``, return raw novelty scores.
+        half_life:
+            Decay half-life in generations (default 500).
+
+        Returns
+        -------
+        dict[int, float]
+            Mapping from ``id(program)`` to novelty score for every
+            program in the input list.
+        """
+        results: dict[int, float] = {}
+        for program in programs:
+            prog_id = id(program)
+            _prog_hash = hash(tuple(program))
+            indices = self._prog_hash_index.get(_prog_hash, [])
+            found = False
+            for idx in indices:
+                if idx < len(self._entries):
+                    entry = self._entries[idx]
+                    meta = entry[2]
+                    stored_prog = meta.get("program") if isinstance(meta, dict) else None
+                    if stored_prog is not None and stored_prog == program:
+                        flat_descriptor = entry[0]
+                        base_novelty = self._k_nn_distance(flat_descriptor)
+                        if current_generation is not None:
+                            program_generation = meta.get("generation") if isinstance(meta, dict) else None
+                            if program_generation is not None:
+                                age = current_generation - int(program_generation)
+                                decay = math.exp(-0.693 * age / half_life)
+                                base_novelty *= decay
+                        results[prog_id] = base_novelty
+                        found = True
+                        break
+            if not found:
+                results[prog_id] = 0.0
+        return results
+
+    def get_novelty_stats(self) -> dict[str, float]:
+        """Return descriptive statistics of novelty scores across the archive.
+
+        Useful for diagnostics: detects whether novelty pressure is too
+        high (mean/median near 0) or too low (scores diverging / no
+        selection pressure).  Returns an empty dict if the archive is
+        empty.
+
+        Returns
+        -------
+        dict[str, float]
+            Keys: ``mean``, ``median``, ``std``, ``min``, ``max``,
+            ``q25`` (25th percentile), ``q75`` (75th percentile).
+        """
+        if self.size == 0:
+            return {}
+        if self._tree_dirty:
+            self._rebuild_tree()
+        if self._tree is None:
+            return {}
+
+        k = min(self.k_neighbors, self.size)
+        scores: list[float] = []
+        for entry in self._entries:
+            flat = entry[0]
+            dists, _ = self._tree.query(np.array(flat), k=k)
+            if k == 1:
+                scores.append(float(dists))
+            else:
+                scores.append(float(np.mean(dists)))
+
+        arr = np.array(scores)
+        return {
+            "mean": float(np.mean(arr)),
+            "median": float(np.median(arr)),
+            "std": float(np.std(arr)),
+            "min": float(np.min(arr)),
+            "max": float(np.max(arr)),
+            "q25": float(np.percentile(arr, 25)),
+            "q75": float(np.percentile(arr, 75)),
         }
 
     # ------------------------------------------------------------------

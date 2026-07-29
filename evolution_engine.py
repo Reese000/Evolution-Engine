@@ -13,6 +13,7 @@ import collections
 import concurrent.futures
 import heapq
 import json
+import math
 import os
 import random
 import time
@@ -1008,6 +1009,12 @@ class EvolutionEngine:
         self._cached_eval_budget = self.config.eval_budget
         # Bonus threshold cache: (level, threshold) or None
         self._bonus_threshold_cache: tuple[int, float] | None = None
+        # R45: Adaptive bonus scaling cache — stores the structural
+        # patterns analysis result for the current generation.
+        # Invalidated when generation counter changes (same pattern as
+        # _bonus_threshold_cache but keyed on generation, not level).
+        self._structural_patterns_cache: dict[str, Any] | None = None
+        self._structural_patterns_gen: int = -1  # generation of cached result
         # Cached expected regs (invalidated when task instance changes)
         self._cached_expected_regs = None
         self._cached_expected_total = 0
@@ -1923,6 +1930,58 @@ class EvolutionEngine:
     # Fitness
     # ------------------------------------------------------------------
 
+    def _get_structural_bonus_scale(self) -> dict[str, Any]:
+        """Return cached structural bonus scaling data for the current generation.
+
+        Delegates to progression_tracker.analyze_population_patterns() when
+        available, wrapped in try/except for safety.  The result is cached
+        per-generation to avoid redundant analysis during batch evaluations.
+
+        Returns a dict with keys:
+            scale_factor: float -- multiplier for structural bonuses
+            loop_pressure: float -- relative loop bonus weight [0, 1]
+            mem_pressure: float -- relative memory bonus weight [0, 1]
+            div_pressure: float -- relative diversity bonus weight [0, 1]
+
+        Falls back to neutral defaults when the tracker is unavailable
+        or raises an exception.
+        """
+        gen = self.current_generation
+        cached = self._structural_patterns_cache
+        if cached is not None and self._structural_patterns_gen == gen:
+            return cached
+
+        try:
+            if hasattr(self, "progression_tracker") and self.progression_tracker is not None:
+                patterns = self.progression_tracker.analyze_population_patterns()
+                result = {
+                    "scale_factor": float(patterns.get("scale_factor", 1.0)),
+                    "loop_pressure": float(patterns.get("loop_pressure", 0.33)),
+                    "mem_pressure": float(patterns.get("mem_pressure", 0.33)),
+                    "div_pressure": float(patterns.get("div_pressure", 0.34)),
+                }
+                # Clamp scale_factor to [0.5, 3.0] for safety
+                sf = result["scale_factor"]
+                result["scale_factor"] = max(0.5, min(3.0, sf))
+            else:
+                result = {
+                    "scale_factor": 1.0,
+                    "loop_pressure": 0.33,
+                    "mem_pressure": 0.33,
+                    "div_pressure": 0.34,
+                }
+        except Exception:
+            result = {
+                "scale_factor": 1.0,
+                "loop_pressure": 0.33,
+                "mem_pressure": 0.33,
+                "div_pressure": 0.34,
+            }
+
+        self._structural_patterns_cache = result
+        self._structural_patterns_gen = gen
+        return result
+
     def _compute_fitness(
         self,
         program: list[int],
@@ -2034,12 +2093,23 @@ class EvolutionEngine:
 
         base_score = reg_match * 100.0 - bloat_penalty + exec_credit + solved_bonus
 
+        # R45: Adaptive bonus scaling -- scale structural bonuses based on
+        # population diversity to prevent over-rewarding.  When the population
+        # is stuck on flat/simple programs, bonuses are amplified; when
+        # structure is already abundant they are dampened.
+        try:
+            _scales = self._get_structural_bonus_scale()
+            _bonus_scale = _scales.get("scale_factor", 1.0)
+        except Exception:
+            _bonus_scale = 1.0
+
         # D1: Loop structure bonus for L5+ tasks (rewards structural progress)
         loop_bonus = 0.0
         if self.champion_level >= 5 and status == "ok" and instr_count > 0:
             n_loops = self._count_backward_branches(program)
             if n_loops > 0:
                 loop_bonus = min(5.0, n_loops * 2.0)  # up to 5 points for loops
+        loop_bonus *= _bonus_scale
         base_score += loop_bonus
 
         # D1: Memory access credit for L7+ tasks (rewards memory operations)
@@ -2048,6 +2118,7 @@ class EvolutionEngine:
             mem_accesses = trace.get("memory_accesses", [])
             if mem_accesses:
                 mem_bonus = min(3.0, len(mem_accesses) * 0.5)  # up to 3 points
+        mem_bonus *= _bonus_scale
         base_score += mem_bonus
 
         # D1: Instruction diversity credit for L5+ tasks (rewards diverse instruction usage)
@@ -2063,6 +2134,7 @@ class EvolutionEngine:
             n_cats = len(seen_cats - {-1})  # exclude invalid
             if n_cats >= 3:
                 div_bonus = min(2.0, (n_cats - 2) * 0.5)  # up to 2 points
+        div_bonus *= _bonus_scale
         base_score += div_bonus
 
         # ── Level advancement bonus (PRIMARY signal) ────────────────────
@@ -2279,6 +2351,19 @@ class EvolutionEngine:
                     if _div_score < 0.20:
                         # Low diversity: up to 1.5x boost
                         qd_weight *= 1.0 + 2.5 * (0.20 - _div_score)
+                    # Freshness modulation: reduce bonus for fresh cells
+                    # (recently updated, already rewarded) and increase
+                    # bonus for stale cells (need fresh investment).
+                    try:
+                        _fresh_data = self.qd_archive.get_cell_freshness(
+                            self.current_generation
+                        )
+                        _fresh_val = _fresh_data.get("avg_freshness", 0.5) if isinstance(_fresh_data, dict) else 0.5
+                        # _fresh_val ~ 1.0 = fresh, ~ 0.0 = stale
+                        # Map to multiplier: fresh -> 0.5x, stale -> 1.5x
+                        qd_weight *= 1.5 - _fresh_val
+                    except Exception:
+                        pass  # safety: ignore if get_cell_freshness unavailable
                     fitness += qd_bonus * qd_weight
             except (TypeError, ValueError, RuntimeError):
                 pass
@@ -2520,6 +2605,14 @@ class EvolutionEngine:
         tc[can_slow] = np.maximum(0.0, 10.0 - (ok_instr[can_slow].astype(np.float64) - 15) * 0.2)
         base += tc
 
+        # R45: Adaptive bonus scaling -- scale structural bonuses based on
+        # population diversity (same logic as _compute_fitness).
+        try:
+            _scales = self._get_structural_bonus_scale()
+            _bonus_scale = _scales.get("scale_factor", 1.0)
+        except Exception:
+            _bonus_scale = 1.0
+
         # D1: Structural progress bonuses (vectorized)
         lvl = self.champion_level
 
@@ -2530,6 +2623,7 @@ class EvolutionEngine:
                 n_loops = self._count_backward_branches(prog)
                 if n_loops > 0:
                     loop_bonuses[j] = min(5.0, n_loops * 2.0)
+            loop_bonuses *= _bonus_scale
             base += loop_bonuses
 
         # Memory access credit for L7+
@@ -2540,6 +2634,7 @@ class EvolutionEngine:
                 mem_accesses = trace.get("memory_accesses", [])
                 if mem_accesses:
                     mem_bonuses[j] = min(3.0, len(mem_accesses) * 0.5)
+            mem_bonuses *= _bonus_scale
             base += mem_bonuses
 
         # Instruction diversity credit for L5+
@@ -2556,6 +2651,7 @@ class EvolutionEngine:
                 n_cats = len(seen_cats - {-1})
                 if n_cats >= 3:
                     div_bonuses[j] = min(2.0, (n_cats - 2) * 0.5)
+            div_bonuses *= _bonus_scale
             base += div_bonuses
 
         # ── SMC pattern bonus (vectorised) ──────────────────────────
@@ -2644,6 +2740,19 @@ class EvolutionEngine:
                             _div_score = cov
                         if _div_score < 0.20:
                             qd_w *= 1.0 + 2.5 * (0.20 - _div_score)
+                        # Freshness modulation: reduce bonus for fresh cells
+                        # (recently updated, already rewarded) and increase
+                        # bonus for stale cells (need fresh investment).
+                        try:
+                            _fresh_data = self.qd_archive.get_cell_freshness(
+                                self.current_generation
+                            )
+                            _fresh_val = _fresh_data.get("avg_freshness", 0.5) if isinstance(_fresh_data, dict) else 0.5
+                            # _fresh_val ~ 1.0 = fresh, ~ 0.0 = stale
+                            # Map to multiplier: fresh -> 0.5x, stale -> 1.5x
+                            qd_w *= 1.5 - _fresh_val
+                        except Exception:
+                            pass  # safety: ignore if get_cell_freshness unavailable
                         fj += qd_bonus * qd_w
                         # Niche penalty
                         if self.champion is not None and self.champion_trace is not None:
@@ -4066,6 +4175,11 @@ class EvolutionEngine:
         or crash traces. Adds timestamp for recency decay in training.
         Performs quality-based eviction when buffer exceeds MAX_RECURRENT_ENTRIES.
 
+        Phase 4: Fitness-weighted selection — computes softmax-normalized
+        training weights so higher-fitness programs contribute proportionally
+        more training signal. Temperature-scaled to concentrate weight on
+        the best programs while preserving relative ordering.
+
         Returns True if >= 50 examples accumulated (signal to retrain).
         """
         if not self._last_challengers:
@@ -4106,6 +4220,9 @@ class EvolutionEngine:
         fitnesses = self._last_challenger_fitnesses
         n_fitnesses = len(fitnesses)
 
+        # Collect eligible candidates (phase 1) then compute fitness weights (phase 2)
+        # so higher-fitness programs contribute proportionally more training signal.
+        _candidates = []  # list of (prog, fitness, trace, sha256) tuples
         for idx in range(len(self._last_challengers)):
             prog = self._last_challengers[idx]
             if idx >= len(self._last_results):
@@ -4144,7 +4261,32 @@ class EvolutionEngine:
                         continue
                 self._saved_size_counts[_size_bucket] = self._saved_size_counts.get(_size_bucket, 0) + 1
 
-            # Verify against task levels (use module-level LEVELS, sorted once)
+            _candidates.append((prog, challenger_fitness, trace, sha256))
+
+        # Phase 4: Fitness-weighted selection
+        # Compute softmax weights so higher-fitness programs get proportionally
+        # more training signal. Uses temperature-scaled softmax to concentrate
+        # weight on the best programs while preserving relative ordering.
+        _weights = None
+        if _candidates:
+            _fits = [c[1] for c in _candidates]
+            _max_f = max(_fits)
+            _min_f = min(_fits)
+            _fitness_range = _max_f - _min_f
+            # Softmax temperature: lower temp concentrates weight on best programs
+            _temperature = max(0.5, _fitness_range * 0.2) if _fitness_range > 0 else 1.0
+
+            if _fitness_range > 1e-6:
+                _logits = [((f - _min_f) / _fitness_range) * (1.0 / _temperature) for f in _fits]
+                _max_logit = max(_logits)
+                _exp_logits = [math.exp(l - _max_logit) for l in _logits]
+                _sum_exp = sum(_exp_logits)
+                _weights = [e / _sum_exp for e in _exp_logits] if _sum_exp > 0 else [1.0 / len(_logits)] * len(_logits)
+            else:
+                _weights = [1.0 / len(_fits)] * len(_fits)
+
+        # Phase 2: Verify task levels and write training examples with weights
+        for i, (prog, challenger_fitness, trace, sha256) in enumerate(_candidates):
             task_score = 0.0
             solved_level = self.champion_level
             output = {
@@ -4174,12 +4316,15 @@ class EvolutionEngine:
                 "champion_sha256": sha256,
                 "champion_words": len(prog),
                 "champion_program": [hex(w) for w in prog],
-                "trace_status": status,
+                "trace_status": trace.get("status", ""),
                 "trace_instr_count": trace.get("instructions_count", 0),
                 "stalled_count": self.generations_stalled,
                 "task_score": task_score,
                 "timestamp": time.time(),
                 "trace_quality_score": min(1.0, max(0.0, challenger_fitness / 100.0)),
+                # Phase 4: Fitness-proportional training weight (softmax-normalized)
+                # Higher fitness → higher weight → more influence on training
+                "training_weight": _weights[i] if _weights else 1.0,
             }
 
             self._saved_sha256s[sha256] = None
@@ -4198,7 +4343,8 @@ class EvolutionEngine:
         if saved_any:
             self._log(
                 f"Recurrent feedback saved ({self.recurrent_examples_count} total, "
-                f"{len(self._saved_sha256s)} unique)"
+                f"{len(self._saved_sha256s)} unique, "
+                f"fitness-weighted={_weights is not None})"
             )
         if rejected_count > 0:
             self._log(f"Rejected {rejected_count} low-quality traces " f"(fitness < {MIN_FITNESS_FOR_TRACE})")

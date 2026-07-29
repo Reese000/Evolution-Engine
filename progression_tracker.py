@@ -204,6 +204,137 @@ class ProgressionTracker:
                 break
         return count
 
+    def analyze_population_patterns(self, window: int = 5) -> Dict[str, Any]:
+        """Analyze structural patterns in the population across recent cycles.
+
+        Used by EvolutionEngine to dynamically scale structural fitness
+        bonuses (loop, memory, diversity) based on how structurally
+        diverse the population currently is.  When the population is
+        stuck on flat/simple programs the bonuses are amplified; when
+        structure is already abundant they are dampened.
+
+        Parameters
+        ----------
+        window : int
+            Number of most-recent cycles to analyse (default 5).
+
+        Returns
+        -------
+        dict with keys:
+            structural_diversity_score : float [0, 1]
+                0 = population is structurally homogeneous / stuck,
+                1 = population has rich structural variation.
+            structural_bottleneck : str
+                Which structural feature is most lacking:
+                "loops", "memory", "diversity", "none", or "unknown".
+            scale_factor : float
+                Multiplier for structural bonuses.
+                > 1.0 when bottleneck is severe (push harder),
+                < 1.0 when structure is well-satisfied (focus elsewhere).
+            loop_pressure : float [0, 1]
+                Relative importance of the loop bonus.
+            mem_pressure : float [0, 1]
+                Relative importance of the memory-access bonus.
+            div_pressure : float [0, 1]
+                Relative importance of the instruction-diversity bonus.
+        """
+        recent = self.history[-window:]
+        if not recent:
+            return {
+                "structural_diversity_score": 0.5,
+                "structural_bottleneck": "unknown",
+                "scale_factor": 1.0,
+                "loop_pressure": 0.33,
+                "mem_pressure": 0.33,
+                "div_pressure": 0.34,
+            }
+
+        # --- Structural diversity score -----------------------------------
+        # Combine three signals into a single [0, 1] diversity metric:
+        #   1. mg_ratio_avg — proxy for exploration / behavioural diversity
+        #   2. fitness_trend — improving fitness implies structural progress
+        #   3. words_trend — growing programs imply structural complexity
+        mg_avg = self.mg_ratio_avg(window)
+        ft = self.fitness_trend(window)
+        wt = self.words_trend(window)
+
+        # Normalise fitness trend: clamp to [-10, +10] and map to [0, 1]
+        ft_norm = max(0.0, min(1.0, (ft + 10.0) / 20.0))
+        # Normalise words trend: clamp to [-5, +5] and map to [0, 1]
+        wt_norm = max(0.0, min(1.0, (wt + 5.0) / 10.0))
+
+        # Weighted combination: mg_ratio is the strongest signal
+        structural_diversity = mg_avg * 0.4 + ft_norm * 0.3 + wt_norm * 0.3
+        structural_diversity = max(0.0, min(1.0, structural_diversity))
+
+        # --- Structural bottleneck detection ------------------------------
+        # Determine which feature is most lacking based on level and trends
+        lvl = recent[-1].level if recent else 0
+        pc = self.plateau_cycles()
+
+        if structural_diversity < 0.3 and pc >= 3:
+            # Stuck and structurally homogeneous — identify the primary gap
+            if lvl < 7:
+                bottleneck = "loops"
+            elif lvl < 12:
+                bottleneck = "memory"
+            else:
+                bottleneck = "diversity"
+        elif structural_diversity < 0.3:
+            # Low diversity but not yet plateaued — secondary bottleneck
+            if lvl < 7:
+                bottleneck = "loops"
+            elif lvl < 12:
+                bottleneck = "memory"
+            else:
+                bottleneck = "diversity"
+        elif structural_diversity > 0.7:
+            bottleneck = "none"
+        else:
+            # Medium diversity — no clear bottleneck
+            bottleneck = "none"
+
+        # --- Scale factor -------------------------------------------------
+        # Inversely related to structural diversity:
+        #   diversity < 0.3 → scale up to 2.0x (push harder)
+        #   diversity > 0.7 → scale down to 0.5x (back off)
+        #   middle         → linear interpolation
+        if structural_diversity <= 0.3:
+            scale_factor = 2.0 - (structural_diversity / 0.3) * 1.0  # 2.0 → 1.0
+        elif structural_diversity >= 0.7:
+            scale_factor = 1.0 - ((structural_diversity - 0.7) / 0.3) * 0.5  # 1.0 → 0.5
+        else:
+            scale_factor = 1.0  # neutral zone [0.3, 0.7]
+
+        # --- Per-feature pressure -----------------------------------------
+        # Pressure is highest for the bottlenecked feature at its level
+        if bottleneck == "loops":
+            loop_pressure = 0.6
+            mem_pressure = 0.2
+            div_pressure = 0.2
+        elif bottleneck == "memory":
+            loop_pressure = 0.2
+            mem_pressure = 0.6
+            div_pressure = 0.2
+        elif bottleneck == "diversity":
+            loop_pressure = 0.2
+            mem_pressure = 0.2
+            div_pressure = 0.6
+        else:
+            # No bottleneck — equal pressure
+            loop_pressure = 0.33
+            mem_pressure = 0.33
+            div_pressure = 0.34
+
+        return {
+            "structural_diversity_score": structural_diversity,
+            "structural_bottleneck": bottleneck,
+            "scale_factor": scale_factor,
+            "loop_pressure": loop_pressure,
+            "mem_pressure": mem_pressure,
+            "div_pressure": div_pressure,
+        }
+
     def get_plateau_analysis(self, window: int = 10) -> Dict[str, Any]:
         """Detailed plateau analysis over the last *window* cycles.
 
