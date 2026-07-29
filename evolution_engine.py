@@ -3816,39 +3816,149 @@ class EvolutionEngine:
         # others very unfit), favor exploitation strategies to refine the
         # good programs. When variance is low (all programs similar), favor
         # exploration strategies to break out of the current cluster.
-        # Uses coefficient of variation (std/mean) of the previous generation's
-        # fitness values from _last_challenger_fitnesses.
+        #
+        # Enhanced multi-metric analysis (replaces single-CV approach):
+        #   - Coefficient of variation (CV = std/mean): scale-independent variance
+        #   - Interquartile range ratio (IQR/range): robust to outliers
+        #   - Skewness: detects asymmetric fitness distributions
+        #   - Variance trend: tracks CV over recent generations to detect
+        #     convergence (decreasing variance → need exploration) or
+        #     divergence (increasing variance → exploit emerging structure)
+        #
+        # Uses smooth probability gradation instead of hard binary thresholds:
+        #   - High variance (score > 0.5): exploit with P proportional to variance
+        #   - Low variance (score < 0.3): explore with P inversely proportional
+        #   - Medium variance: use skewness as tiebreaker
+        #
+        # Tracks variance history (last 10 generations) for trend detection.
         try:
             _prev_fits = self._last_challenger_fitnesses
             if _prev_fits and len(_prev_fits) >= 3:
                 _n = len(_prev_fits)
                 _sum = sum(_prev_fits)
                 _mean = _sum / _n
+
                 if abs(_mean) > 1e-9:
+                    # --- Coefficient of variation (CV) ---
                     _var = sum((f - _mean) ** 2 for f in _prev_fits) / _n
                     _std = _var ** 0.5
-                    _cv = _std / abs(_mean)  # coefficient of variation
-                    if _cv > 1.0 and override_priority < 1:
-                        # High variance: exploit — favor targeted strategies
-                        _exploit_strats = [s for s in MutationStrategy
-                                           if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
-                        if _exploit_strats:
-                            override_priority = 1
-                            override_strategy = self.rng.choice(_exploit_strats)
-                            override_log_msg = (
-                                f"[Strategy] Variance-aware exploit: CV={_cv:.2f}, "
-                                f"std={_std:.2f}, mean={_mean:.2f}")
-                    elif _cv < 0.3 and override_priority < 1:
-                        # Low variance: explore — try new strategies
-                        _explore_strats = [s for s in MutationStrategy
-                                           if s.value in ('GROW', 'PERTURBATION_CAPPED',
-                                                          'MODEL_GUIDED', 'HYBRID')]
-                        if _explore_strats:
-                            override_priority = 1
-                            override_strategy = self.rng.choice(_explore_strats)
-                            override_log_msg = (
-                                f"[Strategy] Variance-aware explore: CV={_cv:.2f}, "
-                                f"std={_std:.2f}, mean={_mean:.2f}")
+                    _cv = _std / abs(_mean)
+
+                    # --- Interquartile range ratio (robust variance metric) ---
+                    _sorted_fits = sorted(_prev_fits)
+                    _q1 = _sorted_fits[_n // 4]
+                    _q3 = _sorted_fits[(3 * _n) // 4]
+                    _iqr = _q3 - _q1
+                    _fit_range = max(_prev_fits) - min(_prev_fits) + 1e-9
+                    _iqr_ratio = _iqr / _fit_range  # normalized [0, 1]
+
+                    # --- Skewness (Fisher-Pearson) ---
+                    _skew = (
+                        sum(((f - _mean) / max(_std, 1e-9)) ** 3 for f in _prev_fits) / _n
+                    )
+
+                    # --- Combined variance score [0, 1] ---
+                    # Blend CV (normalized, capped at 2.0) and IQR ratio
+                    # with equal weight. IQR ratio catches bimodal distributions
+                    # where CV is misleading.
+                    _cv_norm = min(_cv, 2.0) / 2.0
+                    _variance_score = 0.5 * _cv_norm + 0.5 * _iqr_ratio
+
+                    # --- Variance trend (convergence/divergence) ---
+                    # Track over last 10 generations. Increasing trend = diverging
+                    # population (healthy, keep exploiting). Decreasing trend =
+                    # converging (may need exploration injection).
+                    if not hasattr(self, '_variance_history'):
+                        self._variance_history: list[float] = []
+                    self._variance_history.append(_variance_score)
+                    if len(self._variance_history) > 10:
+                        self._variance_history = self._variance_history[-10:]
+
+                    _variance_trend = 0.0
+                    if len(self._variance_history) >= 4:
+                        _vh = self._variance_history
+                        _half = len(_vh) // 2
+                        _recent_avg = sum(_vh[_half:]) / max(1, len(_vh) - _half)
+                        _older_avg = sum(_vh[:_half]) / max(1, _half)
+                        _variance_trend = _recent_avg - _older_avg  # +diverging, -converging
+
+                    # --- Smooth probability gradation ---
+                    # Instead of hard binary thresholds (CV > 1.0 / CV < 0.3),
+                    # use smooth sigmoid-like probability curves.
+                    # High variance → exploit with probability 0.4 + 0.4 * score
+                    # Low variance → explore with probability 0.4 + 0.4 * (1 - score)
+                    # Medium variance → use skewness as tiebreaker at lower probability
+
+                    if _variance_score > 0.5 and override_priority < 1:
+                        # High variance: exploit — refine promising programs
+                        # Probability scales with variance strength (0.65 at score=0.5, 0.85 at score=1.0)
+                        _exploit_prob = min(0.85, 0.4 + _variance_score * 0.5)
+                        # Boost exploit probability when population is diverging
+                        # (healthy spread means we have structure to exploit)
+                        if _variance_trend > 0.05:
+                            _exploit_prob = min(0.95, _exploit_prob + 0.10)
+
+                        if self.rng.random() < _exploit_prob:
+                            _exploit_strats = [s for s in MutationStrategy
+                                               if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
+                            if _exploit_strats:
+                                override_priority = 1
+                                override_strategy = self.rng.choice(_exploit_strats)
+                                override_log_msg = (
+                                    f"[Strategy] Variance-aware exploit: "
+                                    f"score={_variance_score:.2f}, CV={_cv:.2f}, "
+                                    f"IQR={_iqr_ratio:.2f}, skew={_skew:+.2f}, "
+                                    f"trend={_variance_trend:+.3f}")
+
+                    elif _variance_score < 0.3 and override_priority < 1:
+                        # Low variance: explore — break out of the cluster
+                        # Probability scales inversely (0.65 at score=0.0, 0.55 at score=0.3)
+                        _explore_prob = min(0.85, 0.4 + (1.0 - _variance_score) * 0.5)
+                        # Boost explore probability when population is converging
+                        # (tight cluster = stuck, need diversification)
+                        if _variance_trend < -0.05:
+                            _explore_prob = min(0.95, _explore_prob + 0.10)
+
+                        if self.rng.random() < _explore_prob:
+                            _explore_strats = [s for s in MutationStrategy
+                                               if s.value in ('GROW', 'PERTURBATION_CAPPED',
+                                                              'MODEL_GUIDED', 'HYBRID')]
+                            if _explore_strats:
+                                override_priority = 1
+                                override_strategy = self.rng.choice(_explore_strats)
+                                override_log_msg = (
+                                    f"[Strategy] Variance-aware explore: "
+                                    f"score={_variance_score:.2f}, CV={_cv:.2f}, "
+                                    f"IQR={_iqr_ratio:.2f}, skew={_skew:+.2f}, "
+                                    f"trend={_variance_trend:+.3f}")
+
+                    elif override_priority < 1:
+                        # Medium variance (0.3 ≤ score ≤ 0.5): use skewness tiebreaker
+                        # Left-skewed (skew < -0.5): most programs are fit, few outliers
+                        # → explore to diversify the outlier pool
+                        # Right-skewed (skew > 0.5): most are unfit, few gems
+                        # → exploit to refine the rare good programs
+                        if _skew < -0.5 and self.rng.random() < 0.35:
+                            _explore_strats = [s for s in MutationStrategy
+                                               if s.value in ('GROW', 'PERTURBATION_CAPPED',
+                                                              'MODEL_GUIDED', 'HYBRID')]
+                            if _explore_strats:
+                                override_priority = 1
+                                override_strategy = self.rng.choice(_explore_strats)
+                                override_log_msg = (
+                                    f"[Strategy] Variance-aware skew-explore: "
+                                    f"skew={_skew:+.2f}, score={_variance_score:.2f}, "
+                                    f"CV={_cv:.2f}, trend={_variance_trend:+.3f}")
+                        elif _skew > 0.5 and self.rng.random() < 0.35:
+                            _exploit_strats = [s for s in MutationStrategy
+                                               if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
+                            if _exploit_strats:
+                                override_priority = 1
+                                override_strategy = self.rng.choice(_exploit_strats)
+                                override_log_msg = (
+                                    f"[Strategy] Variance-aware skew-exploit: "
+                                    f"skew={_skew:+.2f}, score={_variance_score:.2f}, "
+                                    f"CV={_cv:.2f}, trend={_variance_trend:+.3f}")
         except Exception:
             pass
         # Priority 2: Cross-cycle fitness trend override (fitness declining)

@@ -264,6 +264,53 @@ class SparseArchive:
                 _ph = hash(tuple(meta["program"]))
                 self._prog_hash_index.setdefault(_ph, []).append(i)
 
+    def _relative_novelty_multiplier(self, program_novelty: float) -> float:
+        """Compute a decay multiplier based on a program's novelty relative to the archive.
+
+        Programs that are more novel than the archive average get a multiplier > 1
+        (slower decay, more valuable). Programs less novel than average get a
+        multiplier < 1 (faster decay, less distinctive).
+
+        Returns a multiplier in [0.3, 2.5] range:
+          - 0.3: very similar to archive entries (fast decay)
+          - 1.0: average novelty (baseline)
+          - 2.5: highly novel relative to archive (slow decay)
+        """
+        if self.size == 0 or self._tree is None:
+            return 1.0
+
+        # Compute average k-NN distance across the archive to establish baseline.
+        k = min(self.k_neighbors, self.size)
+        total_dist = 0.0
+        count = 0
+        for entry in self._entries:
+            flat = entry[0]
+            try:
+                dists, _ = self._tree.query(np.array(flat), k=k)
+                if k == 1:
+                    total_dist += float(dists)
+                else:
+                    total_dist += float(np.mean(dists))
+                count += 1
+            except Exception:
+                continue
+
+        if count == 0:
+            return 1.0
+
+        archive_avg_novelty = total_dist / count
+        if archive_avg_novelty <= 0:
+            return 1.0
+
+        # Relative novelty ratio: how this program compares to archive average.
+        # > 1 means more novel than average; < 1 means less novel.
+        relative_novelty = program_novelty / archive_avg_novelty
+
+        # Map to multiplier with bounded scaling:
+        #   Floor at 0.3 prevents premature elimination of borderline programs.
+        #   Ceiling at 2.5 prevents immortal programs even at extreme novelty.
+        return max(0.3, min(2.5, relative_novelty))
+
     def _k_nn_distance(self, flat: list[float]) -> float:
         """Compute average distance to the k-nearest neighbours.
 
@@ -664,22 +711,29 @@ class SparseArchive:
         current_generation: int,
         half_life: int = 500,
     ) -> float:
-        """Compute novelty with exponential time-decay and archive-diversity weighting.
+        """Compute novelty with exponential time-decay, fitness-based adaptive decay,
+        archive-diversity weighting, and relative novelty weighting.
 
         Uses hash index for O(1) program lookup instead of O(N) linear scan.
 
-        The decay rate is adaptive based on the program's fitness:
-        - High-fitness programs decay slower (worth preserving novel)
-        - Low-fitness programs decay faster (less important)
+        The decay rate is adaptive based on three factors:
 
-        The novelty score is also weighted by archive diversity:
-        - Diverse archive (high Shannon entropy) → lower novelty weight,
-          because many unique programs already exist and novelty is less
-          critical for maintaining population variety.
-        - Homogeneous archive (low entropy) → higher novelty weight,
-          because programs are similar and novelty pressure is needed to
-          push exploration into under-represented regions of behaviour
-          space.
+        1. **Fitness-based decay**: High-fitness programs decay slower
+           (worth preserving novel), low-fitness programs decay faster
+           (less important).
+
+        2. **Archive-diversity weighting**: Diverse archives (high Shannon
+           entropy) lower novelty weight because novelty is less critical
+           when many unique programs exist. Homogeneous archives increase
+           novelty weight to push exploration into under-represented
+           regions of behaviour space.
+
+        3. **Relative novelty weighting**: Programs more novel than the
+           archive average decay slower (they explore new regions and are
+           more valuable). Programs similar to many archive entries decay
+           faster (they are less distinctive and more replaceable).
+           The multiplier is bounded in [0.3, 2.5] to prevent premature
+           elimination or immortal programs.
         """
         _prog_hash = hash(tuple(program))
         indices = self._prog_hash_index.get(_prog_hash, [])
@@ -706,6 +760,15 @@ class SparseArchive:
                             fitness_multiplier = 1.0  # no fitness data -> unchanged decay
 
                         effective_half_life = half_life * fitness_multiplier
+
+                        # Relative novelty weighting: compare this program's novelty
+                        # to the archive average to modulate decay rate.
+                        # Programs more novel than average decay slower (more valuable
+                        # as they explore new behaviour regions). Programs less novel
+                        # decay faster (they are less distinctive).
+                        novelty_multiplier = self._relative_novelty_multiplier(base_novelty)
+                        effective_half_life *= novelty_multiplier
+
                         decay = math.exp(-0.693 * age / effective_half_life)
 
                         # Archive-diversity weighting.
