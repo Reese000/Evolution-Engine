@@ -3027,6 +3027,20 @@ class EvolutionEngine:
         except Exception:
             pass
 
+        # Cross-cycle fitness trend awareness: when fitness is declining,
+        # increase exploration to escape local optima
+        try:
+            if hasattr(self, 'meta_controller') and self.meta_controller is not None:
+                _trends = self.meta_controller.get_cross_cycle_trends()
+                _fitness_trend = _trends.get('fitness', {})
+                if _fitness_trend.get('direction') == 'declining' and self.rng.random() < 0.25:
+                    _explore = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
+                    if _explore:
+                        chosen = self.rng.choice(_explore)
+                        self._log(f"[Strategy] Trend override: fitness declining, slope={_fitness_trend.get('slope', 0):.4f}")
+        except Exception:
+            pass
+
         # Unsolved levels 9-11: use higher PERTURBATION_CAPPED probability
         if self.champion_level in self._unsolved_levels_set and self.generations_stalled > 2:
             if self.rng.random() < self.config.perturbation_capped_probability_unsolved:

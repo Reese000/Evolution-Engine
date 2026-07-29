@@ -68,6 +68,8 @@ class MAPElitesArchive:
         # Per-cell counter: records the value of _addition_counter when
         # each cell was last updated.
         self._cell_addition_counts: list[int] = [0] * (bins * bins)
+        # Per-cell freshness timestamps (generation when last updated)
+        self._cell_last_updated: list[int] = [0] * (bins * bins)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -142,6 +144,7 @@ class MAPElitesArchive:
             self._occupied += 1
             self._addition_counter += 1
             self._cell_addition_counts[idx] = self._addition_counter
+            self._cell_last_updated[idx] = self._addition_counter
             return True
 
         # Cell occupied — replace only if strictly better.
@@ -155,6 +158,7 @@ class MAPElitesArchive:
             self._rebins += 1
             self._addition_counter += 1
             self._cell_addition_counts[idx] = self._addition_counter
+            self._cell_last_updated[idx] = self._addition_counter
             return True
 
         return False
@@ -360,6 +364,30 @@ class MAPElitesArchive:
             "rebins": self._rebins,
         }
 
+    def get_cell_freshness(self, current_generation: int = 0) -> dict[str, Any]:
+        """Return freshness scores for all cells.
+
+        Freshness = 1.0 for recently updated cells, decaying to 0.0 for old cells.
+        Uses the same exponential decay as novelty decayed_novelty.
+        """
+        freshness_grid = [0.0] * (self.bins * self.bins)
+        occupied = 0
+        total_freshness = 0.0
+        for idx in range(len(self._grid)):
+            if self._grid[idx] is not None:
+                occupied += 1
+                last_update = self._cell_last_updated[idx]
+                age = max(0, current_generation - last_update) if current_generation > 0 else 0
+                freshness = math.exp(-0.01 * age)  # gentle decay
+                freshness_grid[idx] = freshness
+                total_freshness += freshness
+        avg_freshness = total_freshness / max(occupied, 1)
+        return {
+            'freshness_grid': freshness_grid,
+            'avg_freshness': avg_freshness,
+            'occupied_cells': occupied,
+        }
+
     def get_improvement_velocity(self) -> dict[str, Any]:
         """Track how fast fitness improves per cell using a heuristic.
 
@@ -530,6 +558,7 @@ class MAPElitesArchive:
             "rebins": self._rebins,
             "addition_counter": self._addition_counter,
             "cell_addition_counts": list(self._cell_addition_counts),
+            "cell_last_updated": self._cell_last_updated,
         }
 
     @classmethod
@@ -554,6 +583,10 @@ class MAPElitesArchive:
             archive._cell_addition_counts = list(saved_counts)
         else:
             archive._cell_addition_counts = [0] * (archive.bins * archive.bins)
+        if 'cell_last_updated' in data:
+            archive._cell_last_updated = data['cell_last_updated']
+        else:
+            archive._cell_last_updated = [0] * (archive.bins * archive.bins)
         return archive
 
 
