@@ -2519,8 +2519,45 @@ class EvolutionEngine:
         tc[can_slow] = np.maximum(0.0, 10.0 - (ok_instr[can_slow].astype(np.float64) - 15) * 0.2)
         base += tc
 
-        # ── SMC pattern bonus (vectorised) ──────────────────────────
+        # D1: Structural progress bonuses (vectorized)
         lvl = self.champion_level
+
+        # Loop structure bonus for L5+
+        if lvl >= 5:
+            loop_bonuses = np.zeros(n_ok, dtype=np.float64)
+            for j, prog in enumerate(ok_programs):
+                n_loops = self._count_backward_branches(prog)
+                if n_loops > 0:
+                    loop_bonuses[j] = min(5.0, n_loops * 2.0)
+            base += loop_bonuses
+
+        # Memory access credit for L7+
+        if lvl >= 7:
+            mem_bonuses = np.zeros(n_ok, dtype=np.float64)
+            for j, idx in enumerate(ok_indices):
+                trace = traces[idx]
+                mem_accesses = trace.get("memory_accesses", [])
+                if mem_accesses:
+                    mem_bonuses[j] = min(3.0, len(mem_accesses) * 0.5)
+            base += mem_bonuses
+
+        # Instruction diversity credit for L5+
+        if lvl >= 5:
+            div_bonuses = np.zeros(n_ok, dtype=np.float64)
+            cat_arr = _OPCODE_CAT_ARRAY
+            for j, prog in enumerate(ok_programs):
+                seen_cats = set()
+                for word in prog:
+                    if isinstance(word, int):
+                        cat = word & 0x7F
+                        if 0 <= cat < 128:
+                            seen_cats.add(cat_arr[cat])
+                n_cats = len(seen_cats - {-1})
+                if n_cats >= 3:
+                    div_bonuses[j] = min(2.0, (n_cats - 2) * 0.5)
+            base += div_bonuses
+
+        # ── SMC pattern bonus (vectorised) ──────────────────────────
         if lvl >= 12:
             smc_mask = np.zeros((n_ok, max_prog_len if max_prog_len > 0 else 1), dtype=bool)
             for j, prog in enumerate(ok_programs):
@@ -4024,6 +4061,8 @@ class EvolutionEngine:
                                 self._saved_sha256s[_e["champion_sha256"]] = None
                 except Exception:
                     pass
+        if not hasattr(self, '_saved_size_counts'):
+            self._saved_size_counts: dict[int, int] = {}
 
         saved_any = False
         rejected_count = 0
@@ -4059,6 +4098,19 @@ class EvolutionEngine:
                 continue
             if len(prog) < 2:
                 continue
+
+            # Phase 3.3: Size diversity filter — prevent training on programs
+            # of similar length to maintain diversity in training data.
+            _instr_count = trace.get('instructions_count', 0)
+            if _instr_count > 0 and hasattr(self, '_saved_size_counts'):
+                _size_bucket = (_instr_count // 5) * 5  # bucket to nearest 5
+                _total_saved = sum(self._saved_size_counts.values()) if self._saved_size_counts else 0
+                if _total_saved > 20:  # only filter when buffer has enough data
+                    _bucket_count = self._saved_size_counts.get(_size_bucket, 0)
+                    if _bucket_count > _total_saved * 0.7:  # >70% same size bucket
+                        rejected_count += 1
+                        continue
+                self._saved_size_counts[_size_bucket] = self._saved_size_counts.get(_size_bucket, 0) + 1
 
             # Verify against task levels (use module-level LEVELS, sorted once)
             task_score = 0.0
