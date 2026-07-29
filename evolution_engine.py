@@ -3116,6 +3116,15 @@ class EvolutionEngine:
         strategies at L5+ to prevent archive lock-in. At L5+ the cap is
         halved (15 instead of 30) because lower-level biases (CROSSOVER
         dominance) carry over and crowd out exploration.
+
+        Priority system: Prevents conflicting overrides from oscillating.
+        Override priority (lowest to highest):
+          1. Level-aware bias (baseline — always applied)
+          2. Cross-cycle trend override (fitness declining)
+          3. Mutation stats override (recent mutations hurt)
+          4. Plateau override (stuck on plateau — highest priority)
+
+        Only the highest-priority override that triggers is applied.
         """
         # Determine the effective consecutive cap
         if self.champion_level >= 5:
@@ -3159,47 +3168,65 @@ class EvolutionEngine:
             except Exception:
                 pass
 
-        # Mutation stats awareness: if recent mutations are failing, bias exploration
-        try:
-            from mutation_proposer import DirectedMutator as _DM
-            _mstats = _DM.get_mutation_stats()
-            if _mstats['total_attempts'] > 50:
-                _recent_rate = _mstats['recent_avg_delta']
-                if _recent_rate < -0.5 and self.rng.random() < 0.3:
-                    # Recent mutations are hurting fitness — force exploration
-                    _exploration_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _exploration_strats:
-                        chosen = self.rng.choice(_exploration_strats)
-                        self._log(f"[Strategy] Mutation stats override: recent_avg_delta={_recent_rate:.3f}")
-        except Exception:
-            pass
+        # PRIORITY SYSTEM: Collect all overrides and apply only the highest priority one.
+        # This prevents oscillation when multiple override mechanisms conflict.
+        #
+        # Priority levels (lowest to highest):
+        #   0 = level-aware (baseline, always applied)
+        #   1 = cross-cycle trend (fitness declining)
+        #   2 = mutation stats (recent mutations hurt)
+        #   3 = plateau (stuck — highest priority)
 
-        # Cross-cycle fitness trend awareness: when fitness is declining,
-        # increase exploration to escape local optima
+        override_priority: int = 0  # Start at baseline
+        override_strategy: MutationStrategy | None = None
+        override_log_msg: str = ""
+
+        # Priority 1: Cross-cycle fitness trend override (fitness declining)
         try:
             if hasattr(self, 'meta_controller') and self.meta_controller is not None:
                 _trends = self.meta_controller.get_cross_cycle_trends()
                 _fitness_trend = _trends.get('fitness', {})
                 if _fitness_trend.get('direction') == 'declining' and self.rng.random() < 0.25:
                     _explore = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _explore:
-                        chosen = self.rng.choice(_explore)
-                        self._log(f"[Strategy] Trend override: fitness declining, slope={_fitness_trend.get('slope', 0):.4f}")
+                    if _explore and override_priority < 1:
+                        override_priority = 1
+                        override_strategy = self.rng.choice(_explore)
+                        override_log_msg = f"[Strategy] Trend override: fitness declining, slope={_fitness_trend.get('slope', 0):.4f}"
         except Exception:
             pass
 
-        # Plateau-aware override: when progression tracker detects a long plateau,
-        # increase exploration to break out of stagnation
+        # Priority 2: Mutation stats override (recent mutations hurt)
+        try:
+            from mutation_proposer import DirectedMutator as _DM
+            _mstats = _DM.get_mutation_stats()
+            if _mstats['total_attempts'] > 50:
+                _recent_rate = _mstats['recent_avg_delta']
+                if _recent_rate < -0.5 and self.rng.random() < 0.3:
+                    _exploration_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
+                    if _exploration_strats and override_priority < 2:
+                        override_priority = 2
+                        override_strategy = self.rng.choice(_exploration_strats)
+                        override_log_msg = f"[Strategy] Mutation stats override: recent_avg_delta={_recent_rate:.3f}"
+        except Exception:
+            pass
+
+        # Priority 3: Plateau override (stuck on plateau — highest priority)
         try:
             if hasattr(self, 'progression_tracker') and self.progression_tracker is not None:
                 _pa = self.progression_tracker.get_plateau_analysis()
                 if _pa.get('status') == 'plateau' and _pa.get('plateau_duration', 0) > 10 and self.rng.random() < 0.3:
                     _explore2 = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _explore2:
-                        chosen = self.rng.choice(_explore2)
-                        self._log(f"[Strategy] Plateau override: duration={_pa.get('plateau_duration', 0)}, slope={_pa.get('trend_slope', 0):.4f}")
+                    if _explore2 and override_priority < 3:
+                        override_priority = 3
+                        override_strategy = self.rng.choice(_explore2)
+                        override_log_msg = f"[Strategy] Plateau override: duration={_pa.get('plateau_duration', 0)}, slope={_pa.get('trend_slope', 0):.4f}"
         except Exception:
             pass
+
+        # Apply the highest-priority override (if any triggered)
+        if override_strategy is not None:
+            chosen = override_strategy
+            self._log(override_log_msg)
 
         # Unsolved levels 9-11: use higher PERTURBATION_CAPPED probability
         if self.champion_level in self._unsolved_levels_set and self.generations_stalled > 2:
@@ -3207,6 +3234,7 @@ class EvolutionEngine:
                 chosen = MutationStrategy.PERTURBATION_CAPPED
 
         # Level-aware strategy weighting: bias selection based on task difficulty.
+        # This is the baseline — always applied as the foundation.
         chosen = self._apply_level_aware_strategy_bias(chosen)
 
         # D3: Track consecutive usage
@@ -4720,7 +4748,7 @@ class EvolutionEngine:
         by extracting the 13-bit signed immediate and checking for
         negative offsets (which indicate backward jumps / loops).
         """
-        if not program:
+        if not program or len(program) < 2:
             return 0
         count = 0
         for word in program:
