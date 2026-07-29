@@ -2700,36 +2700,78 @@ class EvolutionEngine:
                     opcode_bonus = (1.0 - unique_ratios) * 0.5
                     base += (instr_eff + opcode_bonus) * 30.0 * eff_weight
 
-        # ── Multi-task scoring (vectorised per-secondary-task) ───────
+        # ── Multi-task scoring (vectorized aggregation) ────────────
+        # Hoist getattr and dict lookups outside the N-program loop.
+        # Compute per-task register scores in Python (fast for small
+        # register sets of 2-6 regs), then aggregate all programs in
+        # a single numpy vectorized pass.  Eliminates:
+        #   - N repeated getattr() calls on self (now hoisted once)
+        #   - N redundant idx-in-dict + dict[idx] double lookups
+        #   - N per-element base[j] += ... (replaced by numpy slicing)
         mt_weight = getattr(self.config, "secondary_task_weight", 1.0)
-        if mt_weight > 0:
+        sec_per_prog = getattr(self, "_secondary_task_results_per_program", None)
+        if mt_weight > 0 and sec_per_prog is not None:
+            _crash_statuses = ("crash", "trap", "exception", "timeout")
+
+            # Pre-allocate accumulators (numpy for fast final aggregation)
+            task_sums = np.zeros(n_ok, dtype=np.float64)
+            task_cnts = np.zeros(n_ok, dtype=np.int64)
+
+            # Hoist loop-invariant lookups
+            _sp = sec_per_prog
+            _ts = task_sums
+            _tc = task_cnts
+
             for j, idx in enumerate(ok_indices):
-                sec_results = getattr(self, "_secondary_task_results_per_program", None)
-                if sec_results is not None and idx in sec_results:
-                    secondary = sec_results[idx]
-                    task_count = 0
-                    task_total = 0.0
-                    for sec_task, sec_trace in secondary:
-                        sec_status = sec_trace.get("status", "")
-                        if sec_status in ("crash", "trap", "exception", "timeout"):
-                            continue
-                        task_count += 1
-                        sec_exp = sec_task.get("expected_output", {}).get("registers", {})
-                        sec_fin = sec_trace.get("final_regs", {})
-                        sec_total = len(sec_exp)
-                        if sec_total == 0:
-                            task_total += 1.0
-                            continue
-                        sec_score = 0.0
-                        for ri, ev in sec_exp.items():
-                            av = sec_fin.get(ri, 0)
-                            if av == ev:
-                                sec_score += 1.0
-                            else:
-                                sec_score += 1.0 / (1.0 + abs(av - ev) / max(abs(ev), 1))
-                        task_total += sec_score / sec_total
-                    if task_count > 0:
-                        base[j] += (task_total / task_count) * 5.0 * min(task_count, 3) * mt_weight
+                secondary = _sp.get(idx)
+                if secondary is None:
+                    continue
+
+                t_total = 0.0
+                t_count = 0
+
+                for sec_task, sec_trace in secondary:
+                    st = sec_trace.get("status", "")
+                    if st == "crash" or st == "trap" or st == "exception" or st == "timeout":
+                        continue
+                    t_count += 1
+                    sec_exp = sec_task.get("expected_output", {}).get("registers", {})
+                    if not sec_exp:
+                        t_total += 1.0
+                        continue
+                    sec_fin = sec_trace.get("final_regs", {})
+
+                    # Optimized register scoring: inline abs/max to
+                    # avoid Python function-call overhead per register.
+                    sec_score = 0.0
+                    sec_total = 0
+                    for ri, ev in sec_exp.items():
+                        sec_total += 1
+                        av = sec_fin.get(ri, 0)
+                        if av == ev:
+                            sec_score += 1.0
+                        else:
+                            d = av - ev
+                            if d < 0:
+                                d = -d
+                            m = ev if ev >= 0 else -ev
+                            if m < 1:
+                                m = 1
+                            sec_score += 1.0 / (1.0 + d / m)
+                    t_total += sec_score / sec_total
+
+                if t_count > 0:
+                    _ts[j] = t_total
+                    _tc[j] = t_count
+
+            # Vectorized final bonus computation (single numpy pass)
+            has_tasks = _tc > 0
+            base[has_tasks] += (
+                (_ts[has_tasks] / _tc[has_tasks].astype(np.float64))
+                * 5.0
+                * np.minimum(_tc[has_tasks].astype(np.float64), 3.0)
+                * mt_weight
+            )
 
         # ── Time-to-solution credit (vectorised) ────────────────────
         solved_ok = reg_matches >= 0.99
@@ -3297,6 +3339,80 @@ class EvolutionEngine:
                     _alt_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
                     if _alt_strats:
                         chosen = self.rng.choice(_alt_strats)
+            except Exception:
+                pass
+
+        # Per-program mutation affinity bias: query historical success data
+        # for programs similar to the champion. When a clear winner emerges
+        # (success rate gap ≥ 0.15 between top-1 and runners-up), override
+        # with high probability (0.6). Otherwise, probabilistically bias
+        # toward top strategies using weighted selection (0.4 chance).
+        #
+        # Priority: sits between adaptive exploration bonus (soft, P0) and
+        # variance-aware override (P1). Higher-priority reactive decisions
+        # (plateau, mutation stats) take precedence over this learned bias.
+        _champ = getattr(self, 'champion', None)
+        if _champ is not None and len(_champ) > 0:
+            try:
+                from mutation_proposer import DirectedMutator as _AffDM
+                _affinity = _AffDM.get_program_mutation_affinity(
+                    _champ, top_n=5
+                )
+                if _affinity:
+                    # Map affinity mutation-type strings to MutationStrategy enum
+                    _strat_vals = {s.value for s in MutationStrategy}
+                    _aff_strats = []
+                    for _atype, _arate, _aatt in _affinity:
+                        if _atype in _strat_vals:
+                            _aff_strats.append((
+                                _STRATEGY_ENUM_CACHE[_atype], _arate, _aatt
+                            ))
+                        elif hasattr(MutationStrategy, _atype):
+                            _aff_strats.append((
+                                MutationStrategy[_atype], _arate, _aatt
+                            ))
+
+                    if _aff_strats:
+                        # Require minimum statistical support to avoid
+                        # biasing on noise from a handful of observations.
+                        _total_att = sum(a for _, _, a in _aff_strats)
+                        if _total_att >= 20:
+                            _top_s, _top_r, _top_a = _aff_strats[0]
+                            if len(_aff_strats) > 1:
+                                _runner_r = _aff_strats[1][1]
+                            else:
+                                _runner_r = 0.0
+                            _gap = _top_r - _runner_r
+                            if _gap >= 0.15:
+                                # Clear winner — override with high confidence
+                                if self.rng.random() < 0.6:
+                                    chosen = _top_s
+                                    self._log(
+                                        f"[Strategy] Per-program affinity "
+                                        f"override: {chosen.value} "
+                                        f"(rate={_top_r:.2f}, gap={_gap:.2f}, "
+                                        f"attempts={_total_att})"
+                                    )
+                            else:
+                                # No clear winner — probabilistic weighted bias
+                                if self.rng.random() < 0.4:
+                                    _weights = [r for _, r, _ in _aff_strats]
+                                    _w_total = sum(_weights)
+                                    if _w_total > 0:
+                                        _picks = self.rng.choices(
+                                            [s for s, _, _ in _aff_strats],
+                                            weights=_weights,
+                                            k=1,
+                                        )
+                                        if _picks:
+                                            chosen = _picks[0]
+                                            self._log(
+                                                f"[Strategy] Per-program "
+                                                f"affinity bias: "
+                                                f"{chosen.value} "
+                                                f"(prob={_top_r:.2f}, "
+                                                f"attempts={_total_att})"
+                                            )
             except Exception:
                 pass
 
