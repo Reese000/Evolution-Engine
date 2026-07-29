@@ -690,6 +690,11 @@ class EvolutionConfig:
     secondary_task_weight: float = 3.0
     efficiency_score_weight: float = 2.0
 
+    # Bonus normalization -- cap each bonus at a fraction of the base score
+    # to prevent any single fitness dimension from dominating the total.
+    # 0.30 = no single bonus can contribute more than 30% of the base score.
+    max_bonus_fraction: float = 1.0
+
     diversity_threshold: float = 0.3
     diversity_inject_ratio: float = 0.1
     champion_crossover_prob: float = 0.7
@@ -2131,7 +2136,6 @@ class EvolutionEngine:
             if n_loops > 0:
                 loop_bonus = min(5.0, n_loops * 2.0)  # up to 5 points for loops
         loop_bonus *= _bonus_scale
-        base_score += loop_bonus
 
         # D1: Memory access credit for L7+ tasks (rewards memory operations)
         mem_bonus = 0.0
@@ -2140,7 +2144,6 @@ class EvolutionEngine:
             if mem_accesses:
                 mem_bonus = min(3.0, len(mem_accesses) * 0.5)  # up to 3 points
         mem_bonus *= _bonus_scale
-        base_score += mem_bonus
 
         # D1: Instruction diversity credit for L5+ tasks (rewards diverse instruction usage)
         div_bonus = 0.0
@@ -2156,7 +2159,6 @@ class EvolutionEngine:
             if n_cats >= 3:
                 div_bonus = min(2.0, (n_cats - 2) * 0.5)  # up to 2 points
         div_bonus *= _bonus_scale
-        base_score += div_bonus
 
         # ── Level advancement bonus (PRIMARY signal) ────────────────────
         # Each curriculum level adds 25 points. This ensures level 17
@@ -2165,12 +2167,12 @@ class EvolutionEngine:
         # This is the DOMINANT fitness signal — the system must reward
         # progress, not punish complexity.
         level_bonus = self.champion_level * 25.0
-        base_score += level_bonus
 
         # ── Efficiency scoring (+15 points max) ──────────────────────────
         # At high levels (L8+), REWARD instruction diversity (SMC needs
         # LUI/SLLI/ORI/SW/JALR). At low levels, reward compact programs.
         eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
+        efficiency_score = 0.0
         if eff_weight > 0 and instr_count > 0 and status == "ok":
             # NOP = ADDI x0, x0, 0 = 0x00000013
             nop_count = 0
@@ -2213,10 +2215,9 @@ class EvolutionEngine:
 
                 efficiency_score = (instr_eff + opcode_bonus) * 30.0 * eff_weight
 
-            base_score += efficiency_score
-
         # ── Multi-task scoring (+15 points max) ──────────────────────────
         # Evaluates program against secondary tasks (bit, arith, memory).
+        multi_task_score = 0.0
         mt_weight = getattr(self.config, "secondary_task_weight", 1.0)
         secondary_results = getattr(self, "_secondary_task_results", None)
         if mt_weight > 0 and secondary_results is not None and len(secondary_results) > 0:
@@ -2245,10 +2246,10 @@ class EvolutionEngine:
                 task_total += sec_score / sec_total
             if task_count > 0:
                 multi_task_score = (task_total / task_count) * 5.0 * min(task_count, 3) * mt_weight
-                base_score += multi_task_score
 
         # ── Time-to-solution credit (+20 points max) ──────────────────────
         # Rewards programs that solve tasks faster (fewer cycles).
+        time_credit = 0.0
         if status == "ok" and reg_match >= 0.99 and instr_count > 0:
             # Perfect/near-perfect match: reward efficient solutions
             # Ideal is around 5-15 instructions for most tasks
@@ -2258,13 +2259,13 @@ class EvolutionEngine:
                 time_credit = 20.0 * (1.0 - (instr_count - 5) / 10.0)
             else:
                 time_credit = max(0.0, 10.0 - (instr_count - 15) * 0.2)
-            base_score += time_credit
 
         # ── SMC pattern bonus (+25 points max) ──────────────────────────
         # At L12-L13, reward programs containing self-modifying code
         # instruction patterns (LUI, SLLI, ORI, OR, SW, JALR, FENCE.I).
         # This prevents the system from regressing to 4-word programs that
         # get high fitness through partial credit on fewer registers.
+        smc_bonus = 0.0
         if status == "ok" and self.champion_level >= 12 and instr_count > 0:
             smc_opcodes = {0x37, 0x13, 0x33, 0x23, 0x67, 0x0F}  # LUI, OP-IMM, OP, STORE, JALR, FENCE
             smc_count = 0
@@ -2275,7 +2276,6 @@ class EvolutionEngine:
             if smc_count >= 3:
                 # Bonus: 5 points per SMC instruction, up to 25
                 smc_bonus = min(25.0, smc_count * 5.0)
-                base_score += smc_bonus
 
         # Level-aware graduated bonus -- use cached threshold if available
         # R16: Skip len(LEVELS) lookup on cache hit (hot path: 50x per gen)
@@ -2288,9 +2288,32 @@ class EvolutionEngine:
             bonus_threshold = max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1)))
             self._bonus_threshold_cache = (lvl, bonus_threshold)
 
+        graduated_bonus = 0.0
         if reg_match >= bonus_threshold:
-            bonus = 50.0 * (reg_match - bonus_threshold) / (1.0 - bonus_threshold)
-            base_score += bonus
+            graduated_bonus = 50.0 * (reg_match - bonus_threshold) / (1.0 - bonus_threshold)
+
+        # ── Bonus normalization ──────────────────────────────────────────
+        # Cap each bonus at max_bonus_fraction of base_score to prevent
+        # any single fitness dimension from dominating the total score.
+        # E.g. max_bonus_fraction=0.30 means no single bonus can exceed
+        # 30% of the base score, preventing any one dimension from
+        # dominating the fitness landscape.
+        _base_for_norm = base_score if base_score > 0 else 1.0
+        _max_single = getattr(self.config, "max_bonus_fraction", 0.30) * _base_for_norm
+
+        _structural_bonuses = [
+            min(loop_bonus, _max_single),
+            min(mem_bonus, _max_single),
+            min(div_bonus, _max_single),
+            min(level_bonus, _max_single),
+            min(efficiency_score, _max_single),
+            min(multi_task_score, _max_single),
+            min(time_credit, _max_single),
+            min(smc_bonus, _max_single),
+            min(graduated_bonus, _max_single),
+        ]
+
+        base_score += sum(_structural_bonuses)
 
         # Store raw task score (before novelty/QD blending)
         self._raw_task_score = base_score

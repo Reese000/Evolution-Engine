@@ -126,9 +126,12 @@ class MAPElitesArchive:
     ) -> bool:
         """Attempt to insert a solution into the archive.
 
-        The solution replaces the incumbent of its cell if and only if
-        *fitness* is strictly higher.  Returns ``True`` when a cell was
-        added or replaced (i.e. the archive changed).
+        The solution replaces the incumbent of its cell when its fitness
+        exceeds a freshness-adjusted threshold.  Stale cells have a
+        reduced effective fitness (up to 30% lower), making them easier
+        to replace.  Fresh cells retain full protection.  Returns
+        ``True`` when a cell was added or replaced (i.e. the archive
+        changed).
         """
         idx = self._cell_index(descriptor)
         if idx is None:
@@ -156,8 +159,23 @@ class MAPElitesArchive:
             self._cell_program_history.setdefault(idx, []).append(prog_hash)
             return True
 
-        # Cell occupied — replace only if strictly better.
-        if fitness > existing["fitness"]:
+        # Cell occupied — use freshness-adjusted replacement strategy.
+        # Stale cells with low fitness should be replaced first;
+        # fresh cells with high fitness should be protected.
+        # Compute cell age in terms of archive-wide update events.
+        cell_age = max(0, self._addition_counter - self._cell_last_updated[idx])
+        # Staleness score: 0 for freshly updated cells, approaching 1 for
+        # very stale ones.  Exponential decay gives a gentle gradient —
+        # after ~200 updates the cell is ~63% stale, after ~500 it's ~92%.
+        staleness_score = 1.0 - math.exp(-0.005 * cell_age)
+        # Effective incumbent fitness: stale cells have a reduced effective
+        # fitness, making them easier to replace.  The staleness_weight
+        # caps the maximum reduction at 30% so that even the most stale
+        # cell still has some protection against marginally-better programs.
+        staleness_weight = 0.3
+        effective_incumbent_fitness = existing["fitness"] * (1.0 - staleness_weight * staleness_score)
+
+        if fitness > effective_incumbent_fitness:
             self._grid[idx] = {
                 "fitness": fitness,
                 "program": list(program),
