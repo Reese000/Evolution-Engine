@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-02T02:17:33.134647+00:00",
+  "timestamp": "2026-07-30T20:34:05.138431+00:00",
   "config": {
-    "population_size": 50,
+    "population_size": 25,
     "generations": 5,
     "runs": 1,
     "seed_base": 42,
@@ -12,79 +12,53 @@
   },
   "runs": [
     {
-      "best_fitness": 194.00799999999998,
-      "wall_time": 0.273,
-      "convergence_generation": 0,
-      "fitness_curve": [
-        190.004,
-        192.506,
-        194.008,
-        194.008,
-        194.008
-      ],
-      "secondary_task_scores": {
-        "instruction_count": 5,
-        "code_diversity": 0.2727272727272727,
-        "mutation_rate": 0.3,
-        "generations_stalled": 2,
-        "total_improvements": 2
-      },
-      "status": "ok",
-      "error": null
+      "best_fitness": 0.0,
+      "wall_time": 0.0,
+      "convergence_generation": null,
+      "fitness_curve": [],
+      "secondary_task_scores": {},
+      "status": "error",
+      "error": "AttributeError: 'EvolutionEngine' object has no attribute '_log_file'"
     }
   ],
   "summary": {
-    "mean_fitness": 194.008,
+    "mean_fitness": 0.0,
     "std_fitness": 0.0,
-    "min_fitness": 194.008,
-    "max_fitness": 194.008,
-    "mean_wall_time": 0.273,
+    "min_fitness": 0.0,
+    "max_fitness": 0.0,
+    "mean_wall_time": 0.0,
     "std_wall_time": 0.0,
-    "min_wall_time": 0.273,
-    "max_wall_time": 0.273,
-    "mean_convergence_gen": 0.0,
+    "mean_convergence_gen": null,
     "convergence_std": null,
-    "runs_completed": 1,
+    "runs_completed": 0,
     "runs_total": 1,
-    "runs_failed": 0
+    "runs_failed": 1,
+    "note": "All runs failed or timed out"
   },
   "baseline_comparison": {
-    "baseline_timestamp": "2026-07-02T02:17:18.288409+00:00",
+    "baseline_timestamp": "2026-07-02T02:17:33.134647+00:00",
     "fitness": {
-      "current": 194.008,
+      "current": 0.0,
       "previous": 194.008,
-      "delta": 0.0,
-      "delta_pct": 0.0
+      "delta": -194.008,
+      "delta_pct": -100.0
     },
     "wall_time": {
-      "current": 0.273,
-      "previous": 0.204,
-      "delta": 0.069,
-      "delta_pct": 33.82
+      "current": 0.0,
+      "previous": 0.273,
+      "delta": -0.273,
+      "delta_pct": -100.0
     },
     "convergence_gen": {
-      "current": 0.0,
+      "current": null,
       "previous": 0.0,
-      "delta": 0.0,
+      "delta": null,
       "delta_pct": null
     },
     "config_changes": {
-      "runs": {
-        "current": 1,
-        "previous": 2
-      },
-      "seeds": {
-        "current": [
-          42
-        ],
-        "previous": [
-          42,
-          123
-        ]
-      },
       "population_size": {
-        "current": 50,
-        "previous": 25
+        "current": 25,
+        "previous": 50
       }
     }
   }
