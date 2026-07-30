@@ -2,7 +2,7 @@
 
 A self-evolving machine-code AI that continuously improves its ability to generate correct RISC-V RV32I programs through a closed feedback loop: evolve, retrain, evolve.
 
-The system combines an evolutionary algorithm with a transformer-based code generator. A champion program is maintained and iteratively improved through mutation and selection. A transformer model learns from champion traces to generate increasingly complex programs across a 12-level curriculum. A meta-controller orchestrates the entire process, tuning hyperparameters in real-time and detecting stagnation or regression.
+The system combines an evolutionary algorithm with a transformer-based code generator. A champion program is maintained and iteratively improved through mutation and selection. A transformer model learns from champion traces to generate increasingly complex programs across a 31-level curriculum. A meta-controller orchestrates the entire process, tuning hyperparameters in real-time and detecting stagnation or regression.
 
 > **Architecture origin:** This project is the production implementation of the design documents and simulation prototypes in the companion repo [SelfEvolving-MachineCode-AI](https://github.com/Reese000/SelfEvolving-MachineCode-AI). That repo contains the project constitution, TinyVM-SIM simulation, and milestone-by-milestone blueprints. This repo is the living system.
 
@@ -35,7 +35,7 @@ Evolution Engine/
 ├── strategy_archive.py          # Strategy success tracking and selection
 ├── meta_evolution.py            # Meta-evolution of controller parameters
 ├── meta_genome.py               # Genome representation for meta-evolution
-├── tasks_rv32i.py               # 12-level curriculum definition (L0-L11)
+├── tasks_rv32i.py               # 31-level curriculum definition (L0-L30)
 ├── vm_farm.py                   # CPU RV32I evaluation (safety kernel)
 ├── gpu_vm_farm.py               # GPU-accelerated RV32I evaluation (CuPy CUDA)
 ├── v11_dashboard.py             # Live terminal dashboard
@@ -80,7 +80,7 @@ Evolution Engine/
 
 ## How It Works
 
-1. **Evolution**: The engine generates challenger programs by mutating the current champion. Each challenger is evaluated on a 12-level curriculum (L0: register assignment through L11: complex loops). The best challenger replaces the champion if it achieves higher fitness.
+1. **Evolution**: The engine generates challenger programs by mutating the current champion. Each challenger is evaluated on a 31-level curriculum (L0: register assignment through L30: complex algorithms). The best challenger replaces the champion if it achieves higher fitness.
 
 2. **Retraining**: Champion instruction traces are collected and used to fine-tune the RV32I transformer. The model learns to predict the next instruction field given a program prefix. Training uses position-aware weighted cross-entropy loss (1.5x weight on instruction-type positions).
 
@@ -97,7 +97,7 @@ Evolution Engine/
 | Feature benchmarks | **5/5 passed** | `benchmarks/verify_v13_features.py` — MG scheduler, temperature annealing, tournament selection with elitism, MG ratio, full evolution cycle |
 | Average fitness/generation vs baseline | **5.3× faster** | `benchmarks/verify_improvements.py` |
 | Per-generation speed | **1.6× faster** | `benchmarks/verify_improvements.py` |
-| Test suite | **1321/1321 passing** | `python -m pytest tests/ -v` (Jul 17 adversarial audit: 1373 passed) |
+| Test suite | **8911/8976 passing (99.3%)** | `python -m pytest tests/ -v` |
 
 ### Verified-But-Not-Yet-Activated Fixes
 
@@ -125,7 +125,7 @@ The following fixes have been **verified as correct in isolation** but require a
 |-------|------|----------------|
 | L0 | Register assignment | x3 |
 | L1 | Simple ALU operation | x3, x4 |
-| L2 | Two-input computation | x3, x4, x5 |
+| L2 | Two-input computation | x3-x5 |
 | L3 | Memory load/store | x3-x6 |
 | L4 | Conditional execution | x3-x7 |
 | L5 | Loop with counter | x3-x8 |
@@ -134,7 +134,26 @@ The following fixes have been **verified as correct in isolation** but require a
 | L8 | Multi-pass algorithm | x3-x11 |
 | L9 | Recursive pattern | x3-x12 |
 | L10 | Complex data flow | x3-x13 |
-| L11 | Self-modifying code | x3-x14+ |
+| L11 | Fibonacci computation | x3-x14 |
+| L12 | Self-modifying code (single) | x3-x15 |
+| L13 | Dual self-modifying code | x3-x16 |
+| L14 | Multi-program composition | x3-x17 |
+| L15 | Adaptive self-modification | x3-x18 |
+| L16 | Evolutionary self-reference | x3-x19 |
+| L17 | Meta-evolution (sub-program) | x3-x20 |
+| L18 | XOR bit manipulation | x3-x21 |
+| L19 | Conditional branching | x3-x22 |
+| L20 | Complex memory + all ops | x3-x23 |
+| L21 | XOR chain + shift pipeline | x3-x24 |
+| L22 | Multi-branch conditional | x3-x25 |
+| L23 | Memory array operations | x3-x26 |
+| L24 | Complex conditional + memory | x3-x27 |
+| L25 | Full program (all operations) | x3-x28 |
+| L26 | Shift chain | x3-x29 |
+| L27 | Unsigned comparison | x3-x30 |
+| L28 | Byte memory operations | x3-x31 |
+| L29 | Subroutine call | x3-x28 |
+| L30 | Sort and compute | x3-x32 |
 
 Each level uses a distinct output register, and verification checks all previous levels' outputs remain correct (monotonic cumulative design).
 
@@ -163,7 +182,7 @@ python milestone1/train_model.py             # Train model on accumulated traces
 python milestone1/build_recurrent_dataset.py # Build dataset from champion traces
 
 # Testing
-python -m pytest tests/ -v                   # Run full test suite (1400+ tests)
+python -m pytest tests/ -v                   # Run full test suite (8976 tests)
 
 # Deployment
 ./deploy.sh                                  # Deploy via Docker
