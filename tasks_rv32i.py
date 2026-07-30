@@ -147,6 +147,21 @@ def _base_ref() -> List[dict]:
     ]
 
 
+def _continuous_verify(output: dict, inst: dict, reg_list: list) -> float:
+    """Return fraction of expected registers that match (continuous 0.0-1.0).
+
+    The partial verify scoring system needs a gradient signal rather than
+    binary 0.0/1.0. This counts how many of the checked registers are
+    correct and returns n_correct / total.
+    """
+    exp_regs = inst["expected_output"].get("registers", {})
+    regs = output.get("registers", {})
+    if not reg_list:
+        return 1.0
+    n_correct = sum(1 for r in reg_list if regs.get(r, 0) == exp_regs.get(r, 0))
+    return n_correct / len(reg_list)
+
+
 # ===========================================================================
 # Level 0 — Move: x3 = x1  (ADDI x3, x1, 0)
 # ===========================================================================
@@ -165,9 +180,7 @@ class Level0(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        return 1.0 if regs.get(3, 0) == exp["registers"].get(3, 0) else 0.0
+        return _continuous_verify(output, inst, [3])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(1, 1, 1)
@@ -196,13 +209,7 @@ class Level1(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        return (
-            1.0
-            if (regs.get(3, 0) == exp["registers"].get(3, 0) and regs.get(4, 0) == exp["registers"].get(4, 0))
-            else 0.0
-        )
+        return _continuous_verify(output, inst, [3, 4])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(2, 1, 1)
@@ -235,12 +242,7 @@ class Level2(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in [3, 4, 5]:
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(3, 1, 2)
@@ -273,12 +275,7 @@ class Level3(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in [3, 4, 5, 6]:
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(4, 1, 2)
@@ -311,12 +308,7 @@ class Level4(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 8):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(5, 1, 3)
@@ -349,12 +341,7 @@ class Level5(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 9):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(6, 2, 5)
@@ -387,12 +374,7 @@ class Level6(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(7, 1, 3)
@@ -425,12 +407,7 @@ class Level7(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 11):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 10])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(8, 2, 5)
@@ -469,12 +446,7 @@ class Level8(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 12):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 10, 11])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(10, 2, 6)
@@ -523,17 +495,7 @@ class Level9(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        # Check L0-L7 (x3-x10) and L9 (x12).
-        # Skip x11 (L8) — L8 uses x2 as address, but L9 uses x2 as count.
-        # The champion passes L8 standalone where x2 is an address.
-        for r in range(3, 11):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        if regs.get(12, 0) != exp["registers"].get(12, 0):
-            return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 10, 12])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(16, 3, 10)
@@ -594,17 +556,7 @@ class Level10(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        # Check L0-L7 (x3-x10), L9 (x12), L10 (x13).
-        # Skip x11 (L8) — same x2 semantic change as L9.
-        for r in range(3, 11):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        for r in [12, 13]:
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 10, 12, 13])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(20, 3, 12)
@@ -670,14 +622,7 @@ class Level11(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):  # L0-L6
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        if regs.get(14, 0) != exp["registers"].get(14, 0):  # L11
-            return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 14])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(25, 3, 14)
@@ -746,14 +691,7 @@ class Level12(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):  # L0-L6
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        if regs.get(15, 0) != exp["registers"].get(15, 0):  # L12
-            return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 15])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(30, 4, 16)
@@ -836,14 +774,7 @@ class Level13(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):  # L0-L6
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        if regs.get(16, 0) != exp["registers"].get(16, 0):  # L13
-            return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 16])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(40, 5, 20)
@@ -935,14 +866,7 @@ class Level14(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):  # L0-L6
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        if regs.get(17, 0) != exp["registers"].get(17, 0):
-            return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 17])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(50, 5, 22)
@@ -1008,14 +932,7 @@ class Level15(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):  # L0-L6
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        if regs.get(18, 0) != exp["registers"].get(18, 0):
-            return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 18])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(55, 6, 24)
@@ -1072,14 +989,7 @@ class Level16(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):  # L0-L6
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        if regs.get(19, 0) != exp["registers"].get(19, 0):
-            return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 19])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(60, 6, 26)
@@ -1133,14 +1043,7 @@ class Level17(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):  # L0-L6
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        if regs.get(20, 0) != exp["registers"].get(20, 0):
-            return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(70, 7, 28)
@@ -1199,15 +1102,7 @@ class Level18(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):  # L0-L6
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        for r in [20, 21]:  # L17-L18
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(75, 8, 30)
@@ -1265,15 +1160,7 @@ class Level19(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        for r in [20, 21, 22]:
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(80, 9, 32)
@@ -1343,15 +1230,7 @@ class Level20(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in range(3, 10):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        for r in [20, 21, 22, 23]:
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(85, 10, 35)
@@ -1420,12 +1299,7 @@ class Level21(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + [20, 21, 22, 23, 24]:
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(90, 10, 36)
@@ -1506,12 +1380,7 @@ class Level22(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + list(range(20, 26)):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(95, 11, 38)
@@ -1610,12 +1479,7 @@ class Level23(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + list(range(20, 27)):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(100, 12, 40)
@@ -1706,12 +1570,7 @@ class Level24(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + list(range(20, 28)):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(105, 13, 42)
@@ -1808,12 +1667,7 @@ class Level25(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + list(range(20, 29)):
-            if regs.get(r, 0) != exp["registers"].get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(110, 14, 45)
@@ -1983,12 +1837,7 @@ class Level26(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]["registers"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + list(range(20, 30)):
-            if regs.get(r, 0) != exp.get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(115, 14, 46)
@@ -2026,12 +1875,7 @@ class Level27(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]["registers"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + list(range(20, 31)):
-            if regs.get(r, 0) != exp.get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(120, 15, 48)
@@ -2077,12 +1921,7 @@ class Level28(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]["registers"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + list(range(20, 32)):
-            if regs.get(r, 0) != exp.get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(125, 16, 50)
@@ -2133,12 +1972,7 @@ class Level29(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]["registers"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + list(range(20, 32)):
-            if regs.get(r, 0) != exp.get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(130, 17, 52)
@@ -2191,12 +2025,7 @@ class Level30(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]["registers"]
-        regs = output.get("registers", {})
-        for r in list(range(3, 10)) + list(range(20, 32)):
-            if regs.get(r, 0) != exp.get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(135, 18, 54)
@@ -2267,12 +2096,7 @@ class BitManipulationTask(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]["registers"]
-        regs = output.get("registers", {})
-        for r in [15, 16, 17]:
-            if regs.get(r, 0) != exp.get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [15, 16, 17])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(3, 1, 1)
@@ -2311,12 +2135,7 @@ class ArithmeticTask(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]["registers"]
-        regs = output.get("registers", {})
-        for r in [15, 16, 17]:
-            if regs.get(r, 0) != exp.get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [15, 16, 17])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(3, 1, 2)
@@ -2353,13 +2172,7 @@ class MemoryAccessTask(TaskLevel):
         }
 
     def verify(self, output: dict, inst: dict) -> float:
-        exp = inst["expected_output"]
-        regs = output.get("registers", {})
-        exp_regs = exp.get("registers", {})
-        for r in [15, 16]:
-            if regs.get(r, 0) != exp_regs.get(r, 0):
-                return 0.0
-        return 1.0
+        return _continuous_verify(output, inst, [15, 16])
 
     def difficulty_metric(self) -> float:
         return compute_difficulty(4, 1, 2)
