@@ -1321,6 +1321,7 @@ class EvolutionEngine:
     def _run_generation_evaluate(self) -> tuple:
         """Generate challengers, evaluate, select elite."""
         challengers = self._generate_challengers()
+        self._current_diversity = self._compute_population_diversity(challengers)
         results = self._evaluate_batch(challengers)
         self._last_challengers = challengers
         self._last_results = results
