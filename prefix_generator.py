@@ -19,10 +19,9 @@ from typing import Dict, List, Optional
 import torch
 import torch.nn.functional as F
 
-# Ensure milestone1 is importable
-_milestone1 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "milestone1")
-if _milestone1 not in sys.path:
-    sys.path.insert(0, _milestone1)
+# Ensure project paths are importable
+from paths import ensure_project_on_path
+ensure_project_on_path()
 
 from rv32i_mask import decode as rv_decode
 from rv32i_model import RV32IFieldTokenizer, RV32ITransformer, RV32IVocab

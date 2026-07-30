@@ -8,7 +8,6 @@ import sys
 import os
 
 # Path setup
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from evolution_engine import EvolutionEngine, EvolutionConfig
 from mutation_proposer import make_rv32i, EBREAK

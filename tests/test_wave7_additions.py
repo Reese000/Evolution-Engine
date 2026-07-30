@@ -18,7 +18,6 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 # Path setup
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from monitoring_alerts import AlertManager
 from metrics import MetricsCollector

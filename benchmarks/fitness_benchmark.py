@@ -28,9 +28,8 @@ from typing import Any
 # ── Path setup ──────────────────────────────────────────────────────────
 # Ensure project root is on sys.path before any project imports.
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+from paths import ensure_project_on_path
+ensure_project_on_path()
 
 _BENCHMARKS_DIR = Path(__file__).resolve().parent
 _RESULTS_FILE = _BENCHMARKS_DIR / "results.json"

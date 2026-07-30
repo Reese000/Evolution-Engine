@@ -1,6 +1,7 @@
 """Test per-cell program diversity tracking in QDArchive."""
 import sys
-sys.path.insert(0, "C:/Users/Reese/Projects/Evolution Engine")
+from paths import ensure_project_on_path
+ensure_project_on_path()
 
 from qd_archive import MAPElitesArchive
 

@@ -22,7 +22,6 @@ import shutil
 import pytest
 
 # Path setup
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from metrics import MetricsCollector
 from mutation_proposer import DirectedMutator

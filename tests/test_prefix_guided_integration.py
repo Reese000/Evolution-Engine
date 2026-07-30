@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 
 class TestPrefixGeneratorFreshModel(unittest.TestCase):

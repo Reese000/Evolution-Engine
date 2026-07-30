@@ -15,9 +15,8 @@ import time
 from pathlib import Path
 
 # Ensure project root is on path
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+from paths import ensure_project_on_path
+ensure_project_on_path()
 
 from config import Config
 

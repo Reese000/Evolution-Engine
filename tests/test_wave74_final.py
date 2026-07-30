@@ -22,7 +22,6 @@ import pytest
 # ── path setup ────────────────────────────────────────────────────────────────
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 
 # ── read evolution_engine.py source once at import time ───────────────────────
 _ENGINE_SOURCE_PATH = _ROOT / "evolution_engine.py"

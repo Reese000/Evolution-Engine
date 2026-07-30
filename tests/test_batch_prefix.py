@@ -14,7 +14,6 @@ import pytest
 import torch
 
 # Path setup
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from milestone1.rv32i_model import RV32IVocab
 from prefix_generator import PrefixGenerator

@@ -15,7 +15,6 @@ import pytest
 
 # Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
 
 from champion_archive import ChampionArchive, _hash_program
 

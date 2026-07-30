@@ -24,7 +24,6 @@ class TestRetrainModelReturnsValLoss(unittest.TestCase):
 
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if project_root not in sys.path:
-            sys.path.insert(0, project_root)
         import inspect
 
         from run_multi_cycle import retrain_model
@@ -83,9 +82,7 @@ class TestTelemetrySnapshotValLoss(unittest.TestCase):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         milestone1 = os.path.join(project_root, "milestone1")
         if project_root not in sys.path:
-            sys.path.insert(0, project_root)
         if milestone1 not in sys.path:
-            sys.path.insert(0, milestone1)
 
         from meta_controller import TelemetrySnapshot
 
@@ -158,7 +155,6 @@ class TestForceRetrainMechanism(unittest.TestCase):
 
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if project_root not in sys.path:
-            sys.path.insert(0, project_root)
         from meta_controller import MetaController
 
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
@@ -170,7 +166,6 @@ class TestForceRetrainMechanism(unittest.TestCase):
 
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if project_root not in sys.path:
-            sys.path.insert(0, project_root)
         from meta_controller import MetaController, TelemetrySnapshot
 
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
@@ -210,7 +205,6 @@ class TestRebalanceLevelWeights(unittest.TestCase):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         m1 = os.path.join(project_root, "milestone1")
         if m1 not in sys.path:
-            sys.path.insert(0, m1)
         from data.loading import rebalance_level_weights
 
         # 100 L5 traces, 1 L0 trace — L0 should get boosted
@@ -229,7 +223,6 @@ class TestRebalanceLevelWeights(unittest.TestCase):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         m1 = os.path.join(project_root, "milestone1")
         if m1 not in sys.path:
-            sys.path.insert(0, m1)
         from data.loading import rebalance_level_weights
 
         weights = [1.0] * 20
@@ -245,7 +238,6 @@ class TestRebalanceLevelWeights(unittest.TestCase):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         m1 = os.path.join(project_root, "milestone1")
         if m1 not in sys.path:
-            sys.path.insert(0, m1)
         from data.loading import rebalance_level_weights
 
         weights = [1.0] * 101
@@ -261,7 +253,6 @@ class TestRebalanceLevelWeights(unittest.TestCase):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         m1 = os.path.join(project_root, "milestone1")
         if m1 not in sys.path:
-            sys.path.insert(0, m1)
         from data.loading import rebalance_level_weights
 
         rebalance_level_weights([], [])  # no crash

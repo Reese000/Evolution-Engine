@@ -31,7 +31,6 @@ import tempfile
 from typing import NamedTuple, Optional
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 

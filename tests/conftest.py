@@ -17,7 +17,8 @@ from typing import Optional
 import pytest
 
 # Path setup -- add parent directory to sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from paths import ensure_project_on_path
+ensure_project_on_path()
 
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, compute_qd_axes
 from meta_controller import MetaController, TelemetrySnapshot

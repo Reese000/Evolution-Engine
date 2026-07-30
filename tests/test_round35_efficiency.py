@@ -25,7 +25,6 @@ import random
 import sys
 
 # -- Path setup --
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, VMFarm, compute_qd_axes
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot

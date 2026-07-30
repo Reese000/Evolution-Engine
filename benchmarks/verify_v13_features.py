@@ -12,8 +12,8 @@ import math
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "milestone1"))
+from paths import ensure_project_on_path
+ensure_project_on_path()
 
 from evolution_engine import EvolutionConfig, EvolutionEngine
 

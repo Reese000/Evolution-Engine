@@ -19,7 +19,6 @@ _MILESTONE1_DIR = os.path.join(
     "milestone1",
 )
 if _MILESTONE1_DIR not in sys.path:
-    sys.path.insert(0, _MILESTONE1_DIR)
 
 from rv32i_model import RV32ITransformer
 

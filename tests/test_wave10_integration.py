@@ -17,7 +17,6 @@ from typing import Dict, List
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from meta_controller import MetaController, TelemetrySnapshot, TuningAction, StagnationResult
 from strategy_archive import StrategyArchive

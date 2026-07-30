@@ -14,7 +14,6 @@ from typing import List
 import pytest
 
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from strategy_archive import StrategyArchive

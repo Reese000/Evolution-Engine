@@ -29,9 +29,7 @@ import torch.nn as nn
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MILESTONE1 = os.path.join(ROOT, "milestone1")
 if MILESTONE1 not in sys.path:
-    sys.path.insert(0, MILESTONE1)
 if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
 
 from milestone1.rv32i_model import RV32ITransformer
 from milestone1.training.scaling.model_migrator import ModelMigrator

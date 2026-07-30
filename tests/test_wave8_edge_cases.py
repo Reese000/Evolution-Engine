@@ -21,7 +21,6 @@ import tempfile
 import pytest
 
 # Path setup
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
 from strategy_archive import StrategyArchive

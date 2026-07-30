@@ -13,7 +13,6 @@ import sys
 
 # Add project root to path so milestone1 modules resolve
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
 
 import torch
 import torch.nn as nn

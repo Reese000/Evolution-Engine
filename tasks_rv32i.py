@@ -2263,10 +2263,11 @@ def generate_all_tasks(seed: int = 42):
 
 if __name__ == "__main__":
     import sys
+    from paths import ensure_project_on_path
+    ensure_project_on_path()
 
     HAVE_ENCODE = False
     try:
-        sys.path.insert(0, "../milestone0/logit-masking")
         from rv32i_mask import decode as rv32_decode
         from rv32i_mask import encode as rv32_encode
 

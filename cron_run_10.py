@@ -11,8 +11,8 @@ os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "0")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(SCRIPT_DIR)
-sys.path.insert(0, SCRIPT_DIR)
-sys.path.insert(0, os.path.join(SCRIPT_DIR, "milestone1"))
+from paths import ensure_project_on_path
+ensure_project_on_path()
 
 from logging_config import get_logger
 from run_multi_cycle import (

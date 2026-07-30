@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Ensure project root is on sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import Config, EvolutionSection, load_config
 from checkpoint_manager import CheckpointManager, CheckpointMismatchError

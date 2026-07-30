@@ -2,8 +2,6 @@ import os
 import sys
 
 proj_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-sys.path.insert(0, proj_root)
-sys.path.insert(0, os.path.join(proj_root, "milestone1"))
 import torch
 
 torch.manual_seed(42)

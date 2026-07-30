@@ -14,7 +14,6 @@ import sys
 import pytest
 
 # Ensure project root is on sys.path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from evolution_engine import EvolutionEngine, EvolutionConfig, HallOfFame
 from mutation_proposer import make_rv32i, EBREAK

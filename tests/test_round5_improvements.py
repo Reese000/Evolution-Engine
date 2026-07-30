@@ -30,7 +30,6 @@ except ImportError:
 import pytest
 
 # Ensure project is on path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__))))
 
 
 # ── B-type and J-type Encoding Fix ────────────────────────────────────

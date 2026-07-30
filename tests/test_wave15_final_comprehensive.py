@@ -28,7 +28,6 @@ import pytest
 # ── Path setup ────────────────────────────────────────────────────────
 _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT not in sys.path:
-    sys.path.insert(0, _PROJECT)
 
 from meta_controller import (
     MetaController,

@@ -16,8 +16,6 @@ import pytest
 
 # Path setup — add project root to sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from meta_controller import MetaController, TelemetrySnapshot, StagnationResult
 from strategy_archive import StrategyArchive
