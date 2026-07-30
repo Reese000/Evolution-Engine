@@ -449,7 +449,6 @@ class MetaGenome:
     # ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
     # Class methods
     # ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
-
     @classmethod
     def random(cls, rng: Optional[random.Random] = None) -> MetaGenome:
         """Create a ``MetaGenome`` with all fields sampled uniformly at

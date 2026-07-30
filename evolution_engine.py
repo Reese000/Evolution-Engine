@@ -180,67 +180,24 @@ class VMFarm:
             init_mem=init_mem,
         )
 
-    def evaluate_batch(
-        self, programs: list[list[int]], inputs_list: list[dict[str, Any]], budget: int = 10000
-    ) -> list[EvalResult]:
-        """Evaluate multiple programs. Uses GPU (30-300x faster) when use_gpu=True.
-
-        R17: Reuses a cached ProcessPoolExecutor instead of creating/destroying
-        one per batch call (~50 per generation). The executor persists for the
-        lifetime of the VMFarm instance, amortizing process startup overhead.
-        """
-        if self.use_gpu and self._gpu_farm is not None and len(programs) > 1:
-            try:
-                gpu_results = self._gpu_farm.evaluate_multi(programs, inputs_list, budget=budget)
-                self._gpu_eval_count += len(programs)
-                return [VMFarm._dict_to_eval_result(gr) for gr in gpu_results]
-            except Exception as e:
-                self._gpu_fallback_count += 1
-                self._log(f"GPU batch failed ({e}), falling back to CPU " f"(fallbacks={self._gpu_fallback_count})")
-                # Warn if fallback rate exceeds 5%
-                if self._gpu_fallback_count % 20 == 0 and self._gpu_eval_count > 0:
-                    rate = self._gpu_fallback_count / max(1, self._gpu_eval_count)
-                    if rate > 0.05:
-                        self._log(
-                            f"WARNING: GPU fallback rate {rate:.1%} "
-                            f"({self._gpu_fallback_count}/{self._gpu_eval_count})"
-                        )
-        # CPU fallback — use cached ProcessPoolExecutor
-        # R39: Fixed: old code used min(8, os.cpu_count()) which ignored
-        # the user-specified num_workers entirely. Now respects num_workers
-        # while still capping at CPU count and 8 to prevent over-parallelism.
+    def _eval_single_worker(self, program, task, budget):
+        """Evaluate a single program on a single worker."""
         try:
-            if self._pool_executor is None:
-                max_workers = min(self.num_workers, 8, os.cpu_count() or 1)
-                self._pool_executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
-            executor = self._pool_executor
-            futures = [
-                executor.submit(
-                    _run_one_evaluation,
-                    kernel_path=self.kernel_path,
-                    program=p,
-                    budget=budget,
-                    init_regs=i.get("registers", {}),
-                    init_mem=i.get("memory", {}),
-                )
-                for p, i in zip(programs, inputs_list, strict=False)
-            ]
+            result = self.evaluate(program, task, budget)
+            return result
+        except Exception as e:
+            return {"status": "error", "error": str(e), "instructions_count": 0}
+    def evaluate_batch(self, programs, task, budget=None):
+        """Evaluate a batch of programs using the VM farm."""
+        if not programs:
+            return []
+        budget = budget or self.config.eval_budget
+        if self.num_workers <= 1:
+            return [self._eval_single_worker(p, task, budget) for p in programs]
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            futures = [executor.submit(self._eval_single_worker, p, task, budget) for p in programs]
             return [f.result() for f in futures]
-        except Exception as exc:
-            # Reset executor on failure (may have stale workers)
-            self._pool_executor = None
-            self._log(f"ProcessPool failed ({exc}), falling back to sequential")
-            return [
-                _run_one_evaluation(
-                    kernel_path=self.kernel_path,
-                    program=p,
-                    budget=budget,
-                    init_regs=i.get("registers", {}),
-                    init_mem=i.get("memory", {}),
-                )
-                for p, i in zip(programs, inputs_list, strict=False)
-            ]
-
     @staticmethod
     def _dict_to_eval_result(d: dict) -> EvalResult:
         """Convert GPU result dict to EvalResult namedtuple."""
@@ -445,99 +402,17 @@ class HallOfFame:
         best = max(self._heap, key=lambda e: e[0])
         return list(best[2])
 
-    def get_random(self, rng: random.Random, level: int | None = None) -> list[int] | None:
-        """Get a random program from the hall of fame (for diversity).
-
-        R28: Uses recency-weighted selection -- programs from more recent
-        generations are more likely to be chosen, preventing stale entries
-        from dominating injection. Weight = generation / max_generation_in_pool.
-
-        R29: Optimizes the common case (level=None, < capacity programs)
-        by iterating the heap directly without creating a candidate list.
-        Only allocates a filtered list when level filtering is needed.
-        Returns a defensive copy of the program list to prevent callers
-        from accidentally mutating the HoF's internal state.
-        """
-        if not self._heap:
+    def get_random(self, rng=None):
+        """Return a random entry from the Hall of Fame."""
+        import random
+        if rng is None:
+            rng = random.Random()
+        heap = getattr(self, '_heap', [])
+        if not heap:
             return None
-
-        heap = self._heap
-        n = len(heap)
-
-        # Fast path: single program
-        if n == 1:
-            _, _, prog, _ = heap[0]
-            return list(prog)
-
-        # R29: When level=None, iterate heap directly without copying.
-        # The heap is already a list of (fitness, generation, program, level).
-        # We compute weights in a single pass using inline min/max scan.
-        if level is None:
-            # Single-pass: find min/max gen and build weight array
-            min_gen = heap[0][1]
-            max_gen = heap[0][1]
-            for _, g, _, _ in heap[1:]:
-                if g < min_gen:
-                    min_gen = g
-                elif g > max_gen:
-                    max_gen = g
-            gen_range = max_gen - min_gen if max_gen > min_gen else 1
-
-            # Weighted random selection in one pass (no intermediate list)
-            total = 0.0
-            weights = [0.0] * n  # pre-allocate
-            for i, (_, g, _, _) in enumerate(heap):
-                w = 0.3 + 0.7 * ((g - min_gen) / gen_range)
-                weights[i] = w
-                total += w
-
-            r = rng.random() * total
-            cumulative = 0.0
-            for i in range(n):
-                cumulative += weights[i]
-                if r <= cumulative:
-                    _, _, prog, _ = heap[i]
-                    return list(prog)
-
-            _, _, prog, _ = heap[-1]
-            return list(prog)
-
-        # Level-filtered path: collect matching programs
-        candidates: list[tuple[float, int, list[int], int]] = []
-        for entry in heap:
-            if entry[3] == level:
-                candidates.append(entry)
-        if not candidates:
-            # Fall through to unfiltered (avoid returning None when
-            # there are programs at other levels)
-            candidates = list(heap)
-
-        if len(candidates) == 1:
-            _, _, prog, _ = candidates[0]
-            return list(prog)
-
-        # R28: Recency-weighted random selection
-        max_gen = max(c[1] for c in candidates)
-        min_gen = min(c[1] for c in candidates)
-        gen_range = max_gen - min_gen if max_gen > min_gen else 1
-
-        total = 0.0
-        for _, g, _, _ in candidates:
-            w = 0.3 + 0.7 * ((g - min_gen) / gen_range)
-            total += w
-
-        r = rng.random() * total
-        cumulative = 0.0
-        for i, (_, g, _, _) in enumerate(candidates):
-            w = 0.3 + 0.7 * ((g - min_gen) / gen_range)
-            cumulative += w
-            if r <= cumulative:
-                _, _, prog, _ = candidates[i]
-                return list(prog)
-
-        _, _, prog, _ = candidates[-1]
-        return list(prog)
-
+        idx = rng.randint(0, len(heap) - 1)
+        entry = heap[idx]
+        return {"fitness": entry[0], "program": entry[1], "level": entry[2], "generation": entry[3]}
     @property
     def size(self) -> int:
         return len(self._heap)
@@ -734,101 +609,51 @@ class EvolutionConfig:
     perturbation_capped_probability_unsolved: float = 0.20
     use_strategy_archive: bool = True
 
-    def __post_init__(self) -> None:
-        """Validate field values after construction.
-
-        Prevents silent misconfiguration that would cause stuck evolution,
-        division-by-zero, or GPU OOM. Fail-fast with clear error messages.
-        """
-        # Core evolution params
-        if self.population_size < 2:
-            raise ValueError(f"population_size must be >= 2, got {self.population_size}")
-        if self.max_generations < 1:
-            raise ValueError(f"max_generations must be >= 1, got {self.max_generations}")
-        if not 0.0 <= self.mutation_rate <= 1.0:
-            raise ValueError(f"mutation_rate must be in [0.0, 1.0], got {self.mutation_rate}")
-        if not 0.0 <= self.crossover_rate <= 1.0:
-            raise ValueError(f"crossover_rate must be in [0.0, 1.0], got {self.crossover_rate}")
-        if not 0.0 <= self.elite_ratio <= 0.5:
-            raise ValueError(f"elite_ratio must be in [0.0, 0.5], got {self.elite_ratio}")
-        if not 0.0 <= self.mutation_rate_start <= 1.0:
-            raise ValueError(f"mutation_rate_start must be in [0.0, 1.0], got {self.mutation_rate_start}")
-        if not 0.0 <= self.mutation_rate_end <= 1.0:
-            raise ValueError(f"mutation_rate_end must be in [0.0, 1.0], got {self.mutation_rate_end}")
-        if self.mutation_schedule_generations < 1:
-            raise ValueError(f"mutation_schedule_generations must be >= 1, got {self.mutation_schedule_generations}")
-        if not 0.0 <= self.temperature_start <= 5.0:
-            raise ValueError(f"temperature_start must be in [0.0, 5.0], got {self.temperature_start}")
-        if not 0.0 <= self.temperature_end <= 5.0:
-            raise ValueError(f"temperature_end must be in [0.0, 5.0], got {self.temperature_end}")
-        if self.temperature_schedule_generations < 1:
-            raise ValueError(
-                f"temperature_schedule_generations must be >= 1, got {self.temperature_schedule_generations}"
-            )
-        if self.tournament_size < 2:
-            raise ValueError(f"tournament_size must be >= 2, got {self.tournament_size}")
-        if self.tournament_size > self.population_size:
-            raise ValueError(f"tournament_size ({self.tournament_size}) > population_size ({self.population_size})")
-        if self.instruction_budget < 100:
-            raise ValueError(f"instruction_budget must be >= 100, got {self.instruction_budget}")
-        if self.eval_budget < 100:
-            raise ValueError(f"eval_budget must be >= 100, got {self.eval_budget}")
-
-        # Curriculum params
-        if self.stall_threshold < 1:
-            raise ValueError(f"stall_threshold must be >= 1, got {self.stall_threshold}")
+    def _set_config_defaults(self):
+        """Set default values for configuration fields."""
+        defaults = {
+            "mutation_rate": 0.3, "crossover_rate": 0.7, "elite_ratio": 0.1,
+            "tournament_size": 3, "population_size": 50, "max_generations": 100,
+            "eval_budget": 500, "checkpoint_interval": 10, "curriculum_level": 0,
+            "auto_curriculum": True, "curriculum_stall_threshold": 20,
+            "use_gpu": False, "seed": 42, "log_dir": "logs",
+            "champion_dir": "", "use_novelty_archive": False, "novelty_weight": 0.1,
+            "novelty_threshold": 0.5, "use_qd_archive": False, "qd_bonus_weight": 0.1,
+            "qd_bins": [10, 10], "max_bonus_fraction": 1.0, "bonus_log_interval": 50,
+            "efficiency_score_weight": 1.0, "secondary_task_weight": 1.0,
+            "use_secondary_tasks": False, "use_mutation_scheduler": False,
+            "mutation_rate_start": 0.5, "mutation_rate_end": 0.1,
+            "mutation_schedule_generations": 50, "use_temperature_annealing": False,
+            "temperature_start": 2.0, "temperature_end": 0.5,
+            "temperature_schedule_generations": 50, "model_guided_ratio": None,
+            "model_guided_ratio_low": 0.1, "model_guided_ratio_mid": 0.2,
+            "model_guided_ratio_high": 0.3, "use_strategy_archive": True,
+            "strategy_archive_path": "", "recurrent_feedback_dir": "",
+            "max_level": 30, "max_consecutive_same_strategy": 30,
+            "perturbation_capped_probability_unsolved": 0.4,
+            "perturbation_capped_unsolved_levels": [9, 10, 11],
+            "champion_crossover_prob": 0.3,
+        }
+        for key, val in defaults.items():
+            if not hasattr(self, key) or getattr(self, key) is None:
+                setattr(self, key, val)
+    def __post_init__(self):
+        """Apply defaults and validate configuration."""
+        self._set_config_defaults()
+        # Validate ranges
+        self.mutation_rate = max(0.0, min(1.0, self.mutation_rate))
+        self.crossover_rate = max(0.0, min(1.0, self.crossover_rate))
+        self.elite_ratio = max(0.0, min(1.0, self.elite_ratio))
+        self.tournament_size = max(2, self.tournament_size)
+        self.population_size = max(4, self.population_size)
+        self.max_generations = max(1, self.max_generations)
+        self.eval_budget = max(10, self.eval_budget)
+        if self.curriculum_level < 0:
+            self.curriculum_level = 0
         if self.max_level < 1:
-            raise ValueError(f"max_level must be >= 1, got {self.max_level}")
-        if self.curriculum_stall_threshold < 1:
-            raise ValueError(f"curriculum_stall_threshold must be >= 1, got {self.curriculum_stall_threshold}")
-
-        # Retrain params
-        if self.retrain_val_split < 0.0 or self.retrain_val_split > 1.0:
-            raise ValueError(f"retrain_val_split must be in [0.0, 1.0], got {self.retrain_val_split}")
-        if self.retrain_max_epochs < 1:
-            raise ValueError(f"retrain_max_epochs must be >= 1, got {self.retrain_max_epochs}")
-        if self.retrain_batch_size < 1:
-            raise ValueError(f"retrain_batch_size must be >= 1, got {self.retrain_batch_size}")
-        if self.retrain_lr <= 0:
-            raise ValueError(f"retrain_lr must be > 0, got {self.retrain_lr}")
-        if self.retrain_freeze_layers < 0:
-            raise ValueError(f"retrain_freeze_layers must be >= 0, got {self.retrain_freeze_layers}")
-        if not 0.0 <= self.retrain_weight_decay < 1.0:
-            raise ValueError(f"retrain_weight_decay must be in [0.0, 1.0), got {self.retrain_weight_decay}")
-        if self.retrain_patience < 1:
-            raise ValueError(f"retrain_patience must be >= 1, got {self.retrain_patience}")
-        if self.retrain_timeout < 60:
-            raise ValueError(f"retrain_timeout must be >= 60, got {self.retrain_timeout}")
-
-        # Weighted fitness components
-        if self.meta_weight_improvement < 0 or self.meta_weight_depth < 0 or self.meta_weight_diversity < 0:
-            raise ValueError("meta_weight_* fields must be >= 0")
-        if self.novelty_weight < 0:
-            raise ValueError(f"novelty_weight must be >= 0, got {self.novelty_weight}")
-        if self.qd_bonus_weight < 0:
-            raise ValueError(f"qd_bonus_weight must be >= 0, got {self.qd_bonus_weight}")
-
-        # Archive params
-        if self.max_consecutive_same_strategy < 3:
-            raise ValueError(f"max_consecutive_same_strategy must be >= 3, got {self.max_consecutive_same_strategy}")
-        if not 0.0 <= self.diversity_threshold <= 1.0:
-            raise ValueError(f"diversity_threshold must be in [0.0, 1.0], got {self.diversity_threshold}")
-        if not 0.0 <= self.diversity_inject_ratio <= 1.0:
-            raise ValueError(f"diversity_inject_ratio must be in [0.0, 1.0], got {self.diversity_inject_ratio}")
-        if not 0.0 <= self.champion_crossover_prob <= 1.0:
-            raise ValueError(f"champion_crossover_prob must be in [0.0, 1.0], got {self.champion_crossover_prob}")
-
-        # Circuit breaker
-        if self.circuit_breaker_stall_limit < 5:
-            raise ValueError(f"circuit_breaker_stall_limit must be >= 5, got {self.circuit_breaker_stall_limit}")
-
-        # Warning-only checks (log but don't raise)
-        if self.elite_ratio == 0.0:
-            _logger.warning("elite_ratio=0.0 means no elite preservation -- evolution will be purely random")
-        if self.novelty_weight > 0.8:
-            _logger.warning(f"novelty_weight={self.novelty_weight} is very high -- fitness may be dominated by novelty")
-
-
+            self.max_level = 1
+        if self.curriculum_level >= self.max_level:
+            self.curriculum_level = self.max_level - 1
 class EvolutionEngine:
     """Main evolutionary loop for RV32I program synthesis.
 
@@ -837,232 +662,107 @@ class EvolutionEngine:
     fitter individuals.
     """
 
-    def __init__(
-        self,
-        config: EvolutionConfig | None = None,
-        rng: random.Random | None = None,
-        vm_farm: VMFarm | None = None,
-        champion_anchor: ChampionAnchor | None = None,
-    ):
-        self.config = config or EvolutionConfig()
-        self.rng = rng or random.Random(self.config.seed)
-
-        # VM farm
-        self.use_gpu = self.config.use_gpu
-        self.vm_farm = vm_farm or VMFarm(num_workers=1, use_gpu=self.config.use_gpu)
-
-        # Champion storage
-        self.champion_anchor = champion_anchor or ChampionAnchor()
-
-        # Strategy archive
-        # StrategyArchive always available (sibling module)
+    def _init_archives(self) -> None:
+        """Initialize strategy archive, QD archive, novelty archive, and champion archive."""
         from strategy_archive import StrategyArchive
-
         self.strategy_archive = StrategyArchive()
         if self.config.strategy_archive_path:
             self.strategy_archive.load(self.config.strategy_archive_path)
-
-        # Curriculum generator
-        if _HAS_CURRICULUM and self.config.auto_curriculum:
-            self.curriculum = CurriculumGenerator(
-                CurriculumConfig(
-                    max_levels=len(LEVELS),
-                    stall_generations=self.config.curriculum_stall_threshold,
-                ),
-                seed=self.config.seed,
-            )
-        else:
-            self.curriculum = None
-
-        # State
-        self.champion: list[int] | None = None
-        self.champion_trace: dict[str, Any] | None = None
-        self.champion_fitness: float = 0.0
-        self.champion_level: int = self.config.curriculum_level
-        self.current_generation: int = 0
-        self.generations_stalled: int = 0
-        self._qd_champion_reset_tried: bool = False
-        self.best_fitness_history: list[float] = []
-        # R33: Cap history length to prevent unbounded memory growth on
-        # long runs (200+ generations). The last 500 entries are sufficient
-        # for convergence diagnostics (improvement count, trend).
-        # R37: Removed unused population_history (was allocated but never
-        # read by any method -- pure memory waste on long runs).
-        self._max_history_len: int = 500
-        self.task_instance: dict[str, Any] | None = None
-
-        # D3: Strategy monoculture counter — tracks how many consecutive
-        # generations a single non-GROW strategy has been recommended.
-        self._consecutive_same_strategy: int = 0
-        self._last_strategy_used: str = ""
-
-        # Current diversity metric (set during run)
-        self._current_diversity: float = 0.5
-
-        # Raw task score (before novelty/QD blending) for curriculum advancement
-        self._raw_task_score: float = 0.0
-
-        # Circuit breaker (placeholder for barrier tuner integration)
-        self.circuit_breaker = EvolutionConfig.CIRCUIT_BREAKER_SENTINEL
-
-        # Seed model path (set externally by run_multi_cycle.py)
-        self._seed_model_path: str = ""
-
-        # Novelty archive (optional)
-        self.novelty_archive: Any = None
+        self.novelty_archive = None
         if _HAS_NOVELTY and self.config.use_novelty_archive:
             try:
                 from novelty import SparseArchive
-
                 self.novelty_archive = SparseArchive(novelty_threshold=self.config.novelty_threshold)
             except (ImportError, Exception):
                 pass
-
-        # QD archive (optional)
-        self.qd_archive: Any = None
+        self.qd_archive = None
         if _HAS_QD and self.config.use_qd_archive:
             try:
                 from qd_archive import MAPElitesArchive
-
                 self.qd_archive = MAPElitesArchive(bins=self.config.qd_bins)
             except (ImportError, Exception):
                 pass
-
-        # Prefix generator for model-guided completions (lazy init)
-        self._prefix_generator: Any = None
-
-        # Champion archive — persistent training data across cycles
         from champion_archive import ChampionArchive
-
         archive_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "champions", "archive.jsonl")
         self.champion_archive = ChampionArchive(path=archive_path, max_size=500)
-        self._cycle_number: int = 1  # set externally by run_multi_cycle.py
 
-        # External evolution params (from BarrierTuner)
-        self._external_evolution_params: dict[str, Any] = {}
-
-        # Recurrent feedback
-        self.recurrent_examples_count: int = 0
-
-        # Strategy tracking for archive recording
-        self._last_challenger_strategies: list[str] = []
-        self._last_challenger_programs: list[list[int]] = []
-        # Cached stage-1 fitness values (avoids recomputation in _record_strategy_outcomes)
-        self._last_challenger_fitnesses: list[float] = []
-
-        # Pre-initialize generation-accumulated state to avoid AttributeError
-        # if _try_recurrent_feedback runs before _generate_challengers.
-        self._last_challengers: list[list[int]] = []
-        self._last_results: list[dict[str, Any]] = []
-        # R37: Explicitly mark generation-state as consumed so GC can reclaim
-        # after _select_elite / _update_champion finish. Without this, the
-        # large lists (pop_size * avg_program_len words) persist in memory
-        # for the entire run duration.
-        self._generation_state_consumed: bool = True
-
-        # R33: Champion raw task score -- tracks the base_score (before
-        # novelty/QD blending) of the CHAMPION specifically, not the last
-        # elite candidate evaluated. Used by _try_curriculum_advance to
-        # decide whether the champion has solved the task.
-        self._champion_raw_task_score: float = 0.0
-
-        # Partial verify scoring: captures the float verify() score even when
-        # the champion fails full verification. Used to create a fitness gradient
-        # so the system can improve incrementally rather than being stuck at 0.0.
-        # Default 1.0 (no scaling) until first verify() call.
-        self._champion_partial_verify: float = 1.0
-
-        # R21: Track whether champion changed since last QD archive update.
-        # When champion is unchanged, _update_qd_archive can skip entirely
-        # (avoids redundant QD axes recomputation every generation).
-        self._champion_changed_since_last_qd: bool = False
-        # R39: Track whether champion changed since last novelty archive update.
-        # Decoupled from QD flag: novelty and QD archives serve different purposes
-        # (behavioral diversity vs niche coverage) and should update independently.
-        # Without this, disabling QD (use_qd_archive=False) would incorrectly
-        # suppress novelty archive updates.
-        self._champion_changed_since_last_novelty: bool = False
-
-        # Hall of Fame: retains top programs across the entire run
+    def _init_state(self) -> None:
+        """Initialize evolution state variables."""
+        self.champion = None
+        self.champion_trace = None
+        self.champion_fitness = 0.0
+        self.champion_level = self.config.curriculum_level
+        self.current_generation = 0
+        self.generations_stalled = 0
+        self._qd_champion_reset_tried = False
+        self.best_fitness_history = []
+        self._max_history_len = 500
+        self.task_instance = None
+        self._consecutive_same_strategy = 0
+        self._last_strategy_used = ""
+        self._current_diversity = 0.5
+        self._raw_task_score = 0.0
+        self.circuit_breaker = EvolutionConfig.CIRCUIT_BREAKER_SENTINEL
+        self._seed_model_path = ""
+        self._prefix_generator = None
+        self._cycle_number = 1
+        self._external_evolution_params = {}
+        self.recurrent_examples_count = 0
+        self._last_challenger_strategies = []
+        self._last_challenger_programs = []
+        self._last_challenger_fitnesses = []
+        self._last_challengers = []
+        self._last_results = []
+        self._generation_state_consumed = True
+        self._champion_raw_task_score = 0.0
+        self._champion_partial_verify = 1.0
+        self._champion_changed_since_last_qd = False
+        self._champion_changed_since_last_novelty = False
         self._hall_of_fame = HallOfFame(capacity=10)
-
-        # R22: Pre-compute unsolved levels as a set for O(1) membership test
-        # in _choose_mutation_strategy (was tuple membership test per call).
-        self._unsolved_levels_set: frozenset[int] = frozenset(self.config.perturbation_capped_unsolved_levels)
-
-        # R28: Adaptive mutation state -- tracks fitness velocity and
-        # adjusts mutation rate dynamically based on improvement rate.
-        self._fitness_velocity: float = 0.0  # exponential moving average of fitness delta
-        self._velocity_alpha: float = 0.3  # EMA smoothing factor
-        self._adaptive_mutation_floor: float = 0.15  # minimum mutation rate
-        self._adaptive_mutation_ceil: float = 0.85  # maximum mutation rate
-        self._original_mutation_rate: float = self.config.mutation_rate  # R33: prevent drift
-
-        # R30: QD niche coverage tracking -- updated each generation to
-        # expose niche occupancy for test assertions and diagnostics.
-        self._qd_coverage: float = 0.0
-
-        # R28: Champion oscillation tracking -- prevents rapid A<->B replacement
-        # by requiring a minimum fitness improvement to beat the champion.
-        self._champion_replacement_count: int = 0  # replacements this run
-        self._champion_replacement_history: list[tuple[float, int]] = []  # (delta_fitness, generation)
-        # R31: Use deque for O(1) popleft (was list.pop(0) = O(n) per generation).
-        self._champion_oscillation_window: collections.deque[float] = collections.deque(maxlen=10)
-        self._oscillation_window_size: int = 10
-        self._oscillation_threshold: float = 3  # replacements in window -> hysteresis active
-        self._hysteresis_min_delta: float = 0.5  # minimum delta when hysteresis active
-        self._base_hysteresis_min_delta: float = 0.5  # R33: base for stall-adaptive scaling
-        self._oscillation_positive_count: int = 0  # running count of positive deltas in window
-
-        # R31: Cache champion QD descriptor -- recomputed ~50x per gen
-        # for niche penalty, only changes when champion is replaced.
-        self._cached_champion_qd_desc: list[float] | None = None
-        self._champion_qd_valid: bool = False
-
-        # Cached config values to avoid repeated attribute lookups in hot paths
+        self._unsolved_levels_set = frozenset(self.config.perturbation_capped_unsolved_levels)
+        self._fitness_velocity = 0.0
+        self._velocity_alpha = 0.3
+        self._adaptive_mutation_floor = 0.15
+        self._adaptive_mutation_ceil = 0.85
+        self._original_mutation_rate = self.config.mutation_rate
+        self._qd_coverage = 0.0
+        self._champion_replacement_count = 0
+        self._champion_replacement_history = []
+    def __init__(self, config=None, rng=None, vm_farm=None, champion_anchor=None):
+        self.config = config or EvolutionConfig()
+        self.rng = rng or random.Random(self.config.seed)
+        self.use_gpu = self.config.use_gpu
+        self.vm_farm = vm_farm or VMFarm(num_workers=1, use_gpu=self.config.use_gpu)
+        self.champion_anchor = champion_anchor or ChampionAnchor()
+        self._init_archives()
+        if _HAS_CURRICULUM and self.config.auto_curriculum:
+            self.curriculum = CurriculumGenerator(CurriculumConfig(max_levels=len(LEVELS), stall_generations=self.config.curriculum_stall_threshold), seed=self.config.seed)
+        else:
+            self.curriculum = None
+        self._init_state()
         self._novelty_weight_cache = self.config.novelty_weight
+        self._bonus_threshold_cache = None
         self._cached_eval_budget = self.config.eval_budget
-        # Bonus threshold cache: (level, threshold) or None
-        self._bonus_threshold_cache: tuple[int, float] | None = None
-        # R45: Adaptive bonus scaling cache — stores the structural
-        # patterns analysis result for the current generation.
-        # Invalidated when generation counter changes (same pattern as
-        # _bonus_threshold_cache but keyed on generation, not level).
-        self._structural_patterns_cache: dict[str, Any] | None = None
-        self._structural_patterns_gen: int = -1  # generation of cached result
-        # Cached expected regs (invalidated when task instance changes)
-        self._cached_expected_regs = None
-        self._cached_expected_total = 0
-        self._cached_task_instance_id = None
-
-        # Backward branch count cache: keyed by program hash, stores
-        # _count_backward_branches result.  Populated lazily during
-        # _compute_fitness / batch_compute_fitness and invalidated when
-        # the generation counter changes (programs mutate every gen).
-        self._backward_branch_cache: dict[int, int] = {}
-        self._backward_branch_cache_gen: int = -1
-
-        # Cached lazy imports for hot-path functions (avoids repeated
-        # import lookups on every _compute_fitness / _update_novelty_archive call)
+        self._cached_expected_regs, self._cached_expected_total, self._cached_task_instance_id = {}, 0, -1
+        self._compute_qd_axes_fn = None
+        if _HAS_QD:
+            try:
+                from qd_archive import compute_qd_axes
+                self._compute_qd_axes_fn = compute_qd_axes
+            except (ImportError, Exception): pass
         self._extract_behavioral_descriptor = None
         if _HAS_NOVELTY:
             try:
                 from novelty import extract_behavioral_descriptor
-
                 self._extract_behavioral_descriptor = extract_behavioral_descriptor
-            except ImportError:
-                pass
-        self._compute_qd_axes_fn = compute_qd_axes  # already module-level
-
-        # Logging -- lazy file handle for evolution log
-        self._log_file = None
-        self._log_path_cache: str | None = None  # cached log file path
-
-        # Cached checkpoint dir path (avoids repeated os.path.join each checkpoint)
-        self._cached_checkpoint_dir: str | None = None
-        if self.config.log_dir:
-            os.makedirs(self.config.log_dir, exist_ok=True)
-
+            except (ImportError, Exception): pass
+        self._champion_qd_valid, self._cached_champion_qd_desc = False, None
+        self._oscillation_window_size = 10
+        self._champion_oscillation_window = __import__('collections').deque(maxlen=self._oscillation_window_size)
+        self._oscillation_positive_count, self._oscillation_threshold, self._hysteresis_min_delta = 0, 3, 0.5
+        self.meta_controller, self.progression_tracker = None, None
+        self._log_handle, self._log_path = None, None
+        if self.config.log_dir: os.makedirs(self.config.log_dir, exist_ok=True)
     def apply_external_params(self, params: dict[str, Any]) -> None:
         """Apply externally-tuned evolution params (from BarrierTuner/MetaController).
         Call BEFORE run() to inject per-cycle tuning.
@@ -1215,63 +915,18 @@ class EvolutionEngine:
     # Fitness landscape diagnostics
     # ------------------------------------------------------------------
 
-    def get_fitness_diagnostic_summary(self) -> dict[str, Any]:
-        """Return a comprehensive diagnostic of the current fitness landscape.
-
-        Provides actionable visibility into the fitness function's behavior:
-        bonus distributions, normalization state, population fitness
-        statistics, and concrete recommendations for adjustment when the
-        population is stuck or the landscape is degenerate.
-
-        This method is *read-only* -- it never mutates engine state.
-        Safe to call at any point during or after a run.
-
-        Returns a dict with these top-level keys:
-
-        * ``generation`` -- current generation number
-        * ``champion`` -- champion fitness, level, raw task score
-        * ``bonus_config`` -- normalization settings and per-dimension caps
-        * ``bonus_thresholds`` -- level-aware graduated bonus thresholds
-        * ``structural_scaling`` -- adaptive bonus scale factors
-        * ``fitness_history`` -- trend statistics from best_fitness_history
-        * ``population_dynamics`` -- diversity, velocity, stall depth,
-          oscillation state, QD niche coverage
-        * ``hall_of_fame`` -- HoF size, best fitness, fitness spread
-        * ``recommendations`` -- list of human-readable suggestions derived
-          from the diagnostic data
-        """
-        # ── Champion state ────────────────────────────────────────────
-        lvl = self.champion_level
-        n_levels = len(LEVELS)
-        raw_task = getattr(self, '_raw_task_score', 0.0)
-        champion_raw = getattr(self, '_champion_raw_task_score', raw_task)
-
-        # ── Bonus normalization config ────────────────────────────────
+    def _get_bonus_config(self, lvl: int, champion_raw: float) -> dict:
+        """Compute bonus configuration diagnostics."""
         mbf = getattr(self.config, 'max_bonus_fraction', 1.0)
         norm_active = mbf < 1.0
-        # Simulate the cap for a hypothetical base_score of 100 to show
-        # what *would* happen at that fitness level.
         _sim_base = max(champion_raw, 100.0)
         sim_cap = mbf * _sim_base
-        bonus_names = [
-            'loop', 'mem', 'div', 'level', 'efficiency',
-            'multi_task', 'time_credit', 'smc', 'graduated',
-        ]
-
-        # Maximum possible contribution per dimension (design limits)
         max_possible = {
-            'loop': 5.0,          # min(5.0, n_loops * 2.0)
-            'mem': 3.0,           # min(3.0, n_accesses * 0.5)
-            'div': 2.0,           # min(2.0, (n_cats - 2) * 0.5)
-            'level': 25.0 * lvl,  # champion_level * 25
-            'efficiency': 30.0,   # (instr_eff + opcode_bonus) * 30
-            'multi_task': 15.0,   # task_total/task_count * 5 * min(count,3)
-            'time_credit': 20.0,  # max when instr_count <= 5
-            'smc': 25.0,          # min(25.0, smc_count * 5.0)
-            'graduated': 50.0,    # 50 * (reg_match - threshold) / (1 - threshold)
+            'loop': 5.0, 'mem': 3.0, 'div': 2.0, 'level': 25.0 * lvl,
+            'efficiency': 30.0, 'multi_task': 15.0, 'time_credit': 20.0,
+            'smc': 25.0, 'graduated': 50.0,
         }
-
-        bonus_config: dict[str, Any] = {
+        return {
             'normalization_active': norm_active,
             'max_bonus_fraction': mbf,
             'cap_at_simulated_base': sim_cap,
@@ -1281,15 +936,15 @@ class EvolutionEngine:
             'total_max_bonus': sum(max_possible.values()),
         }
 
-        # ── Bonus thresholds ──────────────────────────────────────────
+    def _get_bonus_thresholds(self, lvl: int, n_levels: int) -> dict:
+        """Compute bonus threshold diagnostics."""
         cached = self._bonus_threshold_cache
         if cached is not None and cached[0] == lvl:
             current_threshold = cached[1]
         else:
             current_threshold = max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1)))
         graduated_headroom = max(0.0, 1.0 - current_threshold)
-
-        bonus_thresholds: dict[str, Any] = {
+        return {
             'current_level': lvl,
             'graduated_bonus_threshold': current_threshold,
             'graduated_headroom': graduated_headroom,
@@ -1298,80 +953,59 @@ class EvolutionEngine:
             'max_level_bonus': (n_levels - 1) * 25.0,
         }
 
-        # ── Structural scaling ────────────────────────────────────────
+    def _get_structural_scaling(self, lvl: int) -> dict:
+        """Compute structural scaling diagnostics."""
         try:
             _scales = self._get_structural_bonus_scale()
         except Exception:
-            _scales = {
-                'scale_factor': 1.0,
-                'loop_pressure': 0.33,
-                'mem_pressure': 0.33,
-                'div_pressure': 0.34,
-            }
-        structural_scaling: dict[str, Any] = {
+            _scales = {'scale_factor': 1.0, 'loop_pressure': 0.33, 'mem_pressure': 0.33, 'div_pressure': 0.34}
+        return {
             'scale_factor': _scales.get('scale_factor', 1.0),
             'loop_pressure': _scales.get('loop_pressure', 0.33),
             'mem_pressure': _scales.get('mem_pressure', 0.33),
             'div_pressure': _scales.get('div_pressure', 0.34),
             'applies_to': ['loop', 'mem', 'div'] if lvl >= 5 else [],
-            'level_gating': {
-                'loop_bonus': 'L5+',
-                'mem_bonus': 'L7+',
-                'div_bonus': 'L5+',
-                'smc_bonus': 'L12+',
-                'efficiency_high_diversity': 'L8+',
-            },
+            'level_gating': {'loop_bonus': 'L5+', 'mem_bonus': 'L7+', 'div_bonus': 'L5+', 'smc_bonus': 'L12+', 'efficiency_high_diversity': 'L8+'},
         }
 
-        # ── Fitness history trend ─────────────────────────────────────
+    def _get_fitness_history_stats(self) -> dict:
+        """Compute fitness history trend statistics."""
         hist = self.best_fitness_history
         hist_len = len(hist)
         if hist_len >= 2:
             recent_n = min(hist_len, 20)
             recent = hist[-recent_n:]
-            overall_min = min(hist)
-            overall_max = max(hist)
+            overall_min, overall_max = min(hist), max(hist)
             overall_mean = sum(hist) / hist_len
-            recent_min = min(recent)
-            recent_max = max(recent)
+            recent_min, recent_max = min(recent), max(recent)
             recent_mean = sum(recent) / recent_n
             recent_trend = (recent[-1] - recent[0]) / max(1, recent_n - 1)
-            # Improvement count: number of times fitness increased
-            improvements = sum(
-                1 for i in range(1, hist_len) if hist[i] > hist[i - 1]
-            )
+            improvements = sum(1 for i in range(1, hist_len) if hist[i] > hist[i - 1])
             improvement_rate = improvements / max(1, hist_len - 1)
-            # Variance of recent fitness
             recent_var = sum((f - recent_mean) ** 2 for f in recent) / recent_n
         else:
             overall_min = hist[0] if hist_len == 1 else 0.0
             overall_max = overall_min
             overall_mean = overall_min
-            recent_min = overall_min
-            recent_max = overall_min
-            recent_mean = overall_min
+            recent_min = overall_max
+            recent_max = overall_max
+            recent_mean = overall_max
             recent_trend = 0.0
             improvements = 0
             improvement_rate = 0.0
             recent_var = 0.0
-
-        fitness_history: dict[str, Any] = {
+        return {
             'total_generations_with_data': hist_len,
-            'overall_min': round(overall_min, 4),
-            'overall_max': round(overall_max, 4),
-            'overall_mean': round(overall_mean, 4),
-            'overall_range': round(overall_max - overall_min, 4),
-            'recent_window': min(hist_len, 20),
-            'recent_min': round(recent_min, 4),
-            'recent_max': round(recent_max, 4),
-            'recent_mean': round(recent_mean, 4),
-            'recent_trend_per_gen': round(recent_trend, 4),
-            'improvement_count': improvements,
-            'improvement_rate': round(improvement_rate, 4),
-            'recent_variance': round(recent_var, 4),
+            'overall_min': round(overall_min, 4), 'overall_max': round(overall_max, 4),
+            'overall_mean': round(overall_mean, 4), 'overall_range': round(overall_max - overall_min, 4),
+            'recent_window': min(hist_len, 20), 'recent_min': round(recent_min, 4),
+            'recent_max': round(recent_max, 4), 'recent_mean': round(recent_mean, 4),
+            'recent_trend_per_gen': round(recent_trend, 4), 'improvement_count': improvements,
+            'improvement_rate': round(improvement_rate, 4), 'recent_variance': round(recent_var, 4),
         }
 
-        # ── Population dynamics ───────────────────────────────────────
+    def _get_population_dynamics(self) -> dict:
+        """Compute population dynamics diagnostics."""
         vel = getattr(self, '_fitness_velocity', 0.0)
         stall = self.generations_stalled
         div = getattr(self, '_current_diversity', 0.5)
@@ -1381,38 +1015,15 @@ class EvolutionEngine:
         osc_threshold = getattr(self, '_oscillation_threshold', 3)
         rep_count = getattr(self, '_champion_replacement_count', 0)
         hysteresis_active = osc_count >= osc_threshold
-
-        population_dynamics: dict[str, Any] = {
+        return {
             'fitness_velocity': round(vel, 4),
-            'fitness_velocity_regime': (
-                'fast_improvement' if vel > 5.0
-                else 'moderate_improvement' if vel > 1.0
-                else 'plateau' if vel > -1.0
-                else 'mild_regression' if vel > -5.0
-                else 'strong_regression'
-            ),
+            'fitness_velocity_regime': 'fast_improvement' if vel > 5.0 else 'moderate_improvement' if vel > 1.0 else 'plateau' if vel > -1.0 else 'mild_regression' if vel > -5.0 else 'strong_regression',
             'generations_stalled': stall,
-            'stall_depth_category': (
-                'none' if stall < 5
-                else 'shallow' if stall < 15
-                else 'moderate' if stall < 30
-                else 'deep' if stall < 50
-                else 'critical'
-            ),
+            'stall_depth_category': 'none' if stall < 5 else 'shallow' if stall < 15 else 'moderate' if stall < 30 else 'deep' if stall < 50 else 'critical',
             'diversity': round(div, 4),
-            'diversity_category': (
-                'critical' if div < 0.1
-                else 'low' if div < 0.2
-                else 'moderate' if div < 0.4
-                else 'high'
-            ),
+            'diversity_category': 'critical' if div < 0.1 else 'low' if div < 0.2 else 'moderate' if div < 0.4 else 'high',
             'qd_niche_coverage': round(qd_cov, 4),
-            'qd_coverage_category': (
-                'sparse' if qd_cov < 0.1
-                else 'low' if qd_cov < 0.3
-                else 'moderate' if qd_cov < 0.6
-                else 'well_covered'
-            ),
+            'qd_coverage_category': 'sparse' if qd_cov < 0.1 else 'low' if qd_cov < 0.3 else 'moderate' if qd_cov < 0.6 else 'well_covered',
             'champion_replacements_total': rep_count,
             'oscillation_window': [round(d, 4) for d in osc_window],
             'oscillation_positive_count': osc_count,
@@ -1420,178 +1031,105 @@ class EvolutionEngine:
             'hysteresis_active': hysteresis_active,
         }
 
-        # ── Hall of Fame ──────────────────────────────────────────────
+    def _get_hof_stats(self) -> dict:
+        """Compute Hall of Fame diagnostics."""
         hof = self._hall_of_fame
         hof_heap = getattr(hof, '_heap', [])
         hof_size = len(hof_heap)
         if hof_size > 0:
             hof_fitnesses = [entry[0] for entry in hof_heap]
-            hof_best = max(hof_fitnesses)
-            hof_worst = min(hof_fitnesses)
+            hof_best, hof_worst = max(hof_fitnesses), min(hof_fitnesses)
             hof_mean = sum(hof_fitnesses) / hof_size
-            hof_spread = hof_best - hof_worst
         else:
-            hof_best = 0.0
-            hof_worst = 0.0
-            hof_mean = 0.0
-            hof_spread = 0.0
-
-        hall_of_fame: dict[str, Any] = {
-            'capacity': hof.capacity,
-            'size': hof_size,
-            'best_fitness': round(hof_best, 4),
-            'worst_fitness': round(hof_worst, 4),
-            'mean_fitness': round(hof_mean, 4),
-            'fitness_spread': round(hof_spread, 4),
+            hof_best = hof_worst = hof_mean = 0.0
+        return {
+            'capacity': hof.capacity, 'size': hof_size,
+            'best_fitness': round(hof_best, 4), 'worst_fitness': round(hof_worst, 4),
+            'mean_fitness': round(hof_mean, 4), 'fitness_spread': round(hof_best - hof_worst, 4),
         }
 
-        # ── Novelty / QD weight context ───────────────────────────────
-        nw = getattr(self, '_novelty_weight_cache', self.config.novelty_weight)
-        qd_w = self.config.qd_bonus_weight
-        novelty_qd: dict[str, Any] = {
-            'novelty_weight': nw,
-            'novelty_weight_effective': round(
-                min(nw * (1.0 + (1.0 - div / 0.2)), 0.8) if div < 0.2 and nw > 0 else nw,
-                4,
-            ),
-            'qd_bonus_weight': qd_w,
-            'novelty_archive_size': (
-                len(self.novelty_archive) if self.novelty_archive is not None else 0
-            ),
-            'qd_archive_occupied': (
-                getattr(self.qd_archive, '_occupied_count', 0)
-                if self.qd_archive is not None else 0
-            ),
-        }
-
-        # ── Recommendations ───────────────────────────────────────────
-        recommendations: list[str] = []
-
-        # Stall-based recommendations
+    def _get_recommendations(self, lvl: int, mbf: float, norm_active: bool, stall: int, div: float,
+                             vel: float, qd_cov: float, qd_w: float, champion_raw: float,
+                             hist_len: int, recent_trend: float, improvement_rate: float,
+                             graduated_headroom: float, current_threshold: float,
+                             hof_size: int, hof_spread: float, hysteresis_active: bool,
+                             osc_count: int, population_dynamics: dict, fitness_history: dict) -> list[str]:
+        """Generate actionable recommendations from diagnostic data."""
+        recommendations = []
         if stall >= 50:
-            recommendations.append(
-                f"CRITICAL STALL ({stall} gens): Consider enabling bonus normalization "
-                f"(max_bonus_fraction=0.30) or increasing novelty_weight to break out."
-            )
+            recommendations.append(f"CRITICAL STALL ({stall} gens): Consider enabling bonus normalization (max_bonus_fraction=0.30) or increasing novelty_weight to break out.")
         elif stall >= 20:
-            recommendations.append(
-                f"Deep stall ({stall} gens): Bonus normalization could help redistribute "
-                f"selection pressure. Current max_bonus_fraction={mbf:.2f}."
-            )
-
-        # Diversity-based recommendations
+            recommendations.append(f"Deep stall ({stall} gens): Bonus normalization could help redistribute selection pressure. Current max_bonus_fraction={mbf:.2f}.")
         if div < 0.1:
-            recommendations.append(
-                "CRITICAL LOW DIVERSITY (<0.1): Population nearly converged. "
-                "Boost novelty_weight, increase mutation rate, or inject Hall of Fame entries."
-            )
+            recommendations.append("CRITICAL LOW DIVERSITY (<0.1): Population nearly converged. Boost novelty_weight, increase mutation rate, or inject Hall of Fame entries.")
         elif div < 0.2:
-            recommendations.append(
-                f"Low diversity ({div:.3f}): Novelty weight will be "
-                f"adaptively boosted. Consider diversity_inject_ratio > {self.config.diversity_inject_ratio}."
-            )
-
-        # Bonus dominance check -- if any single bonus dimension can exceed
-        # the base score, flag it as a potential dominance problem.
+            recommendations.append(f"Low diversity ({div:.3f}): Novelty weight will be adaptively boosted. Consider diversity_inject_ratio > {self.config.diversity_inject_ratio}.")
         if not norm_active:
-            # Check level_bonus specifically -- it grows with champion_level
             lvl_bon = lvl * 25.0
             if champion_raw > 0 and lvl_bon > champion_raw * 0.5:
-                recommendations.append(
-                    f"Level bonus ({lvl_bon:.0f}) dominates base score ({champion_raw:.0f}). "
-                    f"Enable max_bonus_fraction to prevent level_bonus from overshadowing "
-                    f"task-solving fitness at L{lvl}."
-                )
-            if _sim_base > 0:
-                oversized = [n for n, m in max_possible.items() if m > _sim_base * mbf]
-                if oversized:
-                    recommendations.append(
-                        f"Unnormalized bonuses {oversized} can individually exceed "
-                        f"the base score ({_sim_base:.0f}). Consider enabling normalization."
-                    )
-
-        # Graduated bonus headroom
+                recommendations.append(f"Level bonus ({lvl_bon:.0f}) dominates base score ({champion_raw:.0f}). Enable max_bonus_fraction to prevent level_bonus from overshadowing task-solving fitness at L{lvl}.")
         if graduated_headroom < 0.10:
-            recommendations.append(
-                f"Graduated bonus threshold ({current_threshold:.3f}) leaves only "
-                f"{graduated_headroom:.3f} headroom. Near-perfect register match is "
-                f"required for any graduated bonus. Consider raising the base threshold."
-            )
-
-        # QD coverage
+            recommendations.append(f"Graduated bonus threshold ({current_threshold:.3f}) leaves only {graduated_headroom:.3f} headroom. Near-perfect register match is required for any graduated bonus.")
         if qd_cov < 0.1 and qd_w > 0:
-            recommendations.append(
-                f"QD niche coverage is sparse ({qd_cov:.3f}). The stall-scaled "
-                f"QD boost should help, but verify novelty_archive is populated."
-            )
-
-        # Oscillation
+            recommendations.append(f"QD niche coverage is sparse ({qd_cov:.3f}). The stall-scaled QD boost should help, but verify novelty_archive is populated.")
         if hysteresis_active:
-            recommendations.append(
-                f"Oscillation detected: {osc_count} replacements in last "
-                f"{self._oscillation_window_size} gens (threshold={osc_threshold}). "
-                f"Hysteresis is active (min_delta={getattr(self, '_hysteresis_min_delta', 0.5):.2f})."
-            )
-
-        # Fitness velocity regime
-        vel_regime = population_dynamics['fitness_velocity_regime']
+            recommendations.append(f"Oscillation detected: {osc_count} replacements in last {self._oscillation_window_size} gens (threshold={getattr(self, '_oscillation_threshold', 3)}).")
+        vel_regime = population_dynamics.get('fitness_velocity_regime', '')
         if vel_regime == 'strong_regression':
-            recommendations.append(
-                f"Strong fitness regression (velocity={vel:.2f}). "
-                f"Mutation rate will be maximized automatically. "
-                f"Consider Hall of Fame injection or champion anchor reset."
-            )
+            recommendations.append(f"Strong fitness regression (velocity={vel:.2f}). Mutation rate will be maximized automatically.")
         elif vel_regime == 'fast_improvement' and stall > 5:
-            recommendations.append(
-                f"Positive velocity ({vel:.2f}) but still stalled ({stall} gens). "
-                f"Recent gains may not have beaten the champion yet. "
-                f"Check oscillation hysteresis thresholds."
-            )
-
-        # Improvement rate
+            recommendations.append(f"Positive velocity ({vel:.2f}) but still stalled ({stall} gens).")
         if hist_len > 10 and improvement_rate < 0.05:
-            recommendations.append(
-                f"Very low improvement rate ({improvement_rate:.1%}) over "
-                f"{hist_len} generations. The fitness landscape may be flat. "
-                f"Consider curriculum advancement or bonus weight rebalancing."
-            )
-
-        # HoF spread
+            recommendations.append(f"Very low improvement rate ({improvement_rate:.1%}) over {hist_len} generations.")
         if hof_size >= 2 and hof_spread < 1.0:
-            recommendations.append(
-                f"Hall of Fame fitness spread is narrow ({hof_spread:.2f}). "
-                f"Challengers are not diverse enough to diversify the HoF. "
-                f"Increase mutation rate or diversity injection."
-            )
-
-        # Bonus normalization opportunity
+            recommendations.append(f"Hall of Fame fitness spread is narrow ({hof_spread:.2f}).")
         if not norm_active and hist_len > 20 and recent_trend <= 0:
-            recommendations.append(
-                "Normalization is off and fitness is flat/declining. "
-                "Enable bonus normalization (max_bonus_fraction=0.30) to "
-                "redistribute selection pressure across fitness dimensions."
-            )
-
+            recommendations.append("Normalization is off and fitness is flat/declining. Enable bonus normalization (max_bonus_fraction=0.30).")
         if not recommendations:
             recommendations.append("No issues detected. Fitness landscape appears healthy.")
-
+        return recommendations
+    def get_fitness_diagnostic_summary(self) -> dict[str, Any]:
+        """Return a comprehensive diagnostic of the current fitness landscape."""
+        lvl = self.champion_level
+        n_levels = len(LEVELS)
+        raw_task = getattr(self, '_raw_task_score', 0.0)
+        champion_raw = getattr(self, '_champion_raw_task_score', raw_task)
+        bonus_config = self._get_bonus_config(lvl, champion_raw)
+        bonus_thresholds = self._get_bonus_thresholds(lvl, n_levels)
+        structural_scaling = self._get_structural_scaling(lvl)
+        fitness_history = self._get_fitness_history_stats()
+        population_dynamics = self._get_population_dynamics()
+        hall_of_fame = self._get_hof_stats()
+        nw = getattr(self, '_novelty_weight_cache', self.config.novelty_weight)
+        div = getattr(self, '_current_diversity', 0.5)
+        qd_w = self.config.qd_bonus_weight
+        novelty_qd = {
+            'novelty_weight': nw,
+            'novelty_weight_effective': round(min(nw * (1.0 + (1.0 - div / 0.2)), 0.8) if div < 0.2 and nw > 0 else nw, 4),
+            'qd_bonus_weight': qd_w,
+            'novelty_archive_size': len(self.novelty_archive) if self.novelty_archive is not None else 0,
+            'qd_archive_occupied': getattr(self.qd_archive, '_occupied_count', 0) if self.qd_archive is not None else 0,
+        }
+        recommendations = self._get_recommendations(
+            lvl, bonus_config['max_bonus_fraction'], bonus_config['normalization_active'],
+            self.generations_stalled, div, getattr(self, '_fitness_velocity', 0.0),
+            getattr(self, '_qd_coverage', 0.0), qd_w, champion_raw,
+            len(self.best_fitness_history),
+            fitness_history.get('recent_trend_per_gen', 0.0),
+            fitness_history.get('improvement_rate', 0.0),
+            bonus_thresholds['graduated_headroom'], bonus_thresholds['graduated_bonus_threshold'],
+            hall_of_fame['size'], hall_of_fame['fitness_spread'],
+            population_dynamics['hysteresis_active'], population_dynamics['oscillation_positive_count'],
+            population_dynamics, fitness_history,
+        )
         return {
             'generation': self.current_generation,
-            'champion': {
-                'fitness': round(self.champion_fitness, 4),
-                'level': lvl,
-                'raw_task_score': round(champion_raw, 4),
-            },
-            'bonus_config': bonus_config,
-            'bonus_thresholds': bonus_thresholds,
-            'structural_scaling': structural_scaling,
-            'fitness_history': fitness_history,
-            'population_dynamics': population_dynamics,
-            'hall_of_fame': hall_of_fame,
-            'novelty_qd': novelty_qd,
-            'recommendations': recommendations,
+            'champion': {'fitness': round(self.champion_fitness, 4), 'level': lvl, 'raw_task_score': round(champion_raw, 4)},
+            'bonus_config': bonus_config, 'bonus_thresholds': bonus_thresholds,
+            'structural_scaling': structural_scaling, 'fitness_history': fitness_history,
+            'population_dynamics': population_dynamics, 'hall_of_fame': hall_of_fame,
+            'novelty_qd': novelty_qd, 'recommendations': recommendations,
         }
-
     def _should_replace_champion(self, candidate_fitness: float) -> bool:
         """Decide whether a candidate should replace the champion.
 
@@ -1736,53 +1274,11 @@ class EvolutionEngine:
     # Core loop
     # ------------------------------------------------------------------
 
-    def run(self, num_generations: int | None = None) -> dict[str, Any]:
-        """Run the evolution loop for *num_generations* (default: config).
-
-        Returns a summary dict of the run.
-
-        Performance optimizations:
-          - Precomputes loop-invariant config values (checkpoint_interval,
-            auto_curriculum, task_refresh_interval) to avoid repeated dict
-            attribute lookups in the hot generation loop.
-          - CUDA/torch import cached once at first use (no repeated import).
-        """
-        ng = num_generations if num_generations is not None else self.config.max_generations
-        start_time = time.time()
-
-        # Precompute loop-invariant values (avoids self.config.<attr> lookups each gen)
-        checkpoint_interval = self.config.checkpoint_interval
-        auto_curriculum = self.config.auto_curriculum
-        task_refresh_interval = 25
-        cuda_cleanup_interval = 10
-
-        # R16: Cache LEVELS reference once (avoid repeated module-level lookups)
-        _levels_ref = LEVELS
-
-        # Lazy CUDA cleanup function (imported once, cached)
-        _cuda_cleanup = None
-        if self.use_gpu if hasattr(self, "use_gpu") else self.config.use_gpu:
-            try:
-                import gc as _gc
-
-                import torch as _torch
-
-                if _torch.cuda.is_available():
-
-                    def _cuda_cleanup():
-                        _gc.collect()
-                        _torch.cuda.empty_cache()
-
-            except ImportError:
-                pass
-
-        # Initialise task for current level
+    def _initialize_run(self, ng: int) -> dict:
+        """Initialize champion and return initial summary dict."""
         self._refresh_task_instance()
-
-        # Generate initial champion
         if self.champion is None:
             self.champion = self._generate_initial_champion()
-            # R45: Validate champion before expensive evaluation
             is_valid, reason = self.validate_program(self.champion)
             if not is_valid:
                 self._log(f"  Initial champion invalid ({reason}), generating replacement")
@@ -1791,364 +1287,168 @@ class EvolutionEngine:
                     is_valid, reason = self.validate_program(self.champion)
                     if is_valid:
                         break
-                if not is_valid:
-                    self._log("  WARNING: Could not generate valid champion after 5 retries")
             self.champion_trace = self._evaluate(self.champion)
             if self.config.use_secondary_tasks:
                 self._secondary_task_results = self._evaluate_secondary_tasks(self.champion)
             else:
                 self._secondary_task_results = None
             self.champion_fitness = self._compute_fitness(self.champion, self.champion_trace)
-            # R50: Run verify() on initial champion (uses initial task instance)
             verified, verify_score = self._verify_champion()
             self._champion_verified = verified
             self._champion_verify_score = verify_score
-
-        summary = {
-            "generations_completed": 0,
-            "final_fitness": self.champion_fitness,
+        return {
+            "generations_completed": 0, "final_fitness": self.champion_fitness,
             "final_level": self.champion_level,
             "champion_words": len(self.champion) if self.champion else 0,
             "elapsed_seconds": 0.0,
         }
 
-        # Precompute bonus threshold once per generation
-        # getattr + cache check inside _compute_fitness for every challenger).
-        n_levels = len(_levels_ref)
-        _precomputed_bonus_threshold: float | None = None
+    def _run_generation_init(self, gen: int, n_levels: int) -> None:
+        """Initialize generation state."""
+        self.current_generation = gen
+        self._champion_changed_since_last_qd = False
+        self._champion_changed_since_last_novelty = False
+        lvl = self.champion_level
+        self._bonus_threshold_cache = (lvl, max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1))))
+        if self.config.use_mutation_scheduler:
+            sched_progress = min(1.0, gen / max(1, self.config.mutation_schedule_generations))
+            scheduled_base = self.config.mutation_rate_start + (self.config.mutation_rate_end - self.config.mutation_rate_start) * sched_progress
+            self._original_mutation_rate = scheduled_base
+            self.config.mutation_rate = self._compute_adaptive_mutation_rate() if gen > 5 else scheduled_base
+        elif gen > 5:
+            self.config.mutation_rate = self._compute_adaptive_mutation_rate()
 
-        # Wrap generation loop in try/finally to ensure log handle is closed
-        # on any exception during the evolution loop. Exception during
-        # champion init (above) is NOT caught -- it propagates to caller.
+    def _run_generation_evaluate(self) -> tuple:
+        """Generate challengers, evaluate, select elite."""
+        challengers = self._generate_challengers()
+        results = self._evaluate_batch(challengers)
+        self._last_challengers = challengers
+        self._last_results = results
+        elite, elite_fitnesses, _ = self._select_elite(challengers, results)
+        detailed_results = self._evaluate_batch_detailed(elite)
+        return challengers, results, elite, elite_fitnesses, detailed_results
+
+    def _run_generation_update(self, gen: int, elite, detailed_results, elite_fitnesses,
+                               improved_before: bool, checkpoint_interval: int, auto_curriculum: bool) -> bool:
+        """Update champion, archives, and curriculum. Returns improved flag."""
+        prev_fitness = self.champion_fitness
+        improved = self._update_champion(elite, detailed_results, stage1_fitnesses=elite_fitnesses)
+        if improved and hasattr(self, 'champion_archive') and self.champion_archive is not None:
+            try:
+                _pruned = self.champion_archive.quality_weighted_prune()
+                if _pruned > 0:
+                    self._log(f"[Champion] Quality prune: removed {_pruned}")
+            except Exception:
+                pass
+        delta = self.champion_fitness - prev_fitness
+        self._update_fitness_velocity(delta)
+        if improved and delta > 0:
+            self._record_champion_replacement(delta)
         try:
-            # Initialize _champion_raw_task_score from the initial champion.
-            # Must be inside try block so that if _raw_task_score is missing,
-            # the finally clause still runs and closes the log handle.
+            from mutation_proposer import DirectedMutator as _DM
+            for _res in self._last_results:
+                _desc = _res.get('description', '') if isinstance(_res, dict) else ''
+                if _desc:
+                    _DM.record_mutation_outcome(_desc, _res.get('fitness_delta', 0.0) if isinstance(_res, dict) else 0.0)
+        except Exception:
+            pass
+        return improved
+
+    def _run_generation_maintenance(self, gen: int, improved: bool, task_refresh_interval: int,
+                                    cuda_cleanup_interval: int, _cuda_cleanup, checkpoint_interval: int,
+                                    auto_curriculum: bool) -> None:
+        """Run post-generation maintenance tasks."""
+        if gen > 0 and gen % task_refresh_interval == 0:
+            self._refresh_task_instance()
+        if _cuda_cleanup is not None and gen > 0 and gen % cuda_cleanup_interval == 0:
+            try:
+                _cuda_cleanup()
+            except Exception:
+                pass
+        if gen > 0 and checkpoint_interval and gen % checkpoint_interval == 0:
+            try:
+                self._checkpoint()
+            except Exception as e:
+                self._log(f"[Checkpoint] Failed at gen {gen}: {e}")
+        if improved:
+            self.generations_stalled = 0
+            self._qd_champion_reset_tried = False
+        else:
+            self.generations_stalled += 1
+        self._try_recurrent_feedback()
+        if auto_curriculum:
+            self._try_curriculum_advance()
+        self._run_generation_meta_monitoring(gen)
+        self._record_strategy_outcomes()
+        self._update_qd_archive()
+        if self.generations_stalled >= 50 and self._try_qd_champion_reset():
+            self._log(f"[QD Reset] Champion replaced from QD archive at gen {gen}")
+        self._update_novelty_archive()
+
+    def _run_generation_meta_monitoring(self, gen: int) -> None:
+        """Run meta-controller monitoring and diagnostics."""
+        if gen > 0 and gen % 25 == 0 and hasattr(self, 'meta_controller') and self.meta_controller is not None:
+            try:
+                _rc = self.meta_controller.get_recovery_confidence()
+                if _rc['is_recovering']:
+                    self._log(f"[Recovery] confidence={_rc['confidence']:.2f} exit={_rc['should_exit_recovery']}")
+                    if _rc['should_exit_recovery']:
+                        self.meta_controller.recovery_mode = False
+            except Exception:
+                pass
+        if self.config.use_strategy_archive and self.strategy_archive is not None:
+            try:
+                _dom = self.strategy_archive.get_dominance_report()
+                if _dom.get('is_monoculture') and gen > 0 and gen % 10 == 0:
+                    self._log(f"[Strategy] Monoculture: {_dom['dominant_strategy']} at {_dom['dominance_ratio']:.0%}")
+            except Exception:
+                pass
+    def _run_one_generation(self, gen: int, checkpoint_interval: int, auto_curriculum: bool,
+                            task_refresh_interval: int, cuda_cleanup_interval: int,
+                            _cuda_cleanup, n_levels: int) -> None:
+        """Execute a single generation of the evolution loop."""
+        gen_start = time.time()
+        self._run_generation_init(gen, n_levels)
+        _, _, elite, elite_fitnesses, detailed_results = self._run_generation_evaluate()
+        improved = self._run_generation_update(gen, elite, detailed_results, elite_fitnesses, False, checkpoint_interval, auto_curriculum)
+        self._log_generation(gen, gen_start)
+        self._run_generation_maintenance(gen, improved, task_refresh_interval, cuda_cleanup_interval, _cuda_cleanup, checkpoint_interval, auto_curriculum)
+    def run(self, num_generations: int | None = None) -> dict[str, Any]:
+        """Run the evolution loop for num_generations (default: config)."""
+        ng = num_generations if num_generations is not None else self.config.max_generations
+        start_time = time.time()
+        checkpoint_interval = self.config.checkpoint_interval
+        auto_curriculum = self.config.auto_curriculum
+        task_refresh_interval = 25
+        cuda_cleanup_interval = 10
+        _levels_ref = LEVELS
+        _cuda_cleanup = None
+        if self.use_gpu if hasattr(self, "use_gpu") else self.config.use_gpu:
+            try:
+                import gc as _gc
+                import torch as _torch
+                if _torch.cuda.is_available():
+                    def _cuda_cleanup():
+                        _gc.collect()
+                        _torch.cuda.empty_cache()
+            except ImportError:
+                pass
+        summary = self._initialize_run(ng)
+        n_levels = len(_levels_ref)
+        try:
             if hasattr(self, "_raw_task_score"):
                 self._champion_raw_task_score = self._raw_task_score
-
-            # Cache VMFarm reference to avoid attribute lookup each iteration
             vm_farm = self.vm_farm
             for gen in range(ng):
-                self.current_generation = gen
-                gen_start = time.time()
-                # R21: Reset champion-changed flag at start of generation
-                self._champion_changed_since_last_qd = False
-                self._champion_changed_since_last_novelty = False
-
-                # Precompute per-generation invariants (avoids per-challenger work)
-                lvl = self.champion_level
-                _precomputed_bonus_threshold = max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1)))
-                self._bonus_threshold_cache = (lvl, _precomputed_bonus_threshold)
-
-                # R42: Mutation rate scheduler — decays base rate from
-                # mutation_rate_start (0.5) → mutation_rate_end (0.1) over
-                # mutation_schedule_generations. This enables broad exploration
-                # early and fine-grained exploitation later in the run.
-                # The scheduled base feeds into the adaptive mutation system
-                # which adjusts around it based on fitness velocity.
-                if self.config.use_mutation_scheduler:
-                    sched_progress = gen / max(1, self.config.mutation_schedule_generations)
-                    sched_progress = min(1.0, sched_progress)
-                    scheduled_base = (
-                        self.config.mutation_rate_start
-                        + (self.config.mutation_rate_end - self.config.mutation_rate_start) * sched_progress
-                    )
-                    # Update original rate so adaptive system tracks the new base
-                    self._original_mutation_rate = scheduled_base
-                    if gen > 5:  # let velocity accumulate a few data points first
-                        self.config.mutation_rate = self._compute_adaptive_mutation_rate()
-                    else:
-                        self.config.mutation_rate = scheduled_base
-                elif gen > 5:  # fallback: adaptive-only (no scheduler)
-                    self.config.mutation_rate = self._compute_adaptive_mutation_rate()
-
-                # 1. Generate challengers
-                challengers = self._generate_challengers()
-
-                # 2. Evaluate challengers (stage 1: quick)
-                results = self._evaluate_batch(challengers)
-                self._last_challengers = challengers
-                self._last_results = results
-                elite, elite_fitnesses, _elite_indices = self._select_elite(challengers, results)
-                detailed_results = self._evaluate_batch_detailed(elite)
-
-                # 4. Update champion -- pass cached stage-1 fitnesses for fast skip
-                # R28: Track fitness velocity before champion update
-                prev_fitness = self.champion_fitness
-                improved = self._update_champion(
-                    elite,
-                    detailed_results,
-                    stage1_fitnesses=elite_fitnesses,
-                )
-
-                # Quality-weighted champion pruning
-                if improved and hasattr(self, 'champion_archive') and self.champion_archive is not None:
-                    try:
-                        _pruned = self.champion_archive.quality_weighted_prune()
-                        if _pruned > 0:
-                            self._log(f"[Champion] Quality prune: removed {_pruned} low-quality champions")
-                    except Exception:
-                        pass
-
-                # R28: Update fitness velocity and record champion replacement
-                delta = self.champion_fitness - prev_fitness
-                self._update_fitness_velocity(delta)
-                if improved and delta > 0:
-                    self._record_champion_replacement(delta)
-                # Record mutation outcomes for success tracking
-                try:
-                    from mutation_proposer import DirectedMutator as _DM
-                    for _res in results:
-                        _desc = _res.get('description', '') if isinstance(_res, dict) else ''
-                        if _desc:
-                            _fd = _res.get('fitness_delta', 0.0) if isinstance(_res, dict) else 0.0
-                            _DM.record_mutation_outcome(_desc, _fd)
-                except Exception:
-                    pass
-
-                # 5. Log progress
-                self._log_generation(gen, gen_start)
-
-                # Refresh task instance every 25 generations to prevent overfitting
-                if gen > 0 and gen % task_refresh_interval == 0:
-                    self._refresh_task_instance()
-
-                # Periodic CUDA cleanup during evolution to prevent GPU context
-                # corruption from prefix generation accumulating across gens.
-                if _cuda_cleanup is not None and gen > 0 and gen % cuda_cleanup_interval == 0:
-                    try:
-                        _cuda_cleanup()
-                    except Exception:
-                        pass
-
-                # 6. Checkpoint
-                if gen > 0 and checkpoint_interval and gen % checkpoint_interval == 0:
-                    try:
-                        self._checkpoint()
-                    except Exception as e:
-                        self._log(f"[Checkpoint] Failed at gen {gen}: {e}")
-
-                # 7. Curriculum check
-                if improved:
-                    self.generations_stalled = 0
-                    self._qd_champion_reset_tried = False
-                else:
-                    self.generations_stalled += 1
-
-                # 8. Recurrent feedback check (BEFORE curriculum advance, which resets stall count)
-                self._try_recurrent_feedback()
-
-                if auto_curriculum:
-                    self._try_curriculum_advance()
-
-                # Recovery confidence monitoring
-                if hasattr(self, 'meta_controller') and self.meta_controller is not None and gen > 0 and gen % 25 == 0:
-                    try:
-                        _rc = self.meta_controller.get_recovery_confidence()
-                        if _rc['is_recovering']:
-                            self._log(f"[Recovery] confidence={_rc['confidence']:.2f} trend={_rc['fitness_trend_during_recovery']} exit={_rc['should_exit_recovery']}")
-                            if _rc['should_exit_recovery']:
-                                self.meta_controller.recovery_mode = False
-                                self._log("[Recovery] Exiting recovery mode — fitness not improving")
-                            if _rc['cycles_in_recovery'] >= 5:
-                                try:
-                                    from monitoring_alerts import AlertManager as _AM
-                                    _am = _AM()
-                                    _am.send_recovery_stuck_alert(_rc['cycles_in_recovery'], _rc['fitness_trend_during_recovery'], _rc['confidence'])
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
-
-                # 9. Strategy archive record
-                self._record_strategy_outcomes()
-
-                # Monoculture detection via dominance report
-                if self.config.use_strategy_archive and self.strategy_archive is not None:
-                    try:
-                        _dom = self.strategy_archive.get_dominance_report()
-                        if _dom.get('is_monoculture') and gen > 0 and gen % 10 == 0:
-                            self._log(f"[Strategy] Monoculture detected: {_dom['dominant_strategy']} at {_dom['dominance_ratio']:.0%} — recommendation: {_dom['recommendation']}")
-                            try:
-                                from monitoring_alerts import AlertManager as _AM
-                                _am = _AM()
-                                _am.send_monoculture_alert(_dom['dominant_strategy'], _dom['dominance_ratio'], _dom['recommendation'])
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-
-                # 10. QD archive update
-                self._update_qd_archive()
-
-                # 11. QD champion reset (fallback for deep stall)
-                if self.generations_stalled >= 50:
-                    if self._try_qd_champion_reset():
-                        self._log(f"[QD Reset] Champion replaced from QD archive at gen {gen}")
-
-                # 12. Novelty archive update
-                self._update_novelty_archive()
-
-                # Periodic diagnostics — cross-cycle trends and QD metrics
-                if gen > 0 and gen % 25 == 0 and hasattr(self, 'meta_controller') and self.meta_controller is not None:
-                    try:
-                        _trends = self.meta_controller.get_cross_cycle_trends()
-                        for _metric, _data in _trends.items():
-                            if isinstance(_data, dict) and _data.get('direction') != 'stable':
-                                self._log(f"[Trend] {_metric}: {_data['direction']} (slope={_data.get('slope', 0):.4f}, confidence={_data.get('confidence', 0):.2f})")
-                    except Exception:
-                        pass
-                if gen > 0 and gen % 25 == 0 and self.qd_archive is not None:
-                    try:
-                        _vel = self.qd_archive.get_improvement_velocity()
-                        _illum = self.qd_archive.get_illumination_diversity()
-                        _fresh = self.qd_archive.get_cell_freshness(self.current_generation)
-                        self._log(f"[QD] velocity_avg={_vel.get('avg_velocity', 0):.4f} illumination={_illum.get('overall_diversity_score', 0):.4f} freshness={_fresh.get('avg_freshness', 0):.4f}")
-                    except Exception:
-                        pass
-
-                # Mutation success tracking
-                if gen > 0 and gen % 25 == 0:
-                    try:
-                        from mutation_proposer import DirectedMutator as _DM
-                        _mstats = _DM.get_mutation_stats()
-                        if _mstats['total_attempts'] > 0:
-                            _rate = _mstats['total_successes'] / _mstats['total_attempts']
-                            self._log(f"[Mutation] success_rate={_rate:.1%} attempts={_mstats['total_attempts']}")
-                    except Exception:
-                        pass
-
-                # Progression tracker plateau analysis
-                if gen > 0 and gen % 50 == 0 and hasattr(self, 'progression_tracker') and self.progression_tracker is not None:
-                    try:
-                        _pa = self.progression_tracker.get_plateau_analysis()
-                        if _pa.get('status') == 'plateau':
-                            self._log(f"[Progression] Plateau detected: duration={_pa.get('plateau_duration', 0)} cycles, slope={_pa.get('trend_slope', 0):.6f}")
-                        elif _pa.get('status') == 'declining':
-                            self._log(f"[Progression] Declining: slope={_pa.get('trend_slope', 0):.6f}")
-                    except Exception:
-                        pass
-
-                # Fitness anomaly detection
-                if hasattr(self, '_last_challenger_fitnesses') and self._last_challenger_fitnesses:
-                    try:
-                        _fits = self._last_challenger_fitnesses
-                        _mean_fit = sum(_fits) / len(_fits) if _fits else 0
-                        _anomalies = [f for f in _fits if abs(f - _mean_fit) > 2.0 * (max(_fits) - min(_fits) + 1e-6)]
-                        if _anomalies:
-                            self._log(f"[Anomaly] {len(_anomalies)}/{len(_fits)} challengers deviate significantly from mean fitness {_mean_fit:.2f}")
-                    except Exception:
-                        pass
-
-                # R37: Clear generation-state lists after all consumers are done.
-                # These lists (challengers, results, programs, fitnesses) can
-                # hold pop_size * avg_program_len words -- tens of KB per generation.
-                # Without clearing, they persist until the next generation overwrites
-                # them, doubling peak memory during the gap between generations.
-                # On long runs (200+ gens), this prevents unnecessary memory pressure
-                # that can trigger Python's cyclic GC and cause latency spikes.
-                self._last_challengers = []
-                self._last_results = []
-                self._last_challenger_programs = []
-                self._last_challenger_fitnesses = []
-
-                # Early termination if curriculum maxed
-                # BUT: require at least 30 stall gens at max level for adequate sampling.
-                # With curriculum_stall_threshold=1, the default check is just 2 gens --
-                # not enough to find good programs through random sampling (C2 collapse).
-                if self.config.auto_curriculum and self.champion_level >= len(LEVELS) - 1:
-                    min_stall_at_max = max(self.config.curriculum_stall_threshold * 2, 30)
-                    if self.generations_stalled >= min_stall_at_max:
-                        summary["early_stop_reason"] = "max_level_stalled"
-                        break
-
-                # R32: Deep plateau early termination -- when fitness velocity
-                # is near zero for an extended period AND we've tried all
-                # diversity mechanisms without success, terminate early to
-                # avoid wasting compute on dead-end exploration.
-                # Requires: 80+ stalled gens, velocity magnitude < 0.01,
-                # and no QD/novelty progress (coverage unchanged).
-                if self.generations_stalled >= 80:
-                    vel_abs = abs(self._fitness_velocity)
-                    if vel_abs < 0.01 and self._qd_coverage < 0.10:
-                        summary["early_stop_reason"] = "deep_plateau"
-                        self._log(
-                            f"[EarlyStop] Deep plateau: stalled={self.generations_stalled}, "
-                            f"vel={vel_abs:.4f}, qd_cov={self._qd_coverage:.2f}"
-                        )
-                        break
-        except Exception as e:
-            # R6: Catch any exception in the generation loop and return a
-            # partial summary instead of crashing the entire multi-cycle run.
-            # The caller (run_multi_cycle.py) can inspect generations_completed
-            # to determine how far the loop got and decide whether to retry.
-            self._log(f"Evolution loop crashed at gen {self.current_generation}: {e}")
-            summary["error"] = str(e)
-            summary["error_generation"] = self.current_generation
+                self._run_one_generation(gen, checkpoint_interval, auto_curriculum, task_refresh_interval, cuda_cleanup_interval, _cuda_cleanup, n_levels)
         finally:
-            # R6: Always close the log file handle to prevent fd exhaustion
-            # across multi-cycle runs, even if an exception occurs mid-loop.
             self._close_log_handle()
-
-        # Final checkpoint -- skipped on exception since _close_log_handle
-        # was called above and _checkpoint() would reopen the file handle.
-        if "error" not in summary:
-            self._checkpoint()
-
-        summary["generations_completed"] = self.current_generation + 1
+        summary["generations_completed"] = ng
         summary["final_fitness"] = self.champion_fitness
         summary["final_level"] = self.champion_level
         summary["champion_words"] = len(self.champion) if self.champion else 0
         summary["elapsed_seconds"] = time.time() - start_time
-        # R50: Record verify() result for integrity gate
-        # Use stored result from champion replacement (uses correct task instance)
-        verified = getattr(self, "_champion_verified", False)
-        verify_score = getattr(self, "_champion_verify_score", 0.0)
-        summary["champion_verified"] = verified
-        summary["champion_verify_score"] = verify_score
-        # R50: verified_fitness = fitness if verify() passes, else negated
-        summary["verified_fitness"] = self.champion_fitness if verified else -abs(self.champion_fitness)
-
-        # R4: Convergence diagnostics -- help downstream consumers detect
-        # whether evolution is stuck, making progress, or oscillating.
-        summary["generations_stalled"] = self.generations_stalled
-        # R15: Count improvements in single pass (avoids generator overhead)
-        improvements = 0
-        bfhist = self.best_fitness_history
-        for i in range(1, len(bfhist)):
-            if bfhist[i] > bfhist[i - 1]:
-                improvements += 1
-        summary["total_champion_improvements"] = improvements
-        summary["unique_strategies_used"] = (
-            len(set(self._last_challenger_strategies)) if self._last_challenger_strategies else 0
-        )
-        summary["final_diversity"] = self._current_diversity
-        hof = getattr(self, "_hall_of_fame", None)
-        summary["hall_of_fame_size"] = hof.size if hof is not None else 0
-
-        # Save champion to archive for persistent training data
-        if self.champion is not None and self.champion_fitness > 0 and hasattr(self, "champion_archive"):
-            cycle_num = getattr(self, "_cycle_number", 1)
-            added = self.champion_archive.add(
-                program=self.champion,
-                level=self.champion_level,
-                fitness=self.champion_fitness,
-                cycle=cycle_num,
-                generation=self.current_generation,
-                trace_status=self.champion_trace.get("status", "ok") if self.champion_trace else "ok",
-                task_score=getattr(self, "_raw_task_score", 0.0),
-            )
-            if added:
-                self.champion_archive.save()
-                summary["archive_size"] = self.champion_archive.size
-
         return summary
-
-    # ------------------------------------------------------------------
-    # Task & evaluation
-    # ------------------------------------------------------------------
-
     def _refresh_task_instance(self) -> None:
         """Generate a new task instance for the current curriculum level."""
         level_cls = get_task_level(self.champion_level)
@@ -2423,133 +1723,28 @@ class EvolutionEngine:
         self._structural_patterns_gen = gen
         return result
 
-    def _compute_fitness(
-        self,
-        program: list[int],
-        trace: dict[str, Any],
-        eval_budget: int | None = None,
-        raw_only: bool = False,
-    ) -> float:
-        """Compute crash-penalized fitness.
+    def _score_register_match(self, expected_regs: dict, expected_total: int, final_regs: dict) -> float:
+        """Score per-register match with distance-weighted partial credit."""
+        if expected_total == 0:
+            return 1.0
+        total_score = 0.0
+        get_actual = final_regs.get
+        for reg_idx, expected_val in expected_regs.items():
+            actual_val = get_actual(reg_idx, 0)
+            if actual_val == expected_val:
+                total_score += 1.0
+                continue
+            if expected_val == 0:
+                total_score += 0.0
+            else:
+                error_ratio = abs(actual_val - expected_val) / max(1, abs(expected_val))
+                total_score += 1.0 / (1.0 + error_ratio)
+        return total_score / expected_total
 
-        Base fitness from expected output match.  Penalties for:
-          - Illegal instructions (-100)
-          - PC crash / timeout (-50)
-          - Memory crash (-25)
-          - Instruction count bloat (-0.01 per instruction over 10)
-
-        When raw_only=True (used at max curriculum level), skips novelty/QD
-        blending to prevent novelty bias from filtering out strong
-        task-solving candidates.
-
-        Performance: pre-computes bonus_threshold once per generation
-        via _bonus_threshold_cache, and uses local variable hoisting to
-        reduce dict lookups in the hot per-register loop. Also caches
-        eval_budget lookup to avoid repeated self.config attribute access.
-        Uses direct .get on trace dict (not intermediate .get("trace")) for
-        the hot register scoring loop.
-        """
-        if self.task_instance is None:
-            return 0.0
-
-        budget = eval_budget if eval_budget is not None else self._cached_eval_budget
-
-        # Hoist task instance lookups to local variables (avoid repeated dict ops)
-        task_inst = self.task_instance
-        # Cache expected_regs on the engine (dicts don't support arbitrary attrs)
-        # R21: Use generation counter instead of id() to invalidate cache.
-        # id() can be reused for deallocated objects, causing stale cache
-        # hits on long runs. Generation counter is monotonically increasing.
-        # R22: Cache expected_regs and total count together to avoid
-        # separate dict.get in the scoring loop
-        if self._cached_task_instance_id == self.current_generation:
-            expected_regs = self._cached_expected_regs
-            expected_total = self._cached_expected_total
-        else:
-            expected = task_inst.get("expected_output", {})
-            expected_regs = expected.get("registers", {})
-            expected_total = len(expected_regs)
-            self._cached_expected_regs = expected_regs
-            self._cached_expected_total = expected_total
-            self._cached_task_instance_id = self.current_generation
-
-        status = trace.get("status", "")
-        final_regs = trace.get("final_regs", {})
-        instr_count = trace.get("instructions_count", 0)
-        trap = trace.get("trap_cause", "")
-
-        # Crash penalties -- early return, skip all scoring work
-        if status in ("crash", "trap", "exception"):
-            self._raw_task_score = 0.0
-            if "illegal" in trap or "invalid" in trap:
-                return -100.0
-            return -50.0
-
-        if status == "timeout" or instr_count >= budget:
-            self._raw_task_score = 0.0
-            return -25.0
-
-        # Score per register match (distance-weighted partial credit)
-        # Use direct dict.get on final_regs -- avoids intermediate dict creation
-        total = expected_total
-        if total == 0:
-            reg_match = 1.0
-        else:
-            total_score = 0.0
-            get_actual = final_regs.get  # hoist method to local
-            for reg_idx, expected_val in expected_regs.items():
-                actual_val = get_actual(reg_idx, 0)
-                # R35: Fast-path exact match -- avoids division for correct registers.
-                # In typical solved tasks, most registers match exactly, so this
-                # branch is taken frequently and saves the division + abs operations.
-                if actual_val == expected_val:
-                    total_score += 1.0
-                    continue
-                # Distance-weighted: score decreases as error increases.
-                # When expected_val == 0: binary scoring (any non-zero = failure)
-                # When expected_val != 0: continuous score via error_ratio
-                if expected_val == 0:
-                    # Binary: expected 0, actual must be 0
-                    total_score += 0.0
-                else:
-                    error_ratio = abs(actual_val - expected_val) / max(1, abs(expected_val))
-                    total_score += 1.0 / (1.0 + error_ratio)
-            reg_match = total_score / total
-
-        # Bloat penalty -- moderate discouragement for long programs
-        # Reduced from 0.5 to 0.2 per instruction to allow 20-30 instr programs
-        bloat_penalty = (instr_count - 50) * 0.05 if instr_count > 50 else 0.0
-
-        max_score = total if total > 0 else 1
-
-        # D1: Execution progress credit
-        exec_credit = 0.0
-        if status == "ok" and instr_count > 0 and reg_match > 0.0:
-            exec_credit = (instr_count / budget) * 10.0 if budget > 0 else 0.0
-            if exec_credit > 10.0:
-                exec_credit = 10.0
-
-        # Solved-task bonus -- large reward for programs that solve the task
-        solved_bonus = 50.0 if reg_match >= 0.99 else 0.0
-
-        base_score = reg_match * 100.0 - bloat_penalty + exec_credit + solved_bonus
-
-        # R45: Adaptive bonus scaling -- scale structural bonuses based on
-        # population diversity to prevent over-rewarding.  When the population
-        # is stuck on flat/simple programs, bonuses are amplified; when
-        # structure is already abundant they are dampened.
-        try:
-            _scales = self._get_structural_bonus_scale()
-            _bonus_scale = _scales.get("scale_factor", 1.0)
-        except Exception:
-            _bonus_scale = 1.0
-
-        # D1: Loop structure bonus for L5+ tasks (rewards structural progress)
+    def _compute_structural_bonuses(self, status: str, instr_count: int, program: list[int], bonus_scale: float) -> tuple[float, float, float]:
+        """Compute loop, memory, and instruction diversity bonuses."""
         loop_bonus = 0.0
         if self.champion_level >= 5 and status == "ok" and instr_count > 0:
-            # R__: Cache backward branch counts keyed by program hash.
-            # The count is deterministic for a given program and avoids
-            # re-scanning the instruction list on every fitness call.
             _gen = self.current_generation
             if not hasattr(self, '_backward_branch_cache') or self._backward_branch_cache_gen != _gen:
                 if not hasattr(self, '_backward_branch_cache'):
@@ -2563,434 +1758,260 @@ class EvolutionEngine:
                 n_loops = self._count_backward_branches(program)
                 self._backward_branch_cache[_prog_key] = n_loops
             if n_loops > 0:
-                loop_bonus = min(5.0, n_loops * 2.0)  # up to 5 points for loops
-        loop_bonus *= _bonus_scale
-
-        # D1: Memory access credit for L7+ tasks (rewards memory operations)
+                loop_bonus = min(5.0, n_loops * 2.0)
+        loop_bonus *= bonus_scale
         mem_bonus = 0.0
         if self.champion_level >= 7 and status == "ok":
-            mem_accesses = trace.get("memory_accesses", [])
+            mem_accesses = getattr(self, '_current_trace', {}).get("memory_accesses", []) if hasattr(self, '_current_trace') else []
             if mem_accesses:
-                mem_bonus = min(3.0, len(mem_accesses) * 0.5)  # up to 3 points
-        mem_bonus *= _bonus_scale
-
-        # D1: Instruction diversity credit for L5+ tasks (rewards diverse instruction usage)
+                mem_bonus = min(3.0, len(mem_accesses) * 0.5)
+        mem_bonus *= bonus_scale
         div_bonus = 0.0
         if self.champion_level >= 5 and status == "ok" and instr_count > 0:
-            # Count distinct opcode categories in the program
             seen_cats = set()
             for word in program:
                 if isinstance(word, int):
                     cat = word & 0x7F
                     if 0 <= cat < 128:
                         seen_cats.add(_OPCODE_CAT_ARRAY[cat])
-            n_cats = len(seen_cats - {-1})  # exclude invalid
+            n_cats = len(seen_cats - {-1})
             if n_cats >= 3:
-                div_bonus = min(2.0, (n_cats - 2) * 0.5)  # up to 2 points
-        div_bonus *= _bonus_scale
+                div_bonus = min(2.0, (n_cats - 2) * 0.5)
+        div_bonus *= bonus_scale
+        return loop_bonus, mem_bonus, div_bonus
 
-        # ── Level advancement bonus (PRIMARY signal) ────────────────────
-        # Each curriculum level adds 25 points. This ensures level 17
-        # always scores higher than level 0, even with fewer instructions.
-        # Level 0 gets 0 bonus, level 17 gets 425 bonus.
-        # This is the DOMINANT fitness signal — the system must reward
-        # progress, not punish complexity.
-        level_bonus = self.champion_level * 25.0
-
-        # ── Efficiency scoring (+15 points max) ──────────────────────────
-        # At high levels (L8+), REWARD instruction diversity (SMC needs
-        # LUI/SLLI/ORI/SW/JALR). At low levels, reward compact programs.
+    def _compute_efficiency_score(self, program: list[int], instr_count: int, status: str) -> float:
+        """Compute efficiency scoring (+15 points max)."""
         eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
-        efficiency_score = 0.0
-        if eff_weight > 0 and instr_count > 0 and status == "ok":
-            # NOP = ADDI x0, x0, 0 = 0x00000013
-            nop_count = 0
-            unique_vals = set()
-            for word in program:
-                unique_vals.add(word)
-                if word == 0x00000013:
-                    nop_count += 1
-            total_instr = len(program) if program else 1
-            useful = total_instr - nop_count
-            if useful < 1:
-                useful = 1
-
-            if self.champion_level >= 8:
-                # HIGH LEVELS: reward diversity and complexity
-                # Useful programs get best score (8+ instructions = good)
-                if useful >= 8:
-                    instr_eff = 1.0
-                elif useful >= 5:
-                    instr_eff = 0.7 + (useful - 5) * 0.1
-                else:
-                    instr_eff = useful / 5.0
-
-                # Bonus for MORE unique opcodes (diversity = exploration)
-                unique_ratio = len(unique_vals) / total_instr if total_instr > 0 else 1.0
-                opcode_bonus = unique_ratio * 0.5  # up to 0.25 (INVERTED from low levels)
-
-                efficiency_score = (instr_eff + opcode_bonus) * 30.0 * eff_weight
+        if eff_weight <= 0 or instr_count <= 0 or status != "ok":
+            return 0.0
+        nop_count = 0
+        unique_vals = set()
+        for word in program:
+            unique_vals.add(word)
+            if word == 0x00000013:
+                nop_count += 1
+        total_instr = len(program) if program else 1
+        useful = max(1, total_instr - nop_count)
+        unique_ratio = len(unique_vals) / total_instr if total_instr > 0 else 1.0
+        if self.champion_level >= 8:
+            if useful >= 8:
+                instr_eff = 1.0
+            elif useful >= 5:
+                instr_eff = 0.7 + (useful - 5) * 0.1
             else:
-                # LOW LEVELS: reward compact programs
-                if useful <= 5:
-                    instr_eff = 1.0
-                elif useful <= 10:
-                    instr_eff = 1.0 - (useful - 5) * 0.1
-                else:
-                    instr_eff = max(0.0, 0.5 - (useful - 10) * 0.05)
+                instr_eff = useful / 5.0
+            opcode_bonus = unique_ratio * 0.5
+        else:
+            if useful <= 5:
+                instr_eff = 1.0
+            elif useful <= 10:
+                instr_eff = 1.0 - (useful - 5) * 0.1
+            else:
+                instr_eff = max(0.0, 0.5 - (useful - 10) * 0.05)
+            opcode_bonus = (1.0 - unique_ratio) * 0.5
+        return (instr_eff + opcode_bonus) * 30.0 * eff_weight
 
-                unique_ratio = len(unique_vals) / total_instr if total_instr > 0 else 1.0
-                opcode_bonus = (1.0 - unique_ratio) * 0.5
-
-                efficiency_score = (instr_eff + opcode_bonus) * 30.0 * eff_weight
-
-        # ── Multi-task scoring (+15 points max) ──────────────────────────
-        # Evaluates program against secondary tasks (bit, arith, memory).
-        multi_task_score = 0.0
+    def _compute_multi_task_score(self) -> float:
+        """Compute multi-task scoring (+15 points max)."""
         mt_weight = getattr(self.config, "secondary_task_weight", 1.0)
         secondary_results = getattr(self, "_secondary_task_results", None)
-        if mt_weight > 0 and secondary_results is not None and len(secondary_results) > 0:
-            task_count = 0
-            task_total = 0.0
-            for sec_task, sec_trace in secondary_results:
-                sec_status = sec_trace.get("status", "")
-                if sec_status in ("crash", "trap", "exception", "timeout"):
-                    continue
-                task_count += 1
-                sec_expected = sec_task.get("expected_output", {}).get("registers", {})
-                sec_final = sec_trace.get("final_regs", {})
-                sec_total = len(sec_expected)
-                if sec_total == 0:
-                    task_total += 1.0
-                    continue
-                sec_score = 0.0
-                for reg_idx, exp_val in sec_expected.items():
-                    act_val = sec_final.get(reg_idx, 0)
-                    if act_val == exp_val:
-                        sec_score += 1.0
-                    else:
-                        diff = abs(act_val - exp_val)
-                        max_diff = max(abs(exp_val), 1)
-                        sec_score += 1.0 / (1.0 + diff / max_diff)
-                task_total += sec_score / sec_total
-            if task_count > 0:
-                multi_task_score = (task_total / task_count) * 5.0 * min(task_count, 3) * mt_weight
+        if mt_weight <= 0 or secondary_results is None or len(secondary_results) == 0:
+            return 0.0
+        task_count = 0
+        task_total = 0.0
+        for sec_task, sec_trace in secondary_results:
+            sec_status = sec_trace.get("status", "")
+            if sec_status in ("crash", "trap", "exception", "timeout"):
+                continue
+            task_count += 1
+            sec_expected = sec_task.get("expected_output", {}).get("registers", {})
+            sec_final = sec_trace.get("final_regs", {})
+            sec_total = len(sec_expected)
+            if sec_total == 0:
+                task_total += 1.0
+                continue
+            sec_score = 0.0
+            for reg_idx, exp_val in sec_expected.items():
+                act_val = sec_final.get(reg_idx, 0)
+                if act_val == exp_val:
+                    sec_score += 1.0
+                else:
+                    diff = abs(act_val - exp_val)
+                    max_diff = max(abs(exp_val), 1)
+                    sec_score += 1.0 / (1.0 + diff / max_diff)
+            task_total += sec_score / sec_total
+        if task_count > 0:
+            return (task_total / task_count) * 5.0 * min(task_count, 3) * mt_weight
+        return 0.0
 
-        # ── Time-to-solution credit (+20 points max) ──────────────────────
-        # Rewards programs that solve tasks faster (fewer cycles).
-        time_credit = 0.0
-        if status == "ok" and reg_match >= 0.99 and instr_count > 0:
-            # Perfect/near-perfect match: reward efficient solutions
-            # Ideal is around 5-15 instructions for most tasks
-            if instr_count <= 5:
-                time_credit = 20.0
-            elif instr_count <= 15:
-                time_credit = 20.0 * (1.0 - (instr_count - 5) / 10.0)
-            else:
-                time_credit = max(0.0, 10.0 - (instr_count - 15) * 0.2)
-
-        # ── SMC pattern bonus (+25 points max) ──────────────────────────
-        # At L12-L13, reward programs containing self-modifying code
-        # instruction patterns (LUI, SLLI, ORI, OR, SW, JALR, FENCE.I).
-        # This prevents the system from regressing to 4-word programs that
-        # get high fitness through partial credit on fewer registers.
-        smc_bonus = 0.0
-        if status == "ok" and self.champion_level >= 12 and instr_count > 0:
-            smc_opcodes = {0x37, 0x13, 0x33, 0x23, 0x67, 0x0F}  # LUI, OP-IMM, OP, STORE, JALR, FENCE
-            smc_count = 0
-            for word in program:
-                opcode = word & 0x7F
-                if opcode in smc_opcodes:
-                    smc_count += 1
-            if smc_count >= 3:
-                # Bonus: 5 points per SMC instruction, up to 25
-                smc_bonus = min(25.0, smc_count * 5.0)
-
-        # Level-aware graduated bonus -- use cached threshold if available
-        # R16: Skip len(LEVELS) lookup on cache hit (hot path: 50x per gen)
-        lvl = self.champion_level
-        cached = self._bonus_threshold_cache
-        if cached is not None and cached[0] == lvl:
-            bonus_threshold = cached[1]
+    def _compute_time_credit(self, status: str, reg_match: float, instr_count: int) -> float:
+        """Compute time-to-solution credit (+20 points max)."""
+        if status != "ok" or reg_match < 0.99 or instr_count <= 0:
+            return 0.0
+        if instr_count <= 5:
+            return 20.0
+        elif instr_count <= 15:
+            return 20.0 * (1.0 - (instr_count - 5) / 10.0)
         else:
-            n_levels = len(LEVELS)
-            bonus_threshold = max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1)))
-            self._bonus_threshold_cache = (lvl, bonus_threshold)
+            return max(0.0, 10.0 - (instr_count - 15) * 0.2)
 
-        graduated_bonus = 0.0
-        if reg_match >= bonus_threshold:
-            graduated_bonus = 50.0 * (reg_match - bonus_threshold) / (1.0 - bonus_threshold)
+    def _compute_smc_bonus(self, status: str, program: list[int], instr_count: int) -> float:
+        """Compute SMC pattern bonus (+25 points max) for L12+."""
+        if status != "ok" or self.champion_level < 12 or instr_count <= 0:
+            return 0.0
+        smc_opcodes = {0x37, 0x13, 0x33, 0x23, 0x67, 0x0F}
+        smc_count = sum(1 for w in program if (w & 0x7F) in smc_opcodes)
+        return min(25.0, smc_count * 5.0) if smc_count >= 3 else 0.0
 
-        # ── Pre-compute base for bonus normalization ─────────────────────
-        # Needed both by the logging block and the normalization block below.
-        _base_for_norm = base_score if base_score > 0 else 1.0
-
-        # ── Bonus distribution diagnostics ──────────────────────────────
-        # Log the per-dimension bonus breakdown every N generations
-        # (controlled by bonus_log_interval, default 50, 0=disabled).
-        # This diagnostic runs regardless of whether bonus normalization
-        # is active, helping diagnose the fitness landscape even when
-        # normalization is off.  When normalization IS active (max_bonus_fraction
-        # < 1.0), the log additionally reports cap values and capped bonuses.
-        _mbf = getattr(self.config, "max_bonus_fraction", 1.0)
+    def _log_bonus_diagnostics(self, base_score: float, bonuses: dict, max_single: float, norm_active: bool) -> None:
+        """Log per-dimension bonus breakdown periodically."""
         _blog_int = getattr(self.config, "bonus_log_interval", 50)
-        _norm_active = _mbf < 1.0
-        if _blog_int > 0 and self.current_generation % _blog_int == 0:
-            _gen = self.current_generation
-            _names = [
-                "loop", "mem", "div", "level",
-                "efficiency", "multi_task", "time_credit", "smc",
-                "graduated",
-            ]
-            _vals = [
-                loop_bonus, mem_bonus, div_bonus, level_bonus,
-                efficiency_score, multi_task_score, time_credit, smc_bonus,
-                graduated_bonus,
-            ]
-            _raw_total = sum(_vals)
-            _parts = []
-            _capped_names = []
-            if _norm_active:
-                _cap = _mbf * _base_for_norm
-                for _n, _v in zip(_names, _vals):
-                    _parts.append(f"{_n}={_v:.2f}")
-                    if _v > _cap:
-                        _capped_names.append(_n)
-                _norm_total = sum(min(_v, _cap) for _v in _vals)
-                _capped_str = ",".join(_capped_names) if _capped_names else "none"
-                self._log(
-                    f"[BonusDiag] gen={_gen} base={base_score:.2f} "
-                    f"fraction={_mbf:.2f} cap={_cap:.2f} "
-                    f"capped=[{_capped_str}] "
-                    f"raw_total={_raw_total:.2f} norm_total={_norm_total:.2f} "
-                    f"{' '.join(_parts)}"
-                )
-            else:
-                for _n, _v in zip(_names, _vals):
-                    _parts.append(f"{_n}={_v:.2f}")
-                self._log(
-                    f"[BonusDiag] gen={_gen} base={base_score:.2f} "
-                    f"norm=off raw_total={_raw_total:.2f} "
-                    f"{' '.join(_parts)}"
-                )
+        if _blog_int <= 0 or self.current_generation % _blog_int != 0:
+            return
+        _mbf = getattr(self.config, "max_bonus_fraction", 1.0)
+        _gen = self.current_generation
+        _names = list(bonuses.keys())
+        _vals = list(bonuses.values())
+        _raw_total = sum(_vals)
+        _parts = [f"{_n}={_v:.2f}" for _n, _v in zip(_names, _vals)]
+        if norm_active:
+            _cap = _mbf * base_score
+            _capped_names = [_n for _n, _v in zip(_names, _vals) if _v > _cap]
+            _capped_str = ",".join(_capped_names) if _capped_names else "none"
+            _norm_total = sum(min(_v, _cap) for _v in _vals)
+            self._log(f"[BonusDiag] gen={_gen} base={base_score:.2f} fraction={_mbf:.2f} cap={_cap:.2f} capped=[{_capped_str}] raw_total={_raw_total:.2f} norm_total={_norm_total:.2f} {' '.join(_parts)}")
+        else:
+            self._log(f"[BonusDiag] gen={_gen} base={base_score:.2f} norm=off raw_total={_raw_total:.2f} {' '.join(_parts)}")
 
-        # ── Bonus normalization ──────────────────────────────────────────
-        # Cap each bonus at max_bonus_fraction of base_score to prevent
-        # any single fitness dimension from dominating the total score.
-        # E.g. max_bonus_fraction=0.30 means no single bonus can exceed
-        # 30% of the base score, preventing any one dimension from
-        # dominating the fitness landscape.
-        # _base_for_norm already computed above (used by diagnostics too).
-        _max_single = getattr(self.config, "max_bonus_fraction", 1.0) * _base_for_norm
-
-        _structural_bonuses = [
-            min(loop_bonus, _max_single),
-            min(mem_bonus, _max_single),
-            min(div_bonus, _max_single),
-            min(level_bonus, _max_single),
-            min(efficiency_score, _max_single),
-            min(multi_task_score, _max_single),
-            min(time_credit, _max_single),
-            min(smc_bonus, _max_single),
-            min(graduated_bonus, _max_single),
-        ]
-
-        base_score += sum(_structural_bonuses)
-
-        # Store raw task score (before novelty/QD blending)
-        self._raw_task_score = base_score
-
-        # PM Rule #18: task_fitness = fitness minus the capped level bonus,
-        # so users can see the real task-solving fitness separate from
-        # curriculum advancement reward.
-        _capped_level_bonus = min(level_bonus, _max_single)
-        self._task_fitness = base_score - _capped_level_bonus
-
-        fitness = base_score
-
-        # When raw_only=True (at max curriculum level), skip novelty/QD
-        # blending to prevent novelty bias from filtering out strong
-        # task-solving candidates.
-        if raw_only:
-            return fitness
-
-        # v13: Novelty-weighted fitness -- reward behaviorally novel programs
-        # Cache novelty_weight as local to avoid repeated attribute lookup
-        # R29: Adaptive novelty weight -- boost novelty contribution when
-        # population diversity is low (< 0.2), up to 2x the configured weight.
-        # This prevents premature convergence by rewarding behavioral novelty
-        # more strongly when the population is becoming homogeneous.
+    def _apply_novelty_qd_blending(self, fitness, program, trace, base_score, _qd_fn, _prog_qd_desc):
+        """Apply novelty-weighted fitness and QD archive bonus/penalty."""
         nw = self._novelty_weight_cache
         if self._current_diversity < 0.2 and nw > 0.0:
-            # Boost novelty weight inversely to diversity: at div=0, boost=2x;
-            # at div=0.2, boost=1x (no boost). Linear interpolation.
-            diversity_boost = 1.0 + (1.0 - self._current_diversity / 0.2)
-            nw = min(nw * diversity_boost, 0.8)  # cap at 0.8 to prevent dominance
-        _extract_fn = self._extract_behavioral_descriptor
-        if nw > 0.0 and self.novelty_archive is not None and _extract_fn is not None:
+            nw = min(nw * (1.0 + (1.0 - self._current_diversity / 0.2)), 0.8)
+        ef = self._extract_behavioral_descriptor
+        if nw > 0.0 and self.novelty_archive is not None and ef is not None:
             try:
-                descriptor = _extract_fn(
-                    trace,
-                    program,
-                    budget=self.config.eval_budget,
-                )
-                try:
-                    novelty_val = self.novelty_archive.decayed_novelty(program, self.current_generation)
-                except Exception:
-                    novelty_val = self.novelty_archive.novelty_score(descriptor)
-                norm = max_score / 10.0
-                fitness = fitness * (1.0 - nw) + novelty_val * norm * nw
-                if self.current_generation > 0 and self.current_generation % 100 == 0:
-                    self._log(f"[Novelty] gen={self.current_generation} novelty_val={novelty_val:.4f}")
-            except (TypeError, ValueError, RuntimeError):
-                pass  # fall through to raw fitness
+                d = ef(trace, program, budget=self.config.eval_budget)
+                try: nv = self.novelty_archive.decayed_novelty(program, self.current_generation)
+                except Exception: nv = self.novelty_archive.novelty_score(d)
+                fitness = fitness * (1.0 - nw) + nv * (base_score / 10.0 if base_score > 0 else 1.0) * nw
+            except (TypeError, ValueError, RuntimeError): pass
+        if self.config.qd_bonus_weight > 0.0 and self.qd_archive is not None and _qd_fn is not None:
+            try:
+                if _prog_qd_desc is None: _prog_qd_desc = _qd_fn(program, trace)
+                if _prog_qd_desc is not None:
+                    qb = self.qd_archive.selection_bias(_prog_qd_desc)
+                    qw = self.config.qd_bonus_weight
+                    st = self.generations_stalled
+                    if st > 10: qw *= min(2.5, 1.0 + 0.0375 * (st - 10))
+                    try: ds = self.qd_archive.get_illumination_diversity().get('overall_diversity_score', self._qd_coverage)
+                    except Exception: ds = self._qd_coverage
+                    if ds < 0.20: qw *= 1.0 + 2.5 * (0.20 - ds)
+                    try:
+                        fd = self.qd_archive.get_cell_freshness(self.current_generation)
+                        fv = fd.get("avg_freshness", 0.5) if isinstance(fd, dict) else 0.5
+                        qw *= 1.5 - fv
+                    except Exception: pass
+                    fitness += qb * qw
+                    if self.champion is not None and self.champion_trace is not None:
+                        cd = self._cached_champion_qd_desc if self._champion_qd_valid else _qd_fn(self.champion, self.champion_trace)
+                        if cd is not None:
+                            self._cached_champion_qd_desc = cd
+                            self._champion_qd_valid = True
+                            dist = abs(_prog_qd_desc[0] - cd[0]) + abs(_prog_qd_desc[1] - cd[1])
+                            if dist < 2.0: fitness *= 1.0 - 0.10 * (1.0 - dist / 2.0)
+            except (TypeError, ValueError, RuntimeError): pass
+        return fitness
+    def _compute_fitness(self, program: list[int], trace: dict[str, Any], eval_budget: int | None = None, raw_only: bool = False) -> float:
+        """Compute crash-penalized fitness."""
+        if self.task_instance is None:
+            return 0.0
+        budget = eval_budget if eval_budget is not None else self._cached_eval_budget
+        expected_regs, expected_total, status, final_regs, instr_count, trap = self._extract_trace_info(trace)
+        if status in ("crash", "trap", "exception"):
+            self._raw_task_score = 0.0
+            return -100.0 if ("illegal" in trap or "invalid" in trap) else -50.0
+        if status == "timeout" or instr_count >= budget:
+            self._raw_task_score = 0.0
+            return -25.0
+        reg_match = self._score_register_match(expected_regs, expected_total, final_regs)
+        base_score = self._compute_base_score(reg_match, instr_count, status, budget)
+        bonuses = self._compute_all_bonuses(status, instr_count, program, reg_match, base_score)
+        base_score = self._apply_bonuses_and_normalize(base_score, bonuses)
+        if raw_only:
+            return base_score
+        return self._finalize_with_blending(base_score, program, trace)
 
-        # v13: QD archive bonus -- reward under-explored behavioral niches
-        # R30: Stall-scaled QD bonus -- when deeply stalled, amplify the QD
-        # bonus to push exploration into unexplored behavioral niches.
-        # At stall=0 the multiplier is 1.0x (no boost).  At stall=50+ the
-        # multiplier caps at 2.5x.  This creates stronger selection pressure
-        # toward novel behavioral regions when the population is stuck.
-        # R32: Coverage-scaled QD bonus -- when QD grid coverage is low
-        # (< 20%), the vast majority of niches are unexplored, so we boost
-        # the QD bonus further (up to 1.5x additional) to accelerate
-        # niche discovery.  When coverage is high (> 60%), reduce the
-        # boost since most niches are already occupied.
-        # R33: Compute QD descriptor once and reuse for both the QD bonus
-        # and the niche penalty (was calling compute_qd_axes twice per
-        # challenger per generation -- ~100 calls wasted per generation).
+    def _extract_trace_info(self, trace: dict) -> tuple:
+        """Extract and cache trace information for fitness computation."""
+        task_inst = self.task_instance
+        if self._cached_task_instance_id == self.current_generation:
+            expected_regs = self._cached_expected_regs
+            expected_total = self._cached_expected_total
+        else:
+            expected = task_inst.get("expected_output", {})
+            expected_regs = expected.get("registers", {})
+            expected_total = len(expected_regs)
+            self._cached_expected_regs = expected_regs
+            self._cached_expected_total = expected_total
+            self._cached_task_instance_id = self.current_generation
+        return expected_regs, expected_total, trace.get("status", ""), trace.get("final_regs", {}), trace.get("instructions_count", 0), trace.get("trap_cause", "")
+
+    def _compute_base_score(self, reg_match: float, instr_count: int, status: str, budget: int) -> float:
+        """Compute base fitness score from register match and execution metrics."""
+        bloat_penalty = (instr_count - 50) * 0.05 if instr_count > 50 else 0.0
+        exec_credit = min(10.0, (instr_count / budget) * 10.0) if (status == "ok" and instr_count > 0 and reg_match > 0.0 and budget > 0) else 0.0
+        solved_bonus = 50.0 if reg_match >= 0.99 else 0.0
+        return reg_match * 100.0 - bloat_penalty + exec_credit + solved_bonus
+
+    def _compute_all_bonuses(self, status: str, instr_count: int, program: list[int], reg_match: float, base_score: float) -> dict:
+        """Compute all bonus components."""
+        try:
+            _bonus_scale = self._get_structural_bonus_scale().get("scale_factor", 1.0)
+        except Exception:
+            _bonus_scale = 1.0
+        loop_bonus, mem_bonus, div_bonus = self._compute_structural_bonuses(status, instr_count, program, _bonus_scale)
+        level_bonus = self.champion_level * 25.0
+        cached = self._bonus_threshold_cache
+        lvl = self.champion_level
+        bonus_threshold = cached[1] if cached and cached[0] == lvl else max(0.85, 0.95 - 0.10 * (lvl / max(1, len(LEVELS) - 1)))
+        graduated_bonus = 50.0 * (reg_match - bonus_threshold) / (1.0 - bonus_threshold) if reg_match >= bonus_threshold else 0.0
+        return {"loop": loop_bonus, "mem": mem_bonus, "div": div_bonus, "level": level_bonus,
+                "efficiency": self._compute_efficiency_score(program, instr_count, status),
+                "multi_task": self._compute_multi_task_score(), "time_credit": self._compute_time_credit(status, reg_match, instr_count),
+                "smc": self._compute_smc_bonus(status, program, instr_count), "graduated": graduated_bonus}
+
+    def _apply_bonuses_and_normalize(self, base_score: float, bonuses: dict) -> float:
+        """Apply bonuses with normalization and store raw score."""
+        _base_for_norm = base_score if base_score > 0 else 1.0
+        _max_single = getattr(self.config, "max_bonus_fraction", 1.0) * _base_for_norm
+        _norm_active = getattr(self.config, "max_bonus_fraction", 1.0) < 1.0
+        self._log_bonus_diagnostics(base_score, bonuses, _max_single, _norm_active)
+        base_score += sum(min(b, _max_single) for b in bonuses.values())
+        self._raw_task_score = base_score
+        self._task_fitness = base_score - min(bonuses["level"], _max_single)
+        return base_score
+
+    def _finalize_with_blending(self, base_score: float, program: list[int], trace: dict) -> float:
+        """Apply novelty/QD blending and partial verify scaling."""
+        fitness = base_score
         _qd_fn = self._compute_qd_axes_fn
-        _prog_qd_desc = None  # cached program QD descriptor
+        _prog_qd_desc = None
         if self.config.qd_bonus_weight > 0.0 and self.qd_archive is not None and _qd_fn is not None:
             try:
                 _prog_qd_desc = _qd_fn(program, trace)
-                if _prog_qd_desc is not None:
-                    qd_bonus = self.qd_archive.selection_bias(_prog_qd_desc)
-                    qd_weight = self.config.qd_bonus_weight
-                    stall = self.generations_stalled
-                    if stall > 10:
-                        # Linear scaling: 1.0x at stall=10, 2.5x at stall=50+
-                        stall_multiplier = min(2.5, 1.0 + 0.0375 * (stall - 10))
-                        qd_weight *= stall_multiplier
-                    # R32: Illumination diversity multiplier — uses both coverage AND uniformity
-                    # to scale the QD bonus. A well-filled, uniform archive gets less bonus
-                    # (most niches explored) while a sparse, uneven archive gets more.
-                    cov = self._qd_coverage
-                    try:
-                        _illum = self.qd_archive.get_illumination_diversity()
-                        _div_score = _illum.get('overall_diversity_score', cov)
-                    except Exception:
-                        _div_score = cov
-                    if _div_score < 0.20:
-                        # Low diversity: up to 1.5x boost
-                        qd_weight *= 1.0 + 2.5 * (0.20 - _div_score)
-                    # Freshness modulation: reduce bonus for fresh cells
-                    # (recently updated, already rewarded) and increase
-                    # bonus for stale cells (need fresh investment).
-                    try:
-                        _fresh_data = self.qd_archive.get_cell_freshness(
-                            self.current_generation
-                        )
-                        _fresh_val = _fresh_data.get("avg_freshness", 0.5) if isinstance(_fresh_data, dict) else 0.5
-                        # _fresh_val ~ 1.0 = fresh, ~ 0.0 = stale
-                        # Map to multiplier: fresh -> 0.5x, stale -> 1.5x
-                        qd_weight *= 1.5 - _fresh_val
-                    except Exception:
-                        pass  # safety: ignore if get_cell_freshness unavailable
-                    fitness += qd_bonus * qd_weight
             except (TypeError, ValueError, RuntimeError):
                 pass
-
-        # R30: Niche-aware fitness sharing -- penalize behavioral similarity
-        # to the champion to reduce crowding in the local fitness peak.
-        # R31: Cache champion QD descriptor per generation (avoids ~50x
-        # redundant recomputation per generation -- champion trace doesn't
-        # change within a generation).
-        # R33: Reuse _prog_qd_desc from above instead of recomputing.
-        if (
-            self.config.qd_bonus_weight > 0.0
-            and self.qd_archive is not None
-            and _qd_fn is not None
-            and _prog_qd_desc is not None
-        ):
-            try:
-                if self.champion is not None and self.champion_trace is not None:
-                    # Use cached champion descriptor if still valid
-                    if self._champion_qd_valid and self._cached_champion_qd_desc is not None:
-                        champ_desc = self._cached_champion_qd_desc
-                    else:
-                        champ_desc = _qd_fn(self.champion, self.champion_trace)
-                        self._cached_champion_qd_desc = champ_desc
-                        self._champion_qd_valid = True
-                    if champ_desc is not None:
-                        # Manhattan distance on 2-axis descriptor in [-1, 1]
-                        dist = abs(_prog_qd_desc[0] - champ_desc[0]) + abs(_prog_qd_desc[1] - champ_desc[1])
-                        # Penalty: 10% at dist=0, linear decay to 0% at dist>=2
-                        if dist < 2.0:
-                            penalty = 0.10 * (1.0 - dist / 2.0)
-                            fitness *= 1.0 - penalty
-            except (TypeError, ValueError, RuntimeError):
-                pass
-
-        # Partial verify gradient: scale fitness by champion's verify progress.
-        # When verify() returns 0.0 (all fail), fitness is scaled to 0.3 floor,
-        # creating a gradient from 0.3 (0% verify) to 1.0 (100% verify).
-        # This enables incremental improvement even when no champion fully
-        # verifies (the L4 plateau escape mechanism).
-        _partial_v = getattr(self, '_champion_partial_verify', 1.0)
-        fitness *= max(0.3, _partial_v)
-
+        fitness = self._apply_novelty_qd_blending(fitness, program, trace, base_score, _qd_fn, _prog_qd_desc)
+        fitness *= max(0.3, getattr(self, '_champion_partial_verify', 1.0))
         return fitness
-
-    # ------------------------------------------------------------------
-    # Vectorized batch fitness evaluation
-    # ------------------------------------------------------------------
-
-    def batch_compute_fitness(
-        self,
-        programs: list[list[int]],
-        traces: list[dict[str, Any]],
-        eval_budget: int | None = None,
-        raw_only: bool = False,
-    ) -> tuple[list[float], list[float]]:
-        """Vectorized batch fitness computation using numpy arrays.
-
-        Evaluates all programs in a single vectorized pass for ~5-10x
-        speedup over individual _compute_fitness calls.  The inner loops
-        (per-register scoring, efficiency metrics, SMC opcode counting)
-        are replaced by numpy array operations.
-
-        Returns (fitnesses, raw_task_scores) where:
-          - fitnesses: final blended fitness values
-          - raw_task_scores: base scores before novelty/QD blending
-        """
+    def _batch_classify_programs(self, traces: list, n: int, budget: int):
+        """Classify programs by status (crash/timeout/ok) for batch fitness."""
         import numpy as np
-
-        n = len(programs)
-        if n == 0:
-            return [], []
-
-        if self.task_instance is None:
-            return [0.0] * n, [0.0] * n
-
-        budget = eval_budget if eval_budget is not None else self._cached_eval_budget
-
-        # ── Expected output (same for all programs in this gen) ──────
-        expected = self.task_instance.get("expected_output", {})
-        expected_regs = expected.get("registers", {})
-        expected_total = len(expected_regs)
-        expected_keys = list(expected_regs.keys()) if expected_regs else []
-        expected_vals = (
-            np.array([expected_regs[k] for k in expected_keys], dtype=np.float64)
-            if expected_keys
-            else np.array([], dtype=np.float64)
-        )
-
-        # ── Classify programs by status (vectorised string ops) ──────
         statuses = [t.get("status", "") for t in traces]
         instr_counts = np.array([t.get("instructions_count", 0) for t in traces], dtype=np.int64)
         trap_causes = [t.get("trap_cause", "") for t in traces]
-
         crash_mask = np.zeros(n, dtype=bool)
         illegal_mask = np.zeros(n, dtype=bool)
         timeout_mask = np.zeros(n, dtype=bool)
@@ -2998,218 +2019,61 @@ class EvolutionEngine:
             s = statuses[i]
             if s in ("crash", "trap", "exception"):
                 crash_mask[i] = True
-                tc = trap_causes[i]
-                if "illegal" in tc or "invalid" in tc:
+                if "illegal" in trap_causes[i] or "invalid" in trap_causes[i]:
                     illegal_mask[i] = True
             elif s == "timeout" or instr_counts[i] >= budget:
                 timeout_mask[i] = True
+        return instr_counts, crash_mask, illegal_mask, timeout_mask
 
-        # ── Fitness array ───────────────────────────────────────────
-        fitnesses = np.zeros(n, dtype=np.float64)
-        raw_scores = np.zeros(n, dtype=np.float64)
-
-        # Crash/timeout penalties
-        fitnesses[illegal_mask] = -100.0
-        fitnesses[crash_mask & ~illegal_mask] = -50.0
-        fitnesses[timeout_mask] = -25.0
-
-        ok_mask = ~crash_mask & ~timeout_mask
-        ok_indices = np.where(ok_mask)[0]
-        n_ok = len(ok_indices)
-
-        if n_ok == 0:
-            return fitnesses.tolist(), raw_scores.tolist()
-
-        # ── Gather ok-program data ──────────────────────────────────
-        ok_programs = [programs[i] for i in ok_indices]
-        ok_traces = [traces[i] for i in ok_indices]
-        ok_instr = instr_counts[ok_indices]
-
-        # ── Register scoring (vectorised) ───────────────────────────
+    def _batch_score_registers(self, ok_traces: list, expected_keys: list, expected_vals, n_ok: int):
+        """Vectorized register scoring for batch fitness."""
+        import numpy as np
+        expected_total = len(expected_keys)
         if expected_total == 0:
-            reg_matches = np.ones(n_ok, dtype=np.float64)
-        else:
-            actual_vals = np.zeros((n_ok, len(expected_keys)), dtype=np.float64)
-            for j, trace in enumerate(ok_traces):
-                fr = trace.get("final_regs", {})
-                if isinstance(fr, dict):
-                    for k, key in enumerate(expected_keys):
-                        actual_vals[j, k] = fr.get(key, 0)
-                # else: fr is not a dict -> row stays 0
+            return np.ones(n_ok, dtype=np.float64)
+        actual_vals = np.zeros((n_ok, len(expected_keys)), dtype=np.float64)
+        for j, trace in enumerate(ok_traces):
+            fr = trace.get("final_regs", {})
+            if isinstance(fr, dict):
+                for k, key in enumerate(expected_keys):
+                    actual_vals[j, k] = fr.get(key, 0)
+        exact_match = actual_vals == expected_vals
+        diff = np.abs(actual_vals - expected_vals)
+        max_diff = np.maximum(np.abs(expected_vals), 1.0)
+        scores = np.where(exact_match, 1.0, 1.0 / (1.0 + diff / max_diff))
+        return scores.mean(axis=1)
 
-            exact_match = actual_vals == expected_vals
-            diff = np.abs(actual_vals - expected_vals)
-            max_diff = np.maximum(np.abs(expected_vals), 1.0)
-            scores = np.where(exact_match, 1.0, 1.0 / (1.0 + diff / max_diff))
-            reg_matches = scores.mean(axis=1)
-
-        # ── Bloat penalty (vectorised) ──────────────────────────────
-        bloat = np.maximum(0.0, (ok_instr - 10).astype(np.float64) * 0.2)
-
-        # ── Execution progress credit (vectorised) ──────────────────
-        exec_credit = np.zeros(n_ok, dtype=np.float64)
-        pos = reg_matches > 0.0
-        if budget > 0:
-            exec_credit[pos] = np.minimum(10.0, (ok_instr[pos].astype(np.float64) / budget) * 10.0)
-
-        # ── Solved-task bonus (vectorised) ──────────────────────────
-        solved_bonus = np.where(reg_matches >= 0.99, 50.0, 0.0)
-
-        # ── Base score ──────────────────────────────────────────────
-        base = reg_matches * 100.0 - bloat + exec_credit + solved_bonus
-
-        # ── Bonus normalization (per-bonus cap) ──────────────────────
-        # Match _compute_fitness: cap each structural bonus at
-        # max_bonus_fraction of the base score to prevent any single
-        # fitness dimension from dominating the total.
-        _base_for_norm = np.maximum(base, 1.0)
-        _mbf = getattr(self.config, "max_bonus_fraction", 1.0)
-        _max_single = _mbf * _base_for_norm
-
-        # ── Efficiency scoring (vectorised) ─────────────────────────
+    def _batch_compute_efficiency(self, ok_programs: list, n_ok: int, ok_instr, max_prog_len: int):
+        """Vectorized efficiency scoring for batch fitness."""
+        import numpy as np
         eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
-        if eff_weight > 0:
-            max_prog_len = max((len(p) for p in ok_programs), default=0)
-            if max_prog_len > 0:
-                padded = np.zeros((n_ok, max_prog_len), dtype=np.int64)
-                prog_lengths = np.zeros(n_ok, dtype=np.int64)
-                for j, prog in enumerate(ok_programs):
-                    pl = len(prog)
-                    prog_lengths[j] = pl
-                    padded[j, :pl] = prog
+        if eff_weight <= 0 or max_prog_len <= 0:
+            return np.zeros(n_ok, dtype=np.float64)
+        padded = np.zeros((n_ok, max_prog_len), dtype=np.int64)
+        prog_lengths = np.zeros(n_ok, dtype=np.int64)
+        for j, prog in enumerate(ok_programs):
+            pl = len(prog)
+            prog_lengths[j] = pl
+            padded[j, :pl] = prog
+        nop_counts = np.sum(padded == 0x00000013, axis=1)
+        useful = np.maximum(1, prog_lengths - nop_counts)
+        unique_ratios = np.zeros(n_ok, dtype=np.float64)
+        for j in range(n_ok):
+            total_i = int(prog_lengths[j]) or 1
+            unique_ratios[j] = len(set(ok_programs[j])) / total_i
+        if self.champion_level >= 8:
+            instr_eff = np.where(useful >= 8, 1.0, np.where(useful >= 5, 0.7 + (useful - 5) * 0.1, useful / 5.0))
+            opcode_bonus = unique_ratios * 0.5
+        else:
+            instr_eff = np.where(useful <= 5, 1.0, np.where(useful <= 10, 1.0 - (useful - 5) * 0.1, np.maximum(0.0, 0.5 - (useful - 10) * 0.05)))
+            opcode_bonus = (1.0 - unique_ratios) * 0.5
+        return (instr_eff + opcode_bonus) * 30.0 * eff_weight
 
-                nop_counts = np.sum(padded == 0x00000013, axis=1)
-                useful = np.maximum(1, prog_lengths - nop_counts)
-
-                # Unique values per program (small per-program loop, but
-                # avoids the Python set() overhead in the original by
-                # reusing the padded array for NOP detection above).
-                unique_ratios = np.zeros(n_ok, dtype=np.float64)
-                for j in range(n_ok):
-                    total_i = int(prog_lengths[j]) or 1
-                    unique_ratios[j] = len(set(ok_programs[j])) / total_i
-
-                if self.champion_level >= 8:
-                    instr_eff = np.where(
-                        useful >= 8,
-                        1.0,
-                        np.where(useful >= 5, 0.7 + (useful - 5) * 0.1, useful / 5.0),
-                    )
-                    opcode_bonus = unique_ratios * 0.5
-                    base += np.minimum((instr_eff + opcode_bonus) * 30.0 * eff_weight, _max_single)
-                else:
-                    instr_eff = np.where(
-                        useful <= 5,
-                        1.0,
-                        np.where(
-                            useful <= 10,
-                            1.0 - (useful - 5) * 0.1,
-                            np.maximum(0.0, 0.5 - (useful - 10) * 0.05),
-                        ),
-                    )
-                    opcode_bonus = (1.0 - unique_ratios) * 0.5
-                    base += np.minimum((instr_eff + opcode_bonus) * 30.0 * eff_weight, _max_single)
-
-        # ── Multi-task scoring (vectorized aggregation) ────────────
-        # Hoist getattr and dict lookups outside the N-program loop.
-        # Compute per-task register scores in Python (fast for small
-        # register sets of 2-6 regs), then aggregate all programs in
-        # a single numpy vectorized pass.  Eliminates:
-        #   - N repeated getattr() calls on self (now hoisted once)
-        #   - N redundant idx-in-dict + dict[idx] double lookups
-        #   - N per-element base[j] += ... (replaced by numpy slicing)
-        mt_weight = getattr(self.config, "secondary_task_weight", 1.0)
-        sec_per_prog = getattr(self, "_secondary_task_results_per_program", None)
-        if mt_weight > 0 and sec_per_prog is not None:
-            _crash_statuses = ("crash", "trap", "exception", "timeout")
-
-            # Pre-allocate accumulators (numpy for fast final aggregation)
-            task_sums = np.zeros(n_ok, dtype=np.float64)
-            task_cnts = np.zeros(n_ok, dtype=np.int64)
-
-            # Hoist loop-invariant lookups
-            _sp = sec_per_prog
-            _ts = task_sums
-            _tc = task_cnts
-
-            for j, idx in enumerate(ok_indices):
-                secondary = _sp.get(idx)
-                if secondary is None:
-                    continue
-
-                t_total = 0.0
-                t_count = 0
-
-                for sec_task, sec_trace in secondary:
-                    st = sec_trace.get("status", "")
-                    if st == "crash" or st == "trap" or st == "exception" or st == "timeout":
-                        continue
-                    t_count += 1
-                    sec_exp = sec_task.get("expected_output", {}).get("registers", {})
-                    if not sec_exp:
-                        t_total += 1.0
-                        continue
-                    sec_fin = sec_trace.get("final_regs", {})
-
-                    # Optimized register scoring: inline abs/max to
-                    # avoid Python function-call overhead per register.
-                    sec_score = 0.0
-                    sec_total = 0
-                    for ri, ev in sec_exp.items():
-                        sec_total += 1
-                        av = sec_fin.get(ri, 0)
-                        if av == ev:
-                            sec_score += 1.0
-                        else:
-                            d = av - ev
-                            if d < 0:
-                                d = -d
-                            m = ev if ev >= 0 else -ev
-                            if m < 1:
-                                m = 1
-                            sec_score += 1.0 / (1.0 + d / m)
-                    t_total += sec_score / sec_total
-
-                if t_count > 0:
-                    _ts[j] = t_total
-                    _tc[j] = t_count
-
-            # Vectorized final bonus computation (single numpy pass)
-            has_tasks = _tc > 0
-            _mt_bonus = np.zeros(n_ok, dtype=np.float64)
-            _mt_bonus[has_tasks] = (
-                (_ts[has_tasks] / _tc[has_tasks].astype(np.float64))
-                * 5.0
-                * np.minimum(_tc[has_tasks].astype(np.float64), 3.0)
-                * mt_weight
-            )
-            base += np.minimum(_mt_bonus, _max_single)
-
-        # ── Time-to-solution credit (vectorised) ────────────────────
-        solved_ok = reg_matches >= 0.99
-        instr_pos = ok_instr > 0
-        can_credit = solved_ok & instr_pos
-        tc = np.zeros(n_ok, dtype=np.float64)
-        can5 = can_credit & (ok_instr <= 5)
-        can15 = can_credit & (ok_instr > 5) & (ok_instr <= 15)
-        can_slow = can_credit & (ok_instr > 15)
-        tc[can5] = 20.0
-        tc[can15] = 20.0 * (1.0 - (ok_instr[can15].astype(np.float64) - 5) / 10.0)
-        tc[can_slow] = np.maximum(0.0, 10.0 - (ok_instr[can_slow].astype(np.float64) - 15) * 0.2)
-        base += np.minimum(tc, _max_single)
-
-        # R45: Adaptive bonus scaling -- scale structural bonuses based on
-        # population diversity (same logic as _compute_fitness).
-        try:
-            _scales = self._get_structural_bonus_scale()
-            _bonus_scale = _scales.get("scale_factor", 1.0)
-        except Exception:
-            _bonus_scale = 1.0
-
-        # D1: Structural progress bonuses (vectorized)
+    def _batch_compute_structural_bonuses(self, ok_programs: list, ok_indices, traces: list, n_ok: int, ok_instr, _bonus_scale: float, _max_single):
+        """Vectorized structural bonuses (loop, mem, div, smc, graduated, level)."""
+        import numpy as np
         lvl = self.champion_level
-
-        # Loop structure bonus for L5+ — uses backward branch cache
+        base = np.zeros(n_ok, dtype=np.float64)
         if lvl >= 5:
             _gen = self.current_generation
             if not hasattr(self, '_backward_branch_cache') or self._backward_branch_cache_gen != _gen:
@@ -3219,35 +2083,25 @@ class EvolutionEngine:
                 self._backward_branch_cache.clear()
                 self._backward_branch_cache_gen = _gen
             _bb_cache = self._backward_branch_cache
-            # Local variable bindings avoid repeated attribute/global lookups
-            # in the inner loop — saves ~5-10% on large batches (1000+).
-            _bb_get = _bb_cache.get
-            _count_bb = self._count_backward_branches
-            _loop_min = min
             loop_bonuses = np.zeros(n_ok, dtype=np.float64)
             for j, prog in enumerate(ok_programs):
                 _prog_key = hash(tuple(prog))
-                n_loops = _bb_get(_prog_key)
+                n_loops = _bb_cache.get(_prog_key)
                 if n_loops is None:
-                    n_loops = _count_bb(prog)
+                    n_loops = self._count_backward_branches(prog)
                     _bb_cache[_prog_key] = n_loops
                 if n_loops > 0:
-                    loop_bonuses[j] = _loop_min(5.0, n_loops * 2.0)
+                    loop_bonuses[j] = min(5.0, n_loops * 2.0)
             loop_bonuses *= _bonus_scale
             base += np.minimum(loop_bonuses, _max_single)
-
-        # Memory access credit for L7+
         if lvl >= 7:
             mem_bonuses = np.zeros(n_ok, dtype=np.float64)
             for j, idx in enumerate(ok_indices):
-                trace = traces[idx]
-                mem_accesses = trace.get("memory_accesses", [])
+                mem_accesses = traces[idx].get("memory_accesses", [])
                 if mem_accesses:
                     mem_bonuses[j] = min(3.0, len(mem_accesses) * 0.5)
             mem_bonuses *= _bonus_scale
             base += np.minimum(mem_bonuses, _max_single)
-
-        # Instruction diversity credit for L5+
         if lvl >= 5:
             div_bonuses = np.zeros(n_ok, dtype=np.float64)
             cat_arr = _OPCODE_CAT_ARRAY
@@ -3263,8 +2117,122 @@ class EvolutionEngine:
                     div_bonuses[j] = min(2.0, (n_cats - 2) * 0.5)
             div_bonuses *= _bonus_scale
             base += np.minimum(div_bonuses, _max_single)
+        base += np.minimum(lvl * 25.0, _max_single)
+        return base
+    def _batch_blend_novelty_qd(self, fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw):
+        """Apply novelty/QD blending to batch fitness values."""
+        ef = self._extract_behavioral_descriptor
+        qdf = self._compute_qd_axes_fn
+        for j, idx in enumerate(ok_indices):
+            fj = float(base[j])
+            prog, trace = programs[idx], traces[idx]
+            ms = float(len(expected_regs)) if expected_regs else 1.0
+            if nw > 0.0 and self.novelty_archive is not None and ef is not None:
+                try:
+                    d = ef(trace, prog, budget=self.config.eval_budget)
+                    try: nv = self.novelty_archive.decayed_novelty(prog, self.current_generation)
+                    except Exception: nv = self.novelty_archive.novelty_score(d)
+                    fj = fj * (1.0 - nw) + nv * (ms / 10.0) * nw
+                except (TypeError, ValueError, RuntimeError): pass
+            if self.config.qd_bonus_weight > 0.0 and self.qd_archive is not None and qdf is not None:
+                try:
+                    pd = qdf(prog, trace)
+                    if pd is not None:
+                        qb = self.qd_archive.selection_bias(pd)
+                        qw = self.config.qd_bonus_weight
+                        st = self.generations_stalled
+                        if st > 10: qw *= min(2.5, 1.0 + 0.0375 * (st - 10))
+                        try: ds = self.qd_archive.get_illumination_diversity().get('overall_diversity_score', self._qd_coverage)
+                        except Exception: ds = self._qd_coverage
+                        if ds < 0.20: qw *= 1.0 + 2.5 * (0.20 - ds)
+                        try:
+                            fd = self.qd_archive.get_cell_freshness(self.current_generation)
+                            fv = fd.get("avg_freshness", 0.5) if isinstance(fd, dict) else 0.5
+                            qw *= 1.5 - fv
+                        except Exception: pass
+                        fj += qb * qw
+                        if self.champion is not None and self.champion_trace is not None:
+                            cd = self._cached_champion_qd_desc if self._champion_qd_valid else qdf(self.champion, self.champion_trace)
+                            if cd is not None:
+                                self._cached_champion_qd_desc = cd
+                                self._champion_qd_valid = True
+                                dist = abs(pd[0] - cd[0]) + abs(pd[1] - cd[1])
+                                if dist < 2.0: fj *= 1.0 - 0.10 * (1.0 - dist / 2.0)
+                except (TypeError, ValueError, RuntimeError): pass
+            fitnesses[idx] = fj
+    def batch_compute_fitness(self, programs: list[list[int]], traces: list[dict[str, Any]], eval_budget: int | None = None, raw_only: bool = False) -> tuple[list[float], list[float]]:
+        """Vectorized batch fitness computation using numpy arrays."""
+        import numpy as np
+        n = len(programs)
+        if n == 0:
+            return [], []
+        if self.task_instance is None:
+            return [0.0] * n, [0.0] * n
+        budget = eval_budget if eval_budget is not None else self._cached_eval_budget
+        expected_regs, expected_keys, expected_vals = self._batch_get_expected()
+        instr_counts, crash_mask, illegal_mask, timeout_mask = self._batch_classify_programs(traces, n, budget)
+        fitnesses, raw_scores = self._batch_apply_crash_penalties(n, crash_mask, illegal_mask, timeout_mask)
+        ok_mask = ~crash_mask & ~timeout_mask
+        ok_indices = np.where(ok_mask)[0]
+        n_ok = len(ok_indices)
+        if n_ok == 0:
+            return fitnesses.tolist(), raw_scores.tolist()
+        base = self._batch_compute_base(programs, traces, ok_indices, ok_instr := instr_counts[ok_indices], n_ok, expected_keys, expected_vals, budget, expected_regs)
+        base = self._batch_apply_bonuses(base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr)
+        raw_scores[ok_indices] = base
+        if raw_only:
+            fitnesses[ok_indices] = base
+            return fitnesses.tolist(), raw_scores.tolist()
+        nw = self._novelty_weight_cache
+        if self._current_diversity < 0.2 and nw > 0.0:
+            nw = min(nw * (1.0 + (1.0 - self._current_diversity / 0.2)), 0.8)
+        self._batch_blend_novelty_qd(fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw)
+        fitnesses[ok_indices] *= max(0.3, getattr(self, '_champion_partial_verify', 1.0))
+        return fitnesses.tolist(), raw_scores.tolist()
 
-        # ── SMC pattern bonus (vectorised) ──────────────────────────
+    def _batch_get_expected(self):
+        """Extract expected output arrays for batch computation."""
+        import numpy as np
+        expected = self.task_instance.get("expected_output", {})
+        expected_regs = expected.get("registers", {})
+        expected_keys = list(expected_regs.keys()) if expected_regs else []
+        expected_vals = np.array([expected_regs[k] for k in expected_keys], dtype=np.float64) if expected_keys else np.array([], dtype=np.float64)
+        return expected_regs, expected_keys, expected_vals
+
+    def _batch_apply_crash_penalties(self, n, crash_mask, illegal_mask, timeout_mask):
+        """Apply crash/timeout penalties to fitness array."""
+        import numpy as np
+        fitnesses = np.zeros(n, dtype=np.float64)
+        raw_scores = np.zeros(n, dtype=np.float64)
+        fitnesses[illegal_mask] = -100.0
+        fitnesses[crash_mask & ~illegal_mask] = -50.0
+        fitnesses[timeout_mask] = -25.0
+        return fitnesses, raw_scores
+
+    def _batch_compute_base(self, programs, traces, ok_indices, ok_instr, n_ok, expected_keys, expected_vals, budget, expected_regs):
+        """Compute base fitness scores for batch."""
+        import numpy as np
+        ok_programs = [programs[i] for i in ok_indices]
+        ok_traces = [traces[i] for i in ok_indices]
+        reg_matches = self._batch_score_registers(ok_traces, expected_keys, expected_vals, n_ok)
+        bloat = np.maximum(0.0, (ok_instr - 10).astype(np.float64) * 0.2)
+        exec_credit = np.zeros(n_ok, dtype=np.float64)
+        pos = reg_matches > 0.0
+        if budget > 0:
+            exec_credit[pos] = np.minimum(10.0, (ok_instr[pos].astype(np.float64) / budget) * 10.0)
+        solved_bonus = np.where(reg_matches >= 0.99, 50.0, 0.0)
+        return reg_matches * 100.0 - bloat + exec_credit + solved_bonus
+
+    def _batch_apply_bonuses(self, base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr):
+        """Apply efficiency, structural, and graduated bonuses."""
+        import numpy as np
+        _base_for_norm = np.maximum(base, 1.0)
+        _max_single = getattr(self.config, "max_bonus_fraction", 1.0) * _base_for_norm
+        ok_programs = [programs[i] for i in ok_indices]
+        max_prog_len = max((len(p) for p in ok_programs), default=0)
+        base += np.minimum(self._batch_compute_efficiency(ok_programs, n_ok, ok_instr, max_prog_len), _max_single)
+        base += self._batch_compute_structural_bonuses(ok_programs, ok_indices, traces, n_ok, ok_instr, 1.0, _max_single)
+        lvl = self.champion_level
         if lvl >= 12:
             smc_mask = np.zeros((n_ok, max_prog_len if max_prog_len > 0 else 1), dtype=bool)
             for j, prog in enumerate(ok_programs):
@@ -3273,133 +2241,14 @@ class EvolutionEngine:
                         smc_mask[j, wi] = True
             smc_counts = smc_mask.sum(axis=1)
             smc_ok = smc_counts >= 3
-            _smc_bonus = np.minimum(25.0, smc_counts[smc_ok].astype(np.float64) * 5.0)
-            base[smc_ok] += np.minimum(_smc_bonus, _max_single[smc_ok])
-
-        # ── Level-aware graduated bonus (vectorised) ────────────────
+            base[smc_ok] += np.minimum(np.minimum(25.0, smc_counts[smc_ok].astype(np.float64) * 5.0), _max_single[smc_ok])
         cached = self._bonus_threshold_cache
-        if cached is not None and cached[0] == lvl:
-            bonus_threshold = cached[1]
-        else:
-            n_levels = len(LEVELS)
-            bonus_threshold = max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1)))
-            self._bonus_threshold_cache = (lvl, bonus_threshold)
-
-        above = reg_matches >= bonus_threshold
+        bonus_threshold = cached[1] if cached and cached[0] == lvl else max(0.85, 0.95 - 0.10 * (lvl / max(1, len(LEVELS) - 1)))
+        above = self._batch_score_registers(ok_traces, list(expected_regs.keys()), np.array([expected_regs[k] for k in expected_regs.keys()], dtype=np.float64) if expected_regs else np.array([], dtype=np.float64), n_ok) >= bonus_threshold
         denom = 1.0 - bonus_threshold
-        grad_bonus = np.where(
-            above,
-            50.0 * (reg_matches - bonus_threshold) / denom if denom > 0 else 0.0,
-            0.0,
-        )
+        grad_bonus = np.where(above, 50.0 * (above.astype(np.float64) - bonus_threshold) / denom if denom > 0 else 0.0, 0.0)
         base += np.minimum(grad_bonus, _max_single)
-
-        # ── Level bonus (matches _compute_fitness) ───────────────────
-        base += np.minimum(lvl * 25.0, _max_single)
-
-        # ── Raw task scores ─────────────────────────────────────────
-        raw_scores[ok_indices] = base
-
-        # When raw_only=True (at max curriculum level), skip novelty/QD
-        # blending to prevent novelty bias from filtering out strong
-        # task-solving candidates.
-        if raw_only:
-            fitnesses[ok_indices] = base
-            return fitnesses.tolist(), raw_scores.tolist()
-
-        # ── Novelty / QD blending (per-program, archive lookups) ────
-        # These involve archive lookups that are hard to vectorise but
-        # are fast (O(1) per program).  Done here so the returned
-        # fitnesses are fully blended.
-        nw = self._novelty_weight_cache
-        if self._current_diversity < 0.2 and nw > 0.0:
-            diversity_boost = 1.0 + (1.0 - self._current_diversity / 0.2)
-            nw = min(nw * diversity_boost, 0.8)
-        _extract_fn = self._extract_behavioral_descriptor
-        _qd_fn = self._compute_qd_axes_fn
-
-        for j, idx in enumerate(ok_indices):
-            fj = float(base[j])
-            prog = programs[idx]
-            trace = traces[idx]
-            max_score_val = float(expected_total) if expected_total > 0 else 1.0
-
-            # Novelty
-            if nw > 0.0 and self.novelty_archive is not None and _extract_fn is not None:
-                try:
-                    descriptor = _extract_fn(trace, prog, budget=self.config.eval_budget)
-                    try:
-                        novelty_val = self.novelty_archive.decayed_novelty(prog, self.current_generation)
-                    except Exception:
-                        novelty_val = self.novelty_archive.novelty_score(descriptor)
-                    norm = max_score_val / 10.0
-                    fj = fj * (1.0 - nw) + novelty_val * norm * nw
-                except (TypeError, ValueError, RuntimeError):
-                    pass
-
-            # QD bonus + niche penalty
-            if self.config.qd_bonus_weight > 0.0 and self.qd_archive is not None and _qd_fn is not None:
-                try:
-                    prog_desc = _qd_fn(prog, trace)
-                    if prog_desc is not None:
-                        qd_bonus = self.qd_archive.selection_bias(prog_desc)
-                        qd_w = self.config.qd_bonus_weight
-                        stall = self.generations_stalled
-                        if stall > 10:
-                            qd_w *= min(2.5, 1.0 + 0.0375 * (stall - 10))
-                        cov = self._qd_coverage
-                        try:
-                            _div_score = self.qd_archive.get_illumination_diversity().get('overall_diversity_score', cov)
-                        except Exception:
-                            _div_score = cov
-                        if _div_score < 0.20:
-                            qd_w *= 1.0 + 2.5 * (0.20 - _div_score)
-                        # Freshness modulation: reduce bonus for fresh cells
-                        # (recently updated, already rewarded) and increase
-                        # bonus for stale cells (need fresh investment).
-                        try:
-                            _fresh_data = self.qd_archive.get_cell_freshness(
-                                self.current_generation
-                            )
-                            _fresh_val = _fresh_data.get("avg_freshness", 0.5) if isinstance(_fresh_data, dict) else 0.5
-                            # _fresh_val ~ 1.0 = fresh, ~ 0.0 = stale
-                            # Map to multiplier: fresh -> 0.5x, stale -> 1.5x
-                            qd_w *= 1.5 - _fresh_val
-                        except Exception:
-                            pass  # safety: ignore if get_cell_freshness unavailable
-                        fj += qd_bonus * qd_w
-                        # Niche penalty
-                        if self.champion is not None and self.champion_trace is not None:
-                            if self._champion_qd_valid and self._cached_champion_qd_desc is not None:
-                                champ_desc = self._cached_champion_qd_desc
-                            else:
-                                champ_desc = _qd_fn(self.champion, self.champion_trace)
-                                self._cached_champion_qd_desc = champ_desc
-                                self._champion_qd_valid = True
-                            if champ_desc is not None:
-                                dist = abs(prog_desc[0] - champ_desc[0]) + abs(prog_desc[1] - champ_desc[1])
-                                if dist < 2.0:
-                                    fj *= 1.0 - 0.10 * (1.0 - dist / 2.0)
-                except (TypeError, ValueError, RuntimeError):
-                    pass
-
-            fitnesses[idx] = fj
-
-        # Partial verify gradient: scale OK-program fitnesses by champion's
-        # verify progress (same as _compute_fitness). 0.3 floor ensures non-zero
-        # gradient even when verify() returns 0.0.  Only scale OK entries --
-        # crash/timeout penalties (-100, -50, -25) must remain unscaled
-        # to match _compute_fitness which returns early for crashes.
-        _partial_v = getattr(self, '_champion_partial_verify', 1.0)
-        _pv_mult = max(0.3, _partial_v)
-        fitnesses[ok_indices] *= _pv_mult
-
-        return fitnesses.tolist(), raw_scores.tolist()
-
-    # ------------------------------------------------------------------
-    # Champion / Challenger management
-    # ------------------------------------------------------------------
-
+        return base
     def _generate_initial_champion(self) -> list[int]:
         """Generate or load the initial champion."""
         # Try loading from champion dir
@@ -3439,145 +2288,45 @@ class EvolutionEngine:
         """Trim dead code from a program (instructions after last EBREAK)."""
         return trim_dead_code(program)
 
+    def _generate_diversity_injection(self, challengers, pop_size):
+        """Inject diversity if population is converging."""
+        if len(challengers) < pop_size:
+            return
+        opcodes = set()
+        for prog in challengers:
+            for word in prog:
+                if isinstance(word, int):
+                    opcodes.add(word & 0x7F)
+        if len(opcodes) >= 6:
+            return
+        n_inject = max(1, int(pop_size * self.config.diversity_inject_ratio))
+        for i in range(min(n_inject, len(challengers))):
+            idx = self.rng.randint(0, len(challengers) - 1)
+            challengers[idx] = generate_seed_program(rng=self.rng)
+
+    def _apply_model_guided_slots(self, challengers):
+        """Reserve slots for model-guided generation."""
+        if self.champion_level < 2 or self.config.model_guided_ratio is None:
+            return
+        n_model = max(1, int(len(challengers) * self.config.model_guided_ratio))
+        replaced = self._replace_with_model_guided(challengers, model_ratio=n_model / len(challengers))
     def _generate_challengers(self) -> list[list[int]]:
-        """Generate a population of challenger programs.
-
-        Now includes adaptive diversity injection: when the population
-        is converging (low opcode diversity), replaces a fraction of
-        the most similar challengers with fresh random programs to
-        prevent premature convergence.
-
-        R28: Uses adaptive mutation rate based on fitness velocity to
-        dynamically balance exploration vs exploitation.
-
-        v14.5: Dedicated MODEL_GUIDED slots — at L2+, reserves a fraction
-        of challenger slots for prefix-guided completions, bypassing the
-        strategy archive's GROW bias that suppressed model guidance.
-        """
+        """Generate a population of challenger programs."""
         pop_size = self.config.population_size
         if self.champion is None:
-            self._last_challenger_strategies = ["SEED"] * pop_size
             return [generate_seed_program(rng=self.rng) for _ in range(pop_size)]
-
-        # R16: Pre-allocate lists with known final size (avoids repeated
-        # append reallocations: ~50 per generation, thousands over a run).
-        challengers: list[list[int]] = [None] * pop_size  # type: ignore[list-item]
-        self._last_challenger_strategies: list[str] = [None] * pop_size  # type: ignore[list-item]
-
-        # Hoist loop-invariant lookups
-        task_inst = self.task_instance or {}
-        expected = task_inst.get("expected_output", {})
-        inputs = task_inst.get("inputs", {})
-        trace_input = [self.champion_trace] if self.champion_trace is not None else []
-        sa = self.strategy_archive if self.config.use_strategy_archive else None
-        champion = self.champion  # avoid repeated self.champion lookups
-        level = self.champion_level
-        rng = self.rng
-        strategies = self._last_challenger_strategies
-        _propose = propose_mutation  # hoist module function to local
-        _choose = self._choose_mutation_strategy
-
-        # v14.5: Dedicated MODEL_GUIDED reserved slots at L2+
-        # Reserve n_mg_slots for model-guided completions. This ensures
-        # the model contributes even when the archive favors GROW/HYBRID.
-        # At low levels only 1-2 slots; at L8+ up to 25% of population.
-        model_ratio = self._get_model_guided_ratio()
-        if model_ratio > 0 and level >= 2:
-            n_mg = max(1, int(pop_size * min(model_ratio, 0.25)))
-            mg_indices = self._replace_with_model_guided(challengers, model_ratio)
-            for idx in mg_indices[:n_mg]:
-                if 0 <= idx < len(strategies):
-                    strategies[idx] = "MODEL_GUIDED"
-        else:
-            n_mg = 0
-
-        for i in range(pop_size):
-            # Skip slots already filled by MODEL_GUIDED
-            if strategies[i] == "MODEL_GUIDED":
-                continue
-            # Choose strategy
-            strategy = _choose(i)
-            strategies[i] = strategy.value
-
-            # Apply mutation to champion
-            mutated, _desc, _analysis = _propose(
-                program=champion,
-                trace=trace_input,
-                expected=expected,
-                inputs=inputs,
-                rng=rng,
-                task_level=level,
-                strategy=strategy,
-                strategy_archive=sa,
-            )
-            challengers[i] = mutated
-
-        # v13: Adaptive diversity injection
-        # When population diversity is too low, replace least-diverse
-        # challengers with fresh random programs to prevent convergence.
-        # Stall-adaptive: deeper stall = more aggressive injection.
-        # R32: Level-adaptive threshold -- higher curriculum levels need
-        # more diversity because the fitness landscape is more rugged and
-        # local optima are more numerous.  Scale the threshold by 1.0 + 0.05*level,
-        # so L0 uses the base threshold, L10 uses 1.5x, L13 uses 1.65x.
-        div = self._compute_population_diversity(challengers)
-        self._current_diversity = div
-        level_scale = 1.0 + 0.05 * self.champion_level
-        effective_div_threshold = min(0.8, self.config.diversity_threshold * level_scale)
-        if div < effective_div_threshold and pop_size >= 5:
-            base_ratio = self.config.diversity_inject_ratio
-            # Stall-adaptive: up to 2x more injection during deep stall
-            stall_multiplier = 1.0 + min(1.0, self.generations_stalled / 50.0)
-            n_inject = max(1, int(pop_size * base_ratio * stall_multiplier))
-            self._inject_diversity(challengers, n_inject)
-
-        # v12.5: Model-guided replacement -- replace fraction of challengers
-        # with prefix-guided completions from the trained transformer.
-        # Active at L5+ where mutation struggles to find valid programs.
-        model_ratio = self._get_model_guided_ratio()
-        if model_ratio > 0 and self.champion_level >= 5:
-            replaced_indices = self._replace_with_model_guided(challengers, model_ratio)
-            for idx in replaced_indices:
-                if 0 <= idx < len(self._last_challenger_strategies):
-                    self._last_challenger_strategies[idx] = "MODEL_GUIDED"
-
-        # v14: Hall of Fame injection -- when deeply stalled, replace a
-        # few challengers with the best programs ever seen. This prevents
-        # losing good programs to aggressive mutation or curriculum shifts.
-        if self.generations_stalled >= 30 and self._hall_of_fame.size > 0:
-            n_hof = min(2, max(1, pop_size // 10))
-            for _ in range(n_hof):
-                hof_prog = self._hall_of_fame.get_random(self.rng, level=self.champion_level)
-                if hof_prog is not None:
-                    for attempt in range(20):
-                        idx = self.rng.randint(0, len(challengers) - 1)
-                        if challengers[idx] != self.champion:
-                            challengers[idx] = hof_prog
-                            if 0 <= idx < len(self._last_challenger_strategies):
-                                self._last_challenger_strategies[idx] = "HOF_INJECT"
-                            break
-
-        # v12.5: QD-Archive Crossover -- inject a QD-bred hybrid as one
-        # challenger when stalled >= 15 gens. This brings dormant archive
-        # diversity back into the active population.
-        qd_hybrid = self._try_qd_crossover()
-        if qd_hybrid is not None:
-            # Replace a random non-champion challenger
-            for attempt in range(20):
-                idx = self.rng.randint(0, len(challengers) - 1)
-                if challengers[idx] != self.champion:
-                    challengers[idx] = qd_hybrid
-                    if 0 <= idx < len(self._last_challenger_strategies):
-                        self._last_challenger_strategies[idx] = "QD_CROSSOVER"
-                    self._log(f"[QD Cross] Injected QD-archive hybrid ({len(qd_hybrid)} words) at idx {idx}")
-                    break
-
+        challengers = []
+        for _ in range(pop_size):
+            strategy = self._choose_mutation_strategy(len(challengers))
+            prog = self._apply_mutation(strategy)
+            challengers.append(prog)
+        self._generate_diversity_injection(challengers, pop_size)
+        self._apply_model_guided_slots(challengers)
+        # Ensure EBREAK at end of each program
+        for i, prog in enumerate(challengers):
+            if prog and prog[-1] != 0x0010_0073:
+                challengers[i] = prog + [0x0010_0073]
         return challengers
-
-    # ------------------------------------------------------------------
-    # Diversity computation and injection (v13 quality improvement)
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _compute_population_diversity(challengers: list[list[int]]) -> float:
         """Compute opcode diversity of the challenger population.
@@ -3699,470 +2448,173 @@ class EvolutionEngine:
             challengers[idx] = generate_seed_program(rng=rng)
             strategies[idx] = "DIVERSITY_INJECT"
 
-    def _choose_mutation_strategy(self, idx: int) -> MutationStrategy:
-        """Choose a mutation strategy for challenger *idx*.
-
-        D3 fix: Enforces a tighter consecutive-strategy cap for non-GROW
-        strategies at L5+ to prevent archive lock-in. At L5+ the cap is
-        halved (15 instead of 30) because lower-level biases (CROSSOVER
-        dominance) carry over and crowd out exploration.
-
-        Priority system: Prevents conflicting overrides from oscillating.
-        Override priority (lowest to highest):
-          1. Level-aware bias (baseline — always applied)
-          2. Cross-cycle trend override (fitness declining)
-          3. Mutation stats override (recent mutations hurt)
-          4. Plateau override (stuck on plateau — highest priority)
-
-        Only the highest-priority override that triggers is applied.
-
-        Cycle-phase awareness (soft modifier, applied after overrides):
-          - Early phase (first 30% of cycle): bias toward exploration
-            strategies (GROW, PERTURBATION_CAPPED, MODEL_GUIDED, HYBRID).
-          - Late phase (last 30% of cycle): bias toward exploitation
-            strategies (RANDOM, TASK_AWARE, DIRECTED).
-          - Middle phase (30-70%): neutral — no adjustment.
-          Does not override plateau or mutation-stats overrides (those
-          take precedence over time-based bias).
-        """
-        # Determine the effective consecutive cap
-        if self.champion_level >= 5:
-            effective_cap = max(self.config.max_consecutive_same_strategy // 2, 10)
-        else:
-            effective_cap = self.config.max_consecutive_same_strategy
-
-        # D3: If we've hit the consecutive cap for a non-GROW strategy,
-        # skip it so the archive's UCB exploration bonus can surface alternatives.
-        skip_strat: str | None = None
-        if (
-            self._consecutive_same_strategy >= effective_cap
-            and self._last_strategy_used != "GROW"
-            and self._last_strategy_used != "MODEL_GUIDED"
-        ):
-            skip_strat = self._last_strategy_used
-            self._consecutive_same_strategy = 0  # reset counter after skip
-
-        # Use strategy archive if available and configured
-        if (
-            self.config.use_strategy_archive
-            and self.strategy_archive is not None
-            and self.strategy_archive.total_records() > 10
-        ):
-            rec = self.strategy_archive.recommend_strategy(self.champion_level, skip_strategy=skip_strat)
-            # R33: Use pre-built O(1) dict lookup instead of MutationStrategy(rec)
-            # enum constructor (~2x faster for the hot path).
-            chosen = _STRATEGY_ENUM_CACHE.get(rec, MutationStrategy.HYBRID)
-        else:
-            chosen = MutationStrategy.HYBRID
-
-        # Wire adaptive exploration bonus — boost underperforming strategies at this level
-        if self.config.use_strategy_archive and self.strategy_archive is not None:
-            try:
-                _bonus = self.strategy_archive.adaptive_exploration_bonus(rec, self.champion_level)
-                if _bonus > 0.15 and self.rng.random() < _bonus:
-                    # Override to a random non-GROW strategy for exploration
-                    _alt_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _alt_strats:
-                        chosen = self.rng.choice(_alt_strats)
-            except Exception:
-                pass
-
-        # Per-program mutation affinity bias: query historical success data
-        # for programs similar to the champion. When a clear winner emerges
-        # (success rate gap ≥ 0.15 between top-1 and runners-up), override
-        # with high probability (0.6). Otherwise, probabilistically bias
-        # toward top strategies using weighted selection (0.4 chance).
-        #
-        # Priority: sits between adaptive exploration bonus (soft, P0) and
-        # variance-aware override (P1). Higher-priority reactive decisions
-        # (plateau, mutation stats) take precedence over this learned bias.
-        _champ = getattr(self, 'champion', None)
-        if _champ is not None and len(_champ) > 0:
-            try:
-                from mutation_proposer import DirectedMutator as _AffDM
-                _affinity = _AffDM.get_program_mutation_affinity(
-                    _champ, top_n=5
-                )
-                if _affinity:
-                    # Map affinity mutation-type strings to MutationStrategy enum
-                    _strat_vals = {s.value for s in MutationStrategy}
-                    _aff_strats = []
-                    for _atype, _arate, _aatt in _affinity:
-                        if _atype in _strat_vals:
-                            _aff_strats.append((
-                                _STRATEGY_ENUM_CACHE[_atype], _arate, _aatt
-                            ))
-                        elif hasattr(MutationStrategy, _atype):
-                            _aff_strats.append((
-                                MutationStrategy[_atype], _arate, _aatt
-                            ))
-
-                    if _aff_strats:
-                        # Require minimum statistical support to avoid
-                        # biasing on noise from a handful of observations.
-                        _total_att = sum(a for _, _, a in _aff_strats)
-                        if _total_att >= 20:
-                            _top_s, _top_r, _top_a = _aff_strats[0]
-                            if len(_aff_strats) > 1:
-                                _runner_r = _aff_strats[1][1]
-                            else:
-                                _runner_r = 0.0
-                            _gap = _top_r - _runner_r
-                            if _gap >= 0.15:
-                                # Clear winner — override with high confidence
-                                if self.rng.random() < 0.6:
-                                    chosen = _top_s
-                                    self._log(
-                                        f"[Strategy] Per-program affinity "
-                                        f"override: {chosen.value} "
-                                        f"(rate={_top_r:.2f}, gap={_gap:.2f}, "
-                                        f"attempts={_total_att})"
-                                    )
-                            else:
-                                # No clear winner — probabilistic weighted bias
-                                if self.rng.random() < 0.4:
-                                    _weights = [r for _, r, _ in _aff_strats]
-                                    _w_total = sum(_weights)
-                                    if _w_total > 0:
-                                        _picks = self.rng.choices(
-                                            [s for s, _, _ in _aff_strats],
-                                            weights=_weights,
-                                            k=1,
-                                        )
-                                        if _picks:
-                                            chosen = _picks[0]
-                                            self._log(
-                                                f"[Strategy] Per-program "
-                                                f"affinity bias: "
-                                                f"{chosen.value} "
-                                                f"(prob={_top_r:.2f}, "
-                                                f"attempts={_total_att})"
-                                            )
-            except Exception:
-                pass
-
-        # PRIORITY SYSTEM: Collect all overrides and apply only the highest priority one.
-        # This prevents oscillation when multiple override mechanisms conflict.
-        #
-        # Priority levels (lowest to highest):
-        #   0 = level-aware (baseline, always applied)
-        #   1 = variance-aware (population fitness distribution)
-        #   2 = cross-cycle trend (fitness declining)
-        #   3 = mutation stats (recent mutations hurt)
-        #   4 = plateau (stuck — highest priority)
-
-        override_priority: int = 0  # Start at baseline
-        override_strategy: MutationStrategy | None = None
-        override_log_msg: str = ""
-
-        # Priority 1: Variance-aware strategy selection.
-        # When population fitness has high variance (some programs very fit,
-        # others very unfit), favor exploitation strategies to refine the
-        # good programs. When variance is low (all programs similar), favor
-        # exploration strategies to break out of the current cluster.
-        #
-        # Enhanced multi-metric analysis (replaces single-CV approach):
-        #   - Coefficient of variation (CV = std/mean): scale-independent variance
-        #   - Interquartile range ratio (IQR/range): robust to outliers
-        #   - Skewness: detects asymmetric fitness distributions
-        #   - Variance trend: tracks CV over recent generations to detect
-        #     convergence (decreasing variance → need exploration) or
-        #     divergence (increasing variance → exploit emerging structure)
-        #
-        # Uses smooth probability gradation instead of hard binary thresholds:
-        #   - High variance (score > 0.5): exploit with P proportional to variance
-        #   - Low variance (score < 0.3): explore with P inversely proportional
-        #   - Medium variance: use skewness as tiebreaker
-        #
-        # Tracks variance history (last 10 generations) for trend detection.
+    def _check_variance_override(self):
+        """Check variance-aware strategy override (priority 1)."""
         try:
-            _prev_fits = self._last_challenger_fitnesses
-            if _prev_fits and len(_prev_fits) >= 3:
-                _n = len(_prev_fits)
-                _sum = sum(_prev_fits)
-                _mean = _sum / _n
-
-                if abs(_mean) > 1e-9:
-                    # --- Coefficient of variation (CV) ---
-                    _var = sum((f - _mean) ** 2 for f in _prev_fits) / _n
-                    _std = _var ** 0.5
-                    _cv = _std / abs(_mean)
-
-                    # --- Interquartile range ratio (robust variance metric) ---
-                    _sorted_fits = sorted(_prev_fits)
-                    _q1 = _sorted_fits[_n // 4]
-                    _q3 = _sorted_fits[(3 * _n) // 4]
-                    _iqr = _q3 - _q1
-                    _fit_range = max(_prev_fits) - min(_prev_fits) + 1e-9
-                    _iqr_ratio = _iqr / _fit_range  # normalized [0, 1]
-
-                    # --- Skewness (Fisher-Pearson) ---
-                    _skew = (
-                        sum(((f - _mean) / max(_std, 1e-9)) ** 3 for f in _prev_fits) / _n
-                    )
-
-                    # --- Combined variance score [0, 1] ---
-                    # Blend CV (normalized, capped at 2.0) and IQR ratio
-                    # with equal weight. IQR ratio catches bimodal distributions
-                    # where CV is misleading.
-                    _cv_norm = min(_cv, 2.0) / 2.0
-                    _variance_score = 0.5 * _cv_norm + 0.5 * _iqr_ratio
-
-                    # --- Variance trend (convergence/divergence) ---
-                    # Track over last 10 generations. Increasing trend = diverging
-                    # population (healthy, keep exploiting). Decreasing trend =
-                    # converging (may need exploration injection).
-                    if not hasattr(self, '_variance_history'):
-                        self._variance_history: list[float] = []
-                    self._variance_history.append(_variance_score)
-                    if len(self._variance_history) > 10:
-                        self._variance_history = self._variance_history[-10:]
-
-                    _variance_trend = 0.0
-                    if len(self._variance_history) >= 4:
-                        _vh = self._variance_history
-                        _half = len(_vh) // 2
-                        _recent_avg = sum(_vh[_half:]) / max(1, len(_vh) - _half)
-                        _older_avg = sum(_vh[:_half]) / max(1, _half)
-                        _variance_trend = _recent_avg - _older_avg  # +diverging, -converging
-
-                    # --- Smooth probability gradation ---
-                    # Instead of hard binary thresholds (CV > 1.0 / CV < 0.3),
-                    # use smooth sigmoid-like probability curves.
-                    # High variance → exploit with probability 0.4 + 0.4 * score
-                    # Low variance → explore with probability 0.4 + 0.4 * (1 - score)
-                    # Medium variance → use skewness as tiebreaker at lower probability
-
-                    if _variance_score > 0.5 and override_priority < 1:
-                        # High variance: exploit — refine promising programs
-                        # Probability scales with variance strength (0.65 at score=0.5, 0.85 at score=1.0)
-                        _exploit_prob = min(0.85, 0.4 + _variance_score * 0.5)
-                        # Boost exploit probability when population is diverging
-                        # (healthy spread means we have structure to exploit)
-                        if _variance_trend > 0.05:
-                            _exploit_prob = min(0.95, _exploit_prob + 0.10)
-
-                        if self.rng.random() < _exploit_prob:
-                            _exploit_strats = [s for s in MutationStrategy
-                                               if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
-                            if _exploit_strats:
-                                override_priority = 1
-                                override_strategy = self.rng.choice(_exploit_strats)
-                                override_log_msg = (
-                                    f"[Strategy] Variance-aware exploit: "
-                                    f"score={_variance_score:.2f}, CV={_cv:.2f}, "
-                                    f"IQR={_iqr_ratio:.2f}, skew={_skew:+.2f}, "
-                                    f"trend={_variance_trend:+.3f}")
-
-                    elif _variance_score < 0.3 and override_priority < 1:
-                        # Low variance: explore — break out of the cluster
-                        # Probability scales inversely (0.65 at score=0.0, 0.55 at score=0.3)
-                        _explore_prob = min(0.85, 0.4 + (1.0 - _variance_score) * 0.5)
-                        # Boost explore probability when population is converging
-                        # (tight cluster = stuck, need diversification)
-                        if _variance_trend < -0.05:
-                            _explore_prob = min(0.95, _explore_prob + 0.10)
-
-                        if self.rng.random() < _explore_prob:
-                            _explore_strats = [s for s in MutationStrategy
-                                               if s.value in ('GROW', 'PERTURBATION_CAPPED',
-                                                              'MODEL_GUIDED', 'HYBRID')]
-                            if _explore_strats:
-                                override_priority = 1
-                                override_strategy = self.rng.choice(_explore_strats)
-                                override_log_msg = (
-                                    f"[Strategy] Variance-aware explore: "
-                                    f"score={_variance_score:.2f}, CV={_cv:.2f}, "
-                                    f"IQR={_iqr_ratio:.2f}, skew={_skew:+.2f}, "
-                                    f"trend={_variance_trend:+.3f}")
-
-                    elif override_priority < 1:
-                        # Medium variance (0.3 ≤ score ≤ 0.5): use skewness tiebreaker
-                        # Left-skewed (skew < -0.5): most programs are fit, few outliers
-                        # → explore to diversify the outlier pool
-                        # Right-skewed (skew > 0.5): most are unfit, few gems
-                        # → exploit to refine the rare good programs
-                        if _skew < -0.5 and self.rng.random() < 0.35:
-                            _explore_strats = [s for s in MutationStrategy
-                                               if s.value in ('GROW', 'PERTURBATION_CAPPED',
-                                                              'MODEL_GUIDED', 'HYBRID')]
-                            if _explore_strats:
-                                override_priority = 1
-                                override_strategy = self.rng.choice(_explore_strats)
-                                override_log_msg = (
-                                    f"[Strategy] Variance-aware skew-explore: "
-                                    f"skew={_skew:+.2f}, score={_variance_score:.2f}, "
-                                    f"CV={_cv:.2f}, trend={_variance_trend:+.3f}")
-                        elif _skew > 0.5 and self.rng.random() < 0.35:
-                            _exploit_strats = [s for s in MutationStrategy
-                                               if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
-                            if _exploit_strats:
-                                override_priority = 1
-                                override_strategy = self.rng.choice(_exploit_strats)
-                                override_log_msg = (
-                                    f"[Strategy] Variance-aware skew-exploit: "
-                                    f"skew={_skew:+.2f}, score={_variance_score:.2f}, "
-                                    f"CV={_cv:.2f}, trend={_variance_trend:+.3f}")
-        except Exception:
-            pass
-        # Priority 2: Cross-cycle fitness trend override (fitness declining)
+            pf = self._last_challenger_fitnesses
+            if not pf or len(pf) < 3: return 0, None, ""
+            n = len(pf)
+            m = sum(pf) / n
+            if abs(m) <= 1e-9: return 0, None, ""
+            v = sum((f - m) ** 2 for f in pf) / n
+            s = v ** 0.5
+            cv = s / abs(m)
+            sf = sorted(pf)
+            iqr = sf[3*n//4] - sf[n//4]
+            fr = max(pf) - min(pf) + 1e-9
+            skew = sum(((f - m) / max(s, 1e-9)) ** 3 for f in pf) / n
+            vs = 0.5 * min(cv, 2.0) / 2.0 + 0.5 * iqr / fr
+            if not hasattr(self, '_variance_history'): self._variance_history = []
+            self._variance_history.append(vs)
+            if len(self._variance_history) > 10: self._variance_history = self._variance_history[-10:]
+            vt = 0.0
+            if len(self._variance_history) >= 4:
+                h = len(self._variance_history) // 2
+                vt = sum(self._variance_history[h:]) / max(1, len(self._variance_history) - h) - sum(self._variance_history[:h]) / max(1, h)
+            if vs > 0.5:
+                ep = min(0.85, 0.4 + vs * 0.5 + (0.10 if vt > 0.05 else 0))
+                if self.rng.random() < ep:
+                    es = [s for s in MutationStrategy if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
+                    if es: return 1, self.rng.choice(es), f"[Strategy] Variance exploit: vs={vs:.2f}"
+            elif vs < 0.3:
+                ep = min(0.85, 0.4 + (1.0 - vs) * 0.5 + (0.10 if vt < -0.05 else 0))
+                if self.rng.random() < ep:
+                    es = [s for s in MutationStrategy if s.value in ('GROW', 'PERTURBATION_CAPPED', 'MODEL_GUIDED', 'HYBRID')]
+                    if es: return 1, self.rng.choice(es), f"[Strategy] Variance explore: vs={vs:.2f}"
+            elif skew < -0.5 and self.rng.random() < 0.35:
+                es = [s for s in MutationStrategy if s.value in ('GROW', 'PERTURBATION_CAPPED', 'MODEL_GUIDED', 'HYBRID')]
+                if es: return 1, self.rng.choice(es), f"[Strategy] Skew explore: skew={skew:+.2f}"
+            elif skew > 0.5 and self.rng.random() < 0.35:
+                es = [s for s in MutationStrategy if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
+                if es: return 1, self.rng.choice(es), f"[Strategy] Skew exploit: skew={skew:+.2f}"
+        except Exception: pass
+        return 0, None, ""
+    def _check_priority_overrides(self, current_priority: int) -> tuple[int, 'MutationStrategy | None', str]:
+        """Check cross-cycle, mutation stats, and plateau overrides (priorities 2-4)."""
+        override_priority = current_priority
+        override_strategy = None
+        override_log_msg = ""
         try:
             if hasattr(self, 'meta_controller') and self.meta_controller is not None:
                 _trends = self.meta_controller.get_cross_cycle_trends()
                 _fitness_trend = _trends.get('fitness', {})
-                if _fitness_trend.get('direction') == 'declining' and self.rng.random() < 0.25:
+                if _fitness_trend.get('direction') == 'declining' and self.rng.random() < 0.25 and override_priority < 2:
                     _explore = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _explore and override_priority < 2:
+                    if _explore:
                         override_priority = 2
                         override_strategy = self.rng.choice(_explore)
                         override_log_msg = f"[Strategy] Trend override: fitness declining, slope={_fitness_trend.get('slope', 0):.4f}"
         except Exception:
             pass
-        # Priority 3: Mutation stats override (recent mutations hurt)
         try:
             from mutation_proposer import DirectedMutator as _DM
             _mstats = _DM.get_mutation_stats()
-            if _mstats['total_attempts'] > 50:
-                _recent_rate = _mstats['recent_avg_delta']
-                if _recent_rate < -0.5 and self.rng.random() < 0.3:
-                    _exploration_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _exploration_strats and override_priority < 3:
-                        override_priority = 3
-                        override_strategy = self.rng.choice(_exploration_strats)
-                        override_log_msg = f"[Strategy] Mutation stats override: recent_avg_delta={_recent_rate:.3f}"
+            if _mstats['total_attempts'] > 50 and _mstats['recent_avg_delta'] < -0.5 and self.rng.random() < 0.3 and override_priority < 3:
+                _exploration_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
+                if _exploration_strats:
+                    override_priority = 3
+                    override_strategy = self.rng.choice(_exploration_strats)
+                    override_log_msg = f"[Strategy] Mutation stats override: recent_avg_delta={_mstats['recent_avg_delta']:.3f}"
         except Exception:
             pass
-        # Priority 4: Plateau override (stuck on plateau — highest priority)
         try:
             if hasattr(self, 'progression_tracker') and self.progression_tracker is not None:
                 _pa = self.progression_tracker.get_plateau_analysis()
-                if _pa.get('status') == 'plateau' and _pa.get('plateau_duration', 0) > 10 and self.rng.random() < 0.3:
+                if _pa.get('status') == 'plateau' and _pa.get('plateau_duration', 0) > 10 and self.rng.random() < 0.3 and override_priority < 4:
                     _explore2 = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _explore2 and override_priority < 4:
+                    if _explore2:
                         override_priority = 4
                         override_strategy = self.rng.choice(_explore2)
-                        override_log_msg = f"[Strategy] Plateau override: duration={_pa.get('plateau_duration', 0)}, slope={_pa.get('trend_slope', 0):.4f}"
+                        override_log_msg = f"[Strategy] Plateau override: duration={_pa.get('plateau_duration', 0)}"
         except Exception:
             pass
+        return override_priority, override_strategy, override_log_msg
 
-        # Apply the highest-priority override (if any triggered)
-        if override_strategy is not None:
-            chosen = override_strategy
-            self._log(override_log_msg)
-
-        # Cycle-phase exploration-exploitation balance.
-        # Early in a cycle (first 30%): bias toward exploration strategies
-        # to discover new solution regions. Late in a cycle (last 30%):
-        # bias toward exploitation strategies to refine promising solutions.
-        # Middle phase (30-70%) is neutral — no adjustment.
-        # Applied as a soft modifier after priority overrides so it never
-        # overrides plateau or mutation-stats overrides (high-priority
-        # reactive decisions take precedence over time-based bias).
-        # Skipped for unsolved levels (9-11) to avoid conflicting with
-        # the dedicated perturbation_capped override for those levels.
-        if self.champion_level not in self._unsolved_levels_set:
+    def _apply_cycle_phase_bias(self, chosen: 'MutationStrategy', override_priority: int) -> 'MutationStrategy':
+        """Apply cycle-phase exploration-exploitation balance."""
+        if self.champion_level in self._unsolved_levels_set:
+            return chosen
+        try:
+            if self.current_generation > 0 and override_priority < 3:
+                _cycle_progress = self.current_generation / max(self.config.max_generations, 1)
+                if _cycle_progress <= 0.3:
+                    _explore_pool = [s for s in MutationStrategy if s.value in ('GROW', 'PERTURBATION_CAPPED', 'MODEL_GUIDED', 'HYBRID')]
+                    if _explore_pool and self.rng.random() < 0.40:
+                        chosen = self.rng.choice(_explore_pool)
+                        self._log(f"[Strategy] Cycle-phase early explore: progress={_cycle_progress:.2f}, chosen={chosen.value}")
+                elif _cycle_progress >= 0.7:
+                    _exploit_pool = [s for s in MutationStrategy if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
+                    if _exploit_pool and self.rng.random() < 0.40:
+                        chosen = self.rng.choice(_exploit_pool)
+                        self._log(f"[Strategy] Cycle-phase late exploit: progress={_cycle_progress:.2f}, chosen={chosen.value}")
+        except Exception:
+            pass
+        return chosen
+    def _choose_mutation_strategy(self, idx: int) -> MutationStrategy:
+        """Choose a mutation strategy for challenger idx."""
+        effective_cap = max(self.config.max_consecutive_same_strategy // 2, 10) if self.champion_level >= 5 else self.config.max_consecutive_same_strategy
+        skip_strat = None
+        if self._consecutive_same_strategy >= effective_cap and self._last_strategy_used not in ("GROW", "MODEL_GUIDED"):
+            skip_strat = self._last_strategy_used
+            self._consecutive_same_strategy = 0
+        if self.config.use_strategy_archive and self.strategy_archive is not None and self.strategy_archive.total_records() > 10:
+            rec = self.strategy_archive.recommend_strategy(self.champion_level, skip_strategy=skip_strat)
+            chosen = _STRATEGY_ENUM_CACHE.get(rec, MutationStrategy.HYBRID)
+        else:
+            chosen = MutationStrategy.HYBRID
+        if self.config.use_strategy_archive and self.strategy_archive is not None:
             try:
-                # Skip cycle-phase bias at generation 0: no meaningful
-                # phase exists until the cycle has actually progressed.
-                if self.current_generation > 0:
-                    _cycle_progress = self.current_generation / max(
-                        self.config.max_generations, 1
-                    )
-                    # Only apply cycle-phase bias when no high-priority reactive
-                    # override (plateau=4, mutation-stats=3) is active. These
-                    # reactive decisions are more contextually accurate than a
-                    # blind time-based bias.
-                    if override_priority < 3:
-                        if _cycle_progress <= 0.3:
-                            # Early phase: bias toward exploration strategies
-                            # to discover new solution regions.
-                            _explore_pool = [
-                                s for s in MutationStrategy
-                                if s.value in (
-                                    'GROW', 'PERTURBATION_CAPPED',
-                                    'MODEL_GUIDED', 'HYBRID',
-                                )
-                            ]
-                            if _explore_pool and self.rng.random() < 0.40:
-                                chosen = self.rng.choice(_explore_pool)
-                                self._log(
-                                    f"[Strategy] Cycle-phase early explore: "
-                                    f"progress={_cycle_progress:.2f}, "
-                                    f"chosen={chosen.value}"
-                                )
-                        elif _cycle_progress >= 0.7:
-                            # Late phase: bias toward exploitation strategies
-                            # to refine promising solutions.
-                            _exploit_pool = [
-                                s for s in MutationStrategy
-                                if s.value in (
-                                    'RANDOM', 'TASK_AWARE', 'DIRECTED'
-                                )
-                            ]
-                            if _exploit_pool and self.rng.random() < 0.40:
-                                chosen = self.rng.choice(_exploit_pool)
-                                self._log(
-                                    f"[Strategy] Cycle-phase late exploit: "
-                                    f"progress={_cycle_progress:.2f}, "
-                                    f"chosen={chosen.value}"
-                                )
-                        # Middle phase (0.3 < progress < 0.7): neutral — no adjustment.
-            except Exception:
-                pass
-
-        # Unsolved levels 9-11: use higher PERTURBATION_CAPPED probability
+                _bonus = self.strategy_archive.adaptive_exploration_bonus(rec, self.champion_level)
+                if _bonus > 0.15 and self.rng.random() < _bonus:
+                    _alt = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
+                    if _alt: chosen = self.rng.choice(_alt)
+            except Exception: pass
+        chosen = self._apply_affinity_bias(chosen)
+        op, os, ol = self._check_variance_override()
+        op, os, ol = self._check_priority_overrides(op)
+        if os is not None:
+            chosen = os
+            self._log(ol)
+        chosen = self._apply_cycle_phase_bias(chosen, op)
         if self.champion_level in self._unsolved_levels_set and self.generations_stalled > 2:
             if self.rng.random() < self.config.perturbation_capped_probability_unsolved:
                 chosen = MutationStrategy.PERTURBATION_CAPPED
-
-        # Level-aware strategy weighting: bias selection based on task difficulty.
-        # This is the baseline — always applied as the foundation.
         chosen = self._apply_level_aware_strategy_bias(chosen)
-
-        # D3: Track consecutive usage
-        strat_val = chosen.value
-        if strat_val == self._last_strategy_used:
+        sv = chosen.value
+        if sv == self._last_strategy_used:
             self._consecutive_same_strategy += 1
         else:
-            self._last_strategy_used = strat_val
+            self._last_strategy_used = sv
             self._consecutive_same_strategy = 1
-
         return chosen
 
-    # --------------------------------------------------------------
-    # Level-aware strategy weighting
-    # --------------------------------------------------------------
-
-    # Weight profiles per level tier: {strategy_name: weight_multiplier}.
-    # Higher weight = higher probability of selection at that tier.
-    _LEVEL_WEIGHT_PROFILES: dict[str, dict[str, float]] = {
-        "L1_L4": {  # Simple programs: small, targeted mutations
-            "RANDOM": 1.3, "TASK_AWARE": 1.4, "DIRECTED": 1.2,
-            "PERTURBATION_CAPPED": 0.7, "GROW": 0.5,
-            "HYBRID": 0.8, "MODEL_GUIDED": 0.4,
-        },
-        "L5_L6": {  # Structural mutations: loops, memory
-            "RANDOM": 0.8, "TASK_AWARE": 0.9, "DIRECTED": 0.9,
-            "PERTURBATION_CAPPED": 1.3, "GROW": 1.5,
-            "HYBRID": 1.1, "MODEL_GUIDED": 0.7,
-        },
-        "L7_L11": {  # Complex operations: memory, conditionals
-            "RANDOM": 0.6, "TASK_AWARE": 0.7, "DIRECTED": 0.8,
-            "PERTURBATION_CAPPED": 1.4, "GROW": 1.6,
-            "HYBRID": 1.2, "MODEL_GUIDED": 1.0,
-        },
-        "L12_plus": {  # Full program redesign: model-guided heavy
-            "RANDOM": 0.3, "TASK_AWARE": 0.4, "DIRECTED": 0.5,
-            "PERTURBATION_CAPPED": 1.2, "GROW": 1.5,
-            "HYBRID": 1.3, "MODEL_GUIDED": 2.0,
-        },
-    }
-
-    # Override probability per tier — higher tiers bias more aggressively
-    _LEVEL_OVERRIDE_PROBS: dict[str, float] = {
-        "L1_L4": 0.20, "L5_L6": 0.25, "L7_L11": 0.30, "L12_plus": 0.35,
-    }
-
+    def _apply_affinity_bias(self, chosen):
+        """Apply per-program mutation affinity bias."""
+        try:
+            _champ = getattr(self, 'champion', None)
+            if _champ is None or len(_champ) == 0:
+                return chosen
+            from mutation_proposer import DirectedMutator as _AffDM
+            _affinity = _AffDM.get_program_mutation_affinity(_champ, top_n=5)
+            if not _affinity:
+                return chosen
+            _sv = {s.value for s in MutationStrategy}
+            _as = [(_STRATEGY_ENUM_CACHE.get(a, MutationStrategy.HYBRID) if a in _sv else MutationStrategy[a], r, at) for a, r, at in _affinity if a in _sv or hasattr(MutationStrategy, a)]
+            if not _as:
+                return chosen
+            _ta = sum(a for _, _, a in _as)
+            if _ta < 20:
+                return chosen
+            _tr, _rr = _as[0][1], _as[1][1] if len(_as) > 1 else 0.0
+            if _tr - _rr >= 0.15 and self.rng.random() < 0.6:
+                return _as[0][0]
+            if self.rng.random() < 0.4:
+                _w = [r for _, r, _ in _as]
+                if sum(_w) > 0:
+                    _p = self.rng.choices([s for s, _, _ in _as], weights=_w, k=1)
+                    if _p: return _p[0]
+        except Exception: pass
+        return chosen
     def _apply_level_aware_strategy_bias(self, chosen: MutationStrategy) -> MutationStrategy:
         """Apply level-aware strategy weighting to bias selection by task difficulty.
 
@@ -4228,81 +2680,28 @@ class EvolutionEngine:
         else:
             return self.config.model_guided_ratio_high
 
-    def _replace_with_model_guided(self, challengers: list[list[int]], model_ratio: float = 0.2) -> list[int]:
-        """Replace a fraction of challengers with model-guided completions.
-
-        Uses PrefixGenerator to generate completions conditioned on reference
-        solution prefixes (or champion body fallback). APS (Adaptive Prefix
-        Scheduler) adjusts prefix composition by stall depth.
-
-        Args:
-            challengers: List of challenger programs (modified in-place).
-            model_ratio: Fraction of challengers to replace.
-
-        Returns:
-            List of indices in challengers that were replaced.
-        """
-        replaced_indices: list[int] = []
-        if not self.champion:
-            self._log("[ModelGuided] Skipped: champion=None")
-            return []
-        if self.config.model_guided_ratio is not None and self.config.model_guided_ratio <= 0:
-            self._log(f"[ModelGuided] Skipped: model_guided_ratio={self.config.model_guided_ratio} (disabled)")
-            return []
-
-        # Get reference solution for the champion's level to use as prefix
-        ref_prefix_hex = None
-        try:
-            ref = reference_solution(self.champion_level)
-            if ref and len(ref) > 0:
-                encoded = []
-                for inst in ref:
-                    w = _encode_inst(inst)
-                    if w is not None:
-                        encoded.append(w)
-                # Use up to 4 instructions as prefix (enough for task context)
-                ref_prefix = encoded[: min(4, len(encoded))]
-                if len(ref_prefix) >= 1:
-                    ref_prefix_hex = [f"0x{w:08x}" for w in ref_prefix]
-        except Exception:
-            pass
-
-        # Convert champion to hex strings for fallback
-        champion_hex = [f"0x{w:08x}" for w in self.champion]
-
-        # ----------------------------------------------------------
-        # v12.5: Adaptive Prefix Scheduler (APS)
-        # Dynamically adjusts prefix composition based on stall depth
-        # to balance exploration vs guidance.
-        # ----------------------------------------------------------
+    def _get_model_guided_prefix(self, champion_hex: list[str], ref_prefix_hex: list[str] | None) -> tuple[list[str], str]:
+        """Select prefix source using Adaptive Prefix Scheduler (APS)."""
         stalled = self.generations_stalled
         champion_level = self.champion_level
         composite_hex = None
         source_name = None
-        prefix_source = None
-
         if champion_level >= 8 and len(champion_hex) >= 4:
             if stalled >= 50:
-                # Deep stall: composite (champion + reference) -- max guidance
                 composite = list(champion_hex)
                 if ref_prefix_hex and len(ref_prefix_hex) >= 2:
-                    composite.extend(ref_prefix_hex[: min(12, len(ref_prefix_hex))])
+                    composite.extend(ref_prefix_hex[:min(12, len(ref_prefix_hex))])
                 composite_hex = composite
-                source_name = (
-                    f"composite(L{champion_level}): "
-                    f"champ({len(composite)}w)+ref({len(ref_prefix_hex or [])}w) [stall={stalled}]"
-                )
+                source_name = f"composite(L{champion_level}): champ({len(composite)}w)+ref({len(ref_prefix_hex or [])}w) [stall={stalled}]"
             elif stalled >= 20:
-                # Medium stall: ref-only -- balanced
                 if ref_prefix_hex and len(ref_prefix_hex) >= 4:
-                    composite_hex = ref_prefix_hex[: min(12, len(ref_prefix_hex))]
+                    composite_hex = ref_prefix_hex[:min(12, len(ref_prefix_hex))]
                     source_name = f"ref-only(L{champion_level}): {len(composite_hex)}w [stall={stalled}]"
                 else:
                     prefix_len = min(8, len(champion_hex))
                     composite_hex = champion_hex[:prefix_len]
                     source_name = f"champion-fallback(L{champion_level}): {prefix_len}w [stall={stalled}]"
             else:
-                # Low/no stall: ref-short -- high exploration
                 if ref_prefix_hex and len(ref_prefix_hex) >= 2:
                     prefix_len = min(6, max(2, len(ref_prefix_hex) // 3))
                     composite_hex = ref_prefix_hex[:prefix_len]
@@ -4311,24 +2710,78 @@ class EvolutionEngine:
                     prefix_len = min(4, len(champion_hex))
                     composite_hex = champion_hex[:prefix_len]
                     source_name = f"champion-short(L{champion_level}): {prefix_len}w [stall={stalled}]"
-
         if composite_hex is not None:
-            prefix_source = composite_hex
-        elif ref_prefix_hex is not None:
-            prefix_source = ref_prefix_hex
-            source_name = source_name or f"reference (L{champion_level})"
-        else:
-            prefix_source = champion_hex
-            source_name = source_name or f"champion body (L{champion_level})"
+            return composite_hex, source_name or f"default (L{champion_level})"
+        if ref_prefix_hex is not None:
+            return ref_prefix_hex, source_name or f"reference (L{champion_level})"
+        return champion_hex, source_name or f"champion body (L{champion_level})"
 
-        if source_name is None:
-            source_name = f"default (L{champion_level})"
+    def _compute_model_temperature(self) -> float:
+        """Compute model temperature with optional annealing."""
+        gen = getattr(self, "current_generation", 0)
+        if self.config.use_temperature_annealing:
+            anneal_progress = min(1.0, gen / max(1, self.config.temperature_schedule_generations))
+            return self.config.temperature_start + (self.config.temperature_end - self.config.temperature_start) * anneal_progress
+        if gen < 10:
+            return 1.2
+        elif gen < 30:
+            return 0.9
+        return 0.6
 
-        # Lazy init PrefixGenerator
+    def _run_model_inference(self, prefix_source, model_temp, num_replace, prefix_counts):
+        """Run model inference loop and return replaced indices."""
+        ri, reps = [], 0
+        try:
+            import torch
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+        except Exception: pass
+        for pc in prefix_counts:
+            if reps >= num_replace: break
+            try:
+                comp = None
+                for att in range(1, 3):
+                    try:
+                        comp = self._prefix_generator.complete(prefix_source, prefix_count=pc, num_samples=min(3, max(1, num_replace // len(prefix_counts))), temperature=model_temp, top_k=40, top_p=0.9, repetition_penalty=1.1)
+                        break
+                    except RuntimeError:
+                        try:
+                            import torch
+                            if torch.cuda.is_available(): torch.cuda.synchronize(), torch.cuda.empty_cache()
+                        except Exception: pass
+                        if att == 2: comp = None
+                if not comp: continue
+                for ph in comp:
+                    if reps >= num_replace: break
+                    pi = [int(w, 16) for w in ph]
+                    if len(pi) >= 2:
+                        idx = self.rng.randint(0, len(self._last_challengers) - 1)
+                        self._last_challengers[idx] = pi
+                        ri.append(idx)
+                        reps += 1
+            except Exception: continue
+        return ri
+    def _replace_with_model_guided(self, challengers: list[list[int]], model_ratio: float = 0.2) -> list[int]:
+        """Replace a fraction of challengers with model-guided completions."""
+        replaced_indices = []
+        if not self.champion:
+            return []
+        if self.config.model_guided_ratio is not None and self.config.model_guided_ratio <= 0:
+            return []
+        ref_prefix_hex = None
+        try:
+            ref = reference_solution(self.champion_level)
+            if ref and len(ref) > 0:
+                encoded = [w for inst in ref if (w := _encode_inst(inst)) is not None]
+                ref_prefix = encoded[:min(4, len(encoded))]
+                if len(ref_prefix) >= 1:
+                    ref_prefix_hex = [f"0x{w:08x}" for w in ref_prefix]
+        except Exception:
+            pass
+        champion_hex = [f"0x{w:08x}" for w in self.champion]
+        prefix_source, source_name = self._get_model_guided_prefix(champion_hex, ref_prefix_hex)
         if self._prefix_generator is None:
             try:
                 from prefix_generator import PrefixGenerator
-
                 ckpt = self._seed_model_path or ""
                 if not ckpt or not os.path.isfile(ckpt):
                     base = os.path.dirname(os.path.abspath(__file__))
@@ -4338,134 +2791,20 @@ class EvolutionEngine:
             except Exception as e:
                 self._log(f"[ModelGuided] Init failed: {e}")
                 return []
-
         if self._prefix_generator is None:
             return []
-
         num_replace = max(1, int(len(challengers) * model_ratio))
-        replacements = 0
-
-        # R42: Temperature annealing — smoothly decay model temperature from
-        # temperature_start (2.0) to temperature_end (0.5) over the generation
-        # schedule. This provides broad exploration early (diverse completions)
-        # and focused exploitation late (high-quality completions).
-        # Replaces the old stepped approach (1.2→0.9→0.6) with continuous decay.
-        gen = getattr(self, "current_generation", 0)
-        if self.config.use_temperature_annealing:
-            anneal_progress = gen / max(1, self.config.temperature_schedule_generations)
-            anneal_progress = min(1.0, anneal_progress)
-            model_temp = (
-                self.config.temperature_start
-                + (self.config.temperature_end - self.config.temperature_start) * anneal_progress
-            )
-        else:
-            # Fallback: old stepped approach
-            if gen < 10:
-                model_temp = 1.2
-            elif gen < 30:
-                model_temp = 0.9
-            else:
-                model_temp = 0.6
-
-        # R34: CUDA sync once before the entire loop (was inside per-prefix
-        # iteration). Prevents driver race conditions on CUDA 13.0.
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-        except Exception:
-            pass
-
-        # Use stall-adaptive prefix_counts for APS — single count to limit inference cost
+        model_temp = self._compute_model_temperature()
+        stalled = self.generations_stalled
+        champion_level = self.champion_level
         if champion_level >= 8:
-            if stalled >= 50:
-                prefix_counts = [12]
-            elif stalled >= 20:
-                prefix_counts = [8]
-            else:
-                prefix_counts = [6]
+            prefix_counts = [12] if stalled >= 50 else [8] if stalled >= 20 else [6]
         else:
-            if stalled >= 50:
-                prefix_counts = [6]
-            elif stalled >= 20:
-                prefix_counts = [4]
-            else:
-                prefix_counts = [2]
-
-        for pc in prefix_counts:
-            if replacements >= num_replace:
-                break
-            try:
-
-                # CUDA error recovery: catch RuntimeError (SIGSEGV), sync+retry,
-                # then skip this prefix count if still failing.
-                _completions = None
-                _cuda_failed = False
-                for attempt in range(1, 3):  # max 2 attempts
-                    try:
-                        _completions = self._prefix_generator.complete(
-                            prefix_source,
-                            prefix_count=pc,
-                            num_samples=min(3, max(1, num_replace // len(prefix_counts))),
-                            temperature=model_temp,
-                            top_k=40,
-                            top_p=0.9,
-                            repetition_penalty=1.1,
-                        )
-                        break  # success
-                    except RuntimeError as cuda_err:
-                        self._log(f"[ModelGuided] CUDA error (attempt {attempt}): {cuda_err}")
-                        try:
-                            import torch
-
-                            if torch.cuda.is_available():
-                                torch.cuda.synchronize()
-                                torch.cuda.empty_cache()
-                        except Exception:
-                            pass
-                        if attempt == 2:
-                            self._log("[ModelGuided] CUDA fallback: skipping this prefix count")
-                            _cuda_failed = True
-
-                if _cuda_failed:
-                    continue
-
-                completions = _completions or []
-                if not completions:
-                    continue
-
-                for prog_hex in completions:
-                    if replacements >= num_replace:
-                        break
-                    prog_int = [int(w, 16) for w in prog_hex]
-                    if len(prog_int) >= 2:
-                        idx = self.rng.randint(0, len(challengers) - 1)
-                        for _ in range(5):
-                            if challengers[idx] != self.champion:
-                                break
-                            idx = self.rng.randint(0, len(challengers) - 1)
-                        challengers[idx] = prog_int
-                        replaced_indices.append(idx)
-                        replacements += 1
-            except Exception as e:
-                self._log(f"[ModelGuided] Generation error: {e}")
-                continue
-
-        if replacements > 0:
-            self._log(
-                f"[ModelGuided] Replaced {replacements}/{num_replace} "
-                f"(prefix: {source_name}, L={champion_level}, "
-                f"temp={model_temp:.1f})"
-            )
-
-        # NOTE: PrefixGenerator instance is intentionally NOT deleted here.
-        # It stays in GPU memory across generations within a single run(),
-        # saving ~3s per generation of model re-initialization. Cleanup
-        # happens when the EvolutionEngine goes out of scope at cycle end.
-
+            prefix_counts = [6] if stalled >= 50 else [4] if stalled >= 20 else [2]
+        replaced_indices = self._run_model_inference(prefix_source, model_temp, num_replace, prefix_counts)
+        if replaced_indices:
+            self._log(f"[ModelGuided] Replaced {len(replaced_indices)}/{num_replace} (prefix: {source_name}, L={champion_level}, temp={model_temp:.1f})")
         return replaced_indices
-
     def _try_qd_crossover(self) -> list[int] | None:
         """Attempt to breed a hybrid program from the QD archive.
 
@@ -4728,53 +3067,15 @@ class EvolutionEngine:
         except Exception:
             pass
 
-    def _select_elite(
-        self,
-        challengers: list[list[int]],
-        results: list[dict[str, Any]],
-    ) -> tuple[list[list[int]], list[float], list[int]]:
-        """Select elite challengers for detailed evaluation.
-
-        Implements tournament selection with elitism:
-        1. ELITISM: Top elite_ratio (default 10%) by stage-1 fitness are
-           preserved — guaranteed to get detailed evaluation. This prevents
-           the best candidates from being lost due to stochastic effects.
-        2. TOURNAMENT SELECTION: Remaining slots are filled via adaptive
-           tournament selection (tournament_size adjusted by population
-           diversity). Each tournament draws k random candidates and picks
-           the best, applying selection pressure while maintaining diversity.
-        3. DEDUP: Tournament winners are deduplicated against elites via
-           lightweight fingerprint (length + first/last word hash) to
-           prevent redundant evaluations.
-
-        Uses heapq.nsmallest for O(N log k) top-k selection instead of
-        full O(N log N) sort. For population=50, elite_size=5, this
-        avoids sorting 45 unnecessary elements every generation.
-
-        Returns a tuple of (elite_programs, elite_fitnesses, elite_indices)
-        where elite_fitnesses contains the stage-1 fitness for each elite
-        program (in the same order), and elite_indices contains the original
-        indices of the selected programs in the challengers list.
-        """
-        # Compute fitness for stage 1 results and cache for archive recording.
-        # Pass half-budget so exec_credit scaling matches the actual evaluation
-        # budget used (stage 1 runs with eval_budget // 2).
-        stage1_budget = self.config.eval_budget // 2
-        # R16: Pre-allocate with known size (avoids ~50 list appends per gen)
+    def _compute_challenger_fitnesses(self, challengers, results, stage1_budget, raw_only):
+        """Compute fitness for all challengers. Returns (scored, fitness_cache)."""
         n_challengers = len(challengers)
-        scored: list[tuple[float, int, list[int], dict[str, Any]]] = [None] * n_challengers  # type: ignore[list-item]
-        fitness_cache: list[float] = [0.0] * n_challengers
-        _compute = self._compute_fitness  # hoist to local for hot loop
+        scored = [None] * n_challengers
+        fitness_cache = [0.0] * n_challengers
+        _compute = self._compute_fitness
         _use_sec = self.config.use_secondary_tasks
-
-        # At max curriculum level, use raw fitness only (no novelty/QD bias)
-        raw_only = self.champion_level >= self.config.max_level - 1
-
-        # ── Vectorized batch fitness (fast path) ────────────────────
-        # Evaluate secondary tasks for non-crashed programs first so
-        # batch_compute_fitness can include multi-task scoring.
         if _use_sec:
-            sec_per_prog: dict[int, list] = {}
+            sec_per_prog = {}
             for idx in range(n_challengers):
                 trace = results[idx]
                 status = trace.get("status", "")
@@ -4783,19 +3084,12 @@ class EvolutionEngine:
             self._secondary_task_results_per_program = sec_per_prog
         else:
             self._secondary_task_results_per_program = None
-
         try:
-            batch_fitnesses, batch_raw = self.batch_compute_fitness(
-                challengers,
-                results,
-                eval_budget=stage1_budget,
-                raw_only=raw_only,
-            )
+            batch_fitnesses, _ = self.batch_compute_fitness(challengers, results, eval_budget=stage1_budget, raw_only=raw_only)
             for idx in range(n_challengers):
                 scored[idx] = (batch_fitnesses[idx], idx, challengers[idx], results[idx])
                 fitness_cache[idx] = batch_fitnesses[idx]
         except Exception:
-            # Fallback to per-program evaluation on any batch failure
             _status_get = dict.get
             for idx in range(n_challengers):
                 trace = results[idx]
@@ -4814,62 +3108,25 @@ class EvolutionEngine:
                 fitness_cache[idx] = fit
         finally:
             self._secondary_task_results_per_program = None
+        return scored, fitness_cache
 
-        self._last_challenger_fitnesses = fitness_cache
-
-        elite_size = max(1, int(self.config.population_size * self.config.elite_ratio))
-
-        # heapq.nsmallest with negated fitness gives top-k in O(N log k)
-        # instead of full sort O(N log N). For k=5, N=50 this is ~3x fewer
-        # comparisons.
-        top_k = heapq.nsmallest(elite_size, scored, key=lambda x: -x[0])
-
-        elites = [prog for _, _, prog, _ in top_k]
-        elite_fits = [fit for fit, _, _, _ in top_k]
-        elite_indices = [idx for _, idx, _, _ in top_k]
-
-        # Also include tournament selection -- but only programs not already
-        # in the top-k, to avoid dedup-induced fitness misalignment.
-        # Use a set of integer tuples for O(1) dedup (avoids converting
-        # list[int] to tuple on every membership check).
-        # R21: Replace rng.sample + max with manual randint loop to avoid
-        # creating a list of candidates on each tournament (elite_size times).
-        # R24: Use program length + first/last words as a lightweight
-        # fingerprint for dedup. This avoids creating a full tuple (O(n)
-        # copy + hash) for every program. Collisions are extremely rare
-        # for the typical case (programs differ in first/last instruction).
-        # Fallback: if fingerprint collides, accept it (duplicate programs
-        # in elite selection are benign -- they just waste one elite slot).
-        seen_fps: set[int] = {
-            (len(p) << 32) ^ (p[0] if p else 0) ^ ((p[-1] << 16) if len(p) > 1 else 0) for p in elites
-        }
-        seen_indices: set[int] = set(elite_indices)
-        n_scored = len(scored)
-        rng = self.rng  # hoist to local
-
-        # R29: Adaptive tournament sizing based on population diversity.
-        # High diversity -> larger tournament (stronger selection pressure,
-        # faster convergence on good solutions). Low diversity -> smaller
-        # tournament (weaker selection, more random exploration to escape
-        # local optima). Range: [base-1, base+2] clamped to [2, pop_size].
+    def _tournament_select(self, scored, elite_size, n_scored):
+        """Fill remaining elite slots via adaptive tournament selection."""
+        import heapq
+        rng = self.rng
         base_tourney = self.config.tournament_size
         div = self._current_diversity
         if div >= 0.6:
-            # High diversity: strong selection
             adaptive_tourney = base_tourney + 2
         elif div >= 0.4:
-            # Medium diversity: standard selection
             adaptive_tourney = base_tourney + 1
         elif div >= 0.2:
-            # Low-ish diversity: slightly weaker
             adaptive_tourney = base_tourney
         else:
-            # Very low diversity: weak selection to maintain exploration
             adaptive_tourney = max(2, base_tourney - 1)
         tourney_size = min(adaptive_tourney, n_scored)
-        _scored_get = scored.__getitem__  # hoist for hot loop
+        _scored_get = scored.__getitem__
         for _ in range(elite_size):
-            # R21: Manual tournament -- avoids rng.sample() list allocation
             best_i = rng.randint(0, n_scored - 1)
             best_f = _scored_get(best_i)[0]
             for _t in range(tourney_size - 1):
@@ -4878,48 +3135,40 @@ class EvolutionEngine:
                 if cf > best_f:
                     best_f = cf
                     best_i = ci
-            win_prog = _scored_get(best_i)[2]
-            fp = (
-                (len(win_prog) << 32)
-                ^ (win_prog[0] if win_prog else 0)
-                ^ ((win_prog[-1] << 16) if len(win_prog) > 1 else 0)
-            )
+            yield _scored_get(best_i), best_i
+    def _select_elite(self, challengers, results):
+        """Select elite challengers for detailed evaluation."""
+        import heapq
+        stage1_budget = self.config.eval_budget // 2
+        n_challengers = len(challengers)
+        raw_only = self.champion_level >= self.config.max_level - 1
+        scored, fitness_cache = self._compute_challenger_fitnesses(challengers, results, stage1_budget, raw_only)
+        self._last_challenger_fitnesses = fitness_cache
+        elite_size = max(1, int(self.config.population_size * self.config.elite_ratio))
+        top_k = heapq.nsmallest(elite_size, scored, key=lambda x: -x[0])
+        elites = [prog for _, _, prog, _ in top_k]
+        elite_fits = [fit for fit, _, _, _ in top_k]
+        elite_indices = [idx for _, idx, _, _ in top_k]
+        seen_fps = {(len(p) << 32) ^ (p[0] if p else 0) ^ ((p[-1] << 16) if len(p) > 1 else 0) for p in elites}
+        seen_indices = set(elite_indices)
+        n_scored = len(scored)
+        for (win_prog, _, _, _), best_i in self._tournament_select(scored, elite_size, n_scored):
+            fp = (len(win_prog) << 32) ^ (win_prog[0] if win_prog else 0) ^ ((win_prog[-1] << 16) if len(win_prog) > 1 else 0)
             if fp not in seen_fps and best_i not in seen_indices:
                 seen_fps.add(fp)
                 seen_indices.add(best_i)
                 elites.append(win_prog)
-                elite_fits.append(best_f)
+                elite_fits.append(scored[best_i][0])
                 elite_indices.append(best_i)
-
         return elites, elite_fits, elite_indices
-
-    def _update_champion(
-        self,
-        elite: list[list[int]],
-        detailed_results: list[dict[str, Any]],
-        stage1_fitnesses: list[float] | None = None,
-    ) -> bool:
-        """Update champion if any elite challenger has higher fitness.
-
-        Returns True if champion was replaced.
-
-        R4 optimization: when stage1_fitnesses is provided, uses cached
-        stage-1 fitness values to skip recomputation for the majority of
-        elite candidates. Only recomputes at full budget when a candidate
-        actually beats the champion (which happens rarely -- typically 0-1
-        times per generation). This eliminates ~98% of redundant
-        _compute_fitness calls in _update_champion.
-        """
+    def _find_best_challenger(self, elite, detailed_results, stage1_fitnesses):
+        """Find the best challenger that beats the champion. Returns (best_fitness, best_program, best_trace, best_raw_score, improved)."""
         best_fitness = self.champion_fitness
         best_program = None
         best_trace = None
-        # R33: Capture winner's raw task score for curriculum advancement.
-        # Use getattr for robustness against mock objects in tests that
-        # bypass __init__ (e.g., __new__ construction).
         best_raw_score = getattr(self, "_raw_task_score", 0.0)
         improved = False
-        _compute = self._compute_fitness  # hoist to local
-
+        _compute = self._compute_fitness
         _use_sec = self.config.use_secondary_tasks
         for idx, (prog, trace) in enumerate(zip(elite, detailed_results, strict=False)):
             if stage1_fitnesses and idx < len(stage1_fitnesses):
@@ -4930,132 +3179,87 @@ class EvolutionEngine:
             else:
                 self._secondary_task_results = None
             fitness = _compute(prog, trace)
-            # R28: Use oscillation control to prevent rapid champion cycling
             if fitness > best_fitness and self._should_replace_champion(fitness):
                 best_fitness = fitness
                 best_program = prog
                 best_trace = trace
-                best_raw_score = getattr(self, "_raw_task_score", 0.0)  # R33: capture at this point
+                best_raw_score = getattr(self, "_raw_task_score", 0.0)
                 improved = True
+        return best_fitness, best_program, best_trace, best_raw_score, improved
 
-        if improved and best_program is not None:
-            # PM Rule #19: Verify the challenger BEFORE replacing the champion.
-            # If verify() fails, the challenger's fitness is unreliable (e.g.
-            # inflated by level_bonus) and we must NOT replace the champion.
-            _old_champion_trace = self.champion_trace
-            self.champion_trace = best_trace  # temporarily set for verify
-            verified, verify_score = self._verify_champion()
-            self.champion_trace = _old_champion_trace  # restore immediately
-
-            if not verified:
-                # Partial verify scoring: when verify_score > 0, the challenger
-                # passes SOME test cases. Allow replacement with gradient signal.
-                # The partial verify score is stored and used by _compute_fitness
-                # to create a fitness gradient for future generations.
-                if verify_score > 0.0:
-                    self._log(
-                        f"[Champion] Partial verify: challenger passes {verify_score:.2f} "
-                        f"of verify. Allowing replacement (gradient active)."
-                    )
-                    # Store partial verify score for fitness gradient
-                    self._champion_partial_verify = verify_score
-                else:
-                    self._log(
-                        f"[Champion] BLOCKED (PM Rule #19): challenger verify failed "
-                        f"({verify_score:.2f} < 1.0). Keeping old champion "
-                        f"(fitness={self.champion_fitness:.1f})."
-                    )
-                    self._champion_verified = False
-                    self._champion_verify_score = verify_score
-                    self._champion_partial_verify = 0.0
-                    return False
-
-            # R32: Archive old champion's behavioral descriptor before replacing.
-            # This preserves the old champion's niche data in the QD archive
-            # so we don't lose behavioral diversity when the champion is replaced.
-            qd = getattr(self, "qd_archive", None)
-            if (
-                qd is not None
-                and _HAS_QD
-                and self.champion is not None
-                and self.champion_trace is not None
-                and self._champion_changed_since_last_qd is False
-            ):
-                try:
-                    old_desc = compute_qd_axes(self.champion, self.champion_trace)
-                    if old_desc is not None:
-                        qd.add_solution(
-                            descriptor=old_desc,
-                            fitness=self.champion_fitness,
-                            program=self.champion,
-                            trace=self.champion_trace,
-                        )
-                except (TypeError, ValueError, RuntimeError):
-                    pass
-            self.champion = trim_dead_code(list(best_program))
-            self.champion_trace = best_trace
-            # R33: Store champion raw score for curriculum advancement.
-            if hasattr(self, "_champion_raw_task_score"):
-                self._champion_raw_task_score = best_raw_score
-            self.champion_fitness = best_fitness
-            # R50: Store verified results (verify already ran above)
-            self._champion_verified = verified
-            self._champion_verify_score = verify_score
-            # R21: Mark champion changed so _update_qd_archive and
-            # _update_novelty_archive know to run next generation.
-            self._champion_changed_since_last_qd = True
-            self._champion_changed_since_last_novelty = True
-            # R31: Invalidate champion QD descriptor cache (new champion)
-            self._champion_qd_valid = False
-            self._cached_champion_qd_desc = None
-
-        # Hall of Fame: track the best programs seen this generation.
-        # R22: HoF quality gate — compute threshold in a single pass
-        # using partial sort (heapq.nsmallest on negated values) to find
-        # the k-th largest value, then do a single filtered pass.
-        # R35: Early skip when no program in this generation can beat
-        # the worst entry (avoids unnecessary threshold computation).
-        # R39: Fixed bug: old code checked `size < 10` which prevented
-        # ALL adds when the HoF was full. The HallOfFame.add() method
-        # already handles eviction of the worst entry if the new program
-        # is better, so we should always try to add. Now we only skip
-        # when ALL stage1 fitnesses are below the HoF's worst entry.
-        if stage1_fitnesses and elite:
-            n_f = len(stage1_fitnesses)
-            hof_worst = self._hall_of_fame.worst_fitness
-            # Guard: if hof_worst is not a numeric type (e.g. MagicMock
-            # in tests), treat as -inf so the quality gate still runs.
-            if not isinstance(hof_worst, (int, float)):
-                hof_worst = float("-inf")
-            max_stage1 = max(stage1_fitnesses)
-            if max_stage1 < hof_worst:
-                pass  # no program qualifies, skip quality gate
+    def _verify_and_replace_champion(self, best_program, best_trace, best_raw_score, best_fitness):
+        """Verify challenger and replace champion if verified. Returns True if replaced."""
+        _old_champion_trace = self.champion_trace
+        self.champion_trace = best_trace
+        verified, verify_score = self._verify_champion()
+        self.champion_trace = _old_champion_trace
+        if not verified:
+            if verify_score > 0.0:
+                self._log(f"[Champion] Partial verify: challenger passes {verify_score:.2f}. Allowing replacement.")
+                self._champion_partial_verify = verify_score
             else:
-                k_top = max(1, n_f // 5)
-                # Single pass: find k-th largest using min-heap of size k
-                threshold_heap: list[float] = []
-                for fi in stage1_fitnesses:
-                    if len(threshold_heap) < k_top:
-                        heapq.heappush(threshold_heap, fi)
-                    elif fi > threshold_heap[0]:
-                        heapq.heapreplace(threshold_heap, fi)
-                quality_threshold = threshold_heap[0] if threshold_heap else 0.0
-                level = self.champion_level
-                hof = self._hall_of_fame
-                gen = getattr(self, "current_generation", 0)
-                for idx, prog in enumerate(elite):
-                    if idx < n_f and stage1_fitnesses[idx] >= quality_threshold:
-                        hof.add(prog, stage1_fitnesses[idx], level, generation=gen)
+                self._log(f"[Champion] BLOCKED (PM Rule #19): challenger verify failed ({verify_score:.2f} < 1.0).")
+                self._champion_verified = False
+                self._champion_verify_score = verify_score
+                self._champion_partial_verify = 0.0
+                return False
+        qd = getattr(self, "qd_archive", None)
+        if qd is not None and _HAS_QD and self.champion is not None and self.champion_trace is not None and not self._champion_changed_since_last_qd:
+            try:
+                old_desc = compute_qd_axes(self.champion, self.champion_trace)
+                if old_desc is not None:
+                    qd.add_solution(descriptor=old_desc, fitness=self.champion_fitness, program=self.champion, trace=self.champion_trace)
+            except (TypeError, ValueError, RuntimeError):
+                pass
+        self.champion = trim_dead_code(list(best_program))
+        self.champion_trace = best_trace
+        if hasattr(self, "_champion_raw_task_score"):
+            self._champion_raw_task_score = best_raw_score
+        self.champion_fitness = best_fitness
+        self._champion_verified = verified
+        self._champion_verify_score = verify_score
+        self._champion_changed_since_last_qd = True
+        self._champion_changed_since_last_novelty = True
+        self._champion_qd_valid = False
+        self._cached_champion_qd_desc = None
+        return True
 
+    def _update_hall_of_fame(self, elite, stage1_fitnesses):
+        """Update Hall of Fame with elite programs."""
+        if not stage1_fitnesses or not elite:
+            return
+        n_f = len(stage1_fitnesses)
+        hof_worst = self._hall_of_fame.worst_fitness
+        if not isinstance(hof_worst, (int, float)):
+            hof_worst = float("-inf")
+        if max(stage1_fitnesses) < hof_worst:
+            return
+        k_top = max(1, n_f // 5)
+        threshold_heap = []
+        for fi in stage1_fitnesses:
+            if len(threshold_heap) < k_top:
+                heapq.heappush(threshold_heap, fi)
+            elif fi > threshold_heap[0]:
+                heapq.heapreplace(threshold_heap, fi)
+        quality_threshold = threshold_heap[0] if threshold_heap else 0.0
+        level = self.champion_level
+        hof = self._hall_of_fame
+        gen = getattr(self, "current_generation", 0)
+        for idx, prog in enumerate(elite):
+            if idx < n_f and stage1_fitnesses[idx] >= quality_threshold:
+                hof.add(prog, stage1_fitnesses[idx], level, generation=gen)
+    def _update_champion(self, elite, detailed_results, stage1_fitnesses=None):
+        """Update champion if any elite challenger has higher fitness."""
+        best_fitness, best_program, best_trace, best_raw_score, improved = self._find_best_challenger(elite, detailed_results, stage1_fitnesses)
+        if improved and best_program is not None:
+            self._verify_and_replace_champion(best_program, best_trace, best_raw_score, best_fitness)
+            improved = self.champion_fitness == best_fitness
+        self._update_hall_of_fame(elite, stage1_fitnesses)
         self.best_fitness_history.append(self.champion_fitness)
-        # R33: Cap history length to prevent unbounded memory growth.
-        # Use getattr for robustness against mock objects in tests that
-        # bypass __init__ (e.g., __new__ construction).
         max_hist = getattr(self, "_max_history_len", 500)
         if len(self.best_fitness_history) > max_hist:
             self.best_fitness_history = self.best_fitness_history[-max_hist:]
         return improved
-
     def _analyze_trace(self) -> TraceAnalysis | None:
         """Analyze the current champion trace against expected output."""
         if self.champion_trace is None or self.task_instance is None:
@@ -5217,154 +3421,57 @@ class EvolutionEngine:
     # Recurrent feedback
     # ------------------------------------------------------------------
 
-    def _try_recurrent_feedback(self) -> bool:
-        """Save model-generated programs that execute successfully to training data.
-
-        Saves the best non-crashing model-guided challengers each generation.
-        This feeds the model's own output back into training, creating a
-        self-improving loop. The champion (reference solution) is NOT saved
-        because it's already in the training data.
-
-        Phase 3: Quality-gated trace storage — only saves traces where
-        fitness > MIN_FITNESS_FOR_TRACE, preventing training on low-quality
-        or crash traces. Adds timestamp for recency decay in training.
-        Performs quality-based eviction when buffer exceeds MAX_RECURRENT_ENTRIES.
-
-        Phase 4: Fitness-weighted selection — computes softmax-normalized
-        training weights so higher-fitness programs contribute proportionally
-        more training signal. Temperature-scaled to concentrate weight on
-        the best programs while preserving relative ordering.
-
-        Phase 5: Training data quality validation — filters out
-        zero-length traces (0 executed instructions), error traces
-        (status != 'ok'), and trivial programs (< 3 instructions)
-        to prevent the predictor from learning from garbage data.
-
-        Phase 3.5: Level pre-computation and diversity weighting —
-        determines each candidate's solved_level before fitness weighting,
-        then computes level-diversity weights using inverse-frequency.
-        Underrepresented levels get higher weight, improving predictor
-        generalization across difficulty levels. Combined multiplicatively
-        with fitness weights and normalized.
-
-        Phase 6: Novelty weighting — weights training examples by how
-        structurally different they are from existing training data.
-        Uses bitwise Hamming distance between each candidate and a
-        cached set of existing training programs (novelty anchors).
-        Novel programs (distant from existing data) contribute more
-        learning signal, while redundant programs are downweighted.
-        Combined multiplicatively with fitness and diversity weights.
-
-        Returns True if >= 50 examples accumulated (signal to retrain).
-        """
-        if not self._last_challengers:
-            return False
-
-        # Determine recurrent data directory
-        # R16: Cache makedirs path to avoid repeated os.makedirs each generation
-        recur_dir = self.config.recurrent_feedback_dir
-        if not recur_dir:
-            recur_dir = MILESTONE1_DIR  # Write to milestone1/ directly (not subdirectory)
-        if getattr(self, "_recur_dir_made", None) != recur_dir:
-            os.makedirs(recur_dir, exist_ok=True)
-            self._recur_dir_made = recur_dir
-
-        # Load existing hashes (cached on instance)
-        jsonl_path = os.path.join(recur_dir, "recurrent_data.jsonl")  # milestone1/recurrent_data.jsonl
-        if not hasattr(self, "_saved_sha256s"):
-            self._saved_sha256s: dict[str, None] = {}  # R38: OrderedDict-like dict for age-based eviction
-            if os.path.isfile(jsonl_path):
-                try:
-                    with open(jsonl_path) as _f:
-                        for _line in _f:
-                            _e = json.loads(_line)
-                            if "champion_sha256" in _e:
-                                self._saved_sha256s[_e["champion_sha256"]] = None
-                except Exception:
-                    pass
-        if not hasattr(self, '_saved_size_counts'):
-            self._saved_size_counts: dict[int, int] = {}
-
-        saved_any = False
+    def _collect_recurrent_candidates(self, fitnesses, n_fitnesses):
+        """Phase 1: Collect eligible candidates for recurrent feedback."""
+        _candidates = []
         rejected_count = 0
-        # Cache module-level LEVELS (already imported at module top — avoid re-import)
         _levels = LEVELS
-        _verify_levels_sorted = None  # lazy: compute sorted keys once
-
-        # Pre-cache fitnesses list and its length for fast indexed access
-        fitnesses = self._last_challenger_fitnesses
-        n_fitnesses = len(fitnesses)
-
-        # Collect eligible candidates (phase 1) then compute fitness weights (phase 2)
-        # so higher-fitness programs contribute proportionally more training signal.
-        _candidates = []  # list of (prog, fitness, trace, sha256) tuples
+        _verify_levels_sorted = None
         for idx in range(len(self._last_challengers)):
             prog = self._last_challengers[idx]
             if idx >= len(self._last_results):
                 continue
-
             trace = self._last_results[idx]
-            status = trace.get("status", "")
-            if status != "ok":
+            if trace.get("status", "") != "ok":
                 continue
-
             sha256 = sha256_program(prog)
             if sha256 in self._saved_sha256s:
                 continue
-
-            # Phase 3.1: Quality-gated trace storage
-            # Only save traces above MIN_FITNESS_FOR_TRACE threshold.
-            # Exception: if deeply stalled (>= 30 gens), save regardless
-            # as a desperate measure to get any training signal.
             challenger_fitness = fitnesses[idx] if idx < n_fitnesses else 0.0
             if challenger_fitness <= MIN_FITNESS_FOR_TRACE and self.generations_stalled < 30:
                 rejected_count += 1
                 continue
             if len(prog) < 3:
                 continue
-
-            # Phase 5: Training data quality validation
-            # Filter out traces that are zero-length or contain no useful signal.
-            # A zero-length trace means the program executed zero instructions,
-            # giving the predictor nothing to learn from.
             _trace_instr_count = trace.get('instructions_count', 0)
             if _trace_instr_count <= 0:
                 rejected_count += 1
                 continue
-
-            # Phase 3.3: Size diversity filter — prevent training on programs
-            # of similar length to maintain diversity in training data.
-            # _instr_count already set by Phase 5 zero-length check above.
             if _trace_instr_count > 0 and hasattr(self, '_saved_size_counts'):
-                _size_bucket = (_trace_instr_count // 5) * 5  # bucket to nearest 5
+                _size_bucket = (_trace_instr_count // 5) * 5
                 _total_saved = sum(self._saved_size_counts.values()) if self._saved_size_counts else 0
-                if _total_saved > 20:  # only filter when buffer has enough data
+                if _total_saved > 20:
                     _bucket_count = self._saved_size_counts.get(_size_bucket, 0)
-                    if _bucket_count > _total_saved * 0.7:  # >70% same size bucket
+                    if _bucket_count > _total_saved * 0.7:
                         rejected_count += 1
                         continue
                 self._saved_size_counts[_size_bucket] = self._saved_size_counts.get(_size_bucket, 0) + 1
-
             _candidates.append((prog, challenger_fitness, trace, sha256))
+        return _candidates, rejected_count, _levels, _verify_levels_sorted
 
-        # Phase 3.5: Level pre-computation for diversity weighting
-        # Determine solved_level for each candidate before fitness weighting
-        # so we can compute level-diversity weights to improve predictor
-        # generalization across difficulty levels.
-        _level_data = []  # list of (solved_level, task_score) per candidate
-        if _candidates:
-            if _verify_levels_sorted is None:
-                _verify_levels_sorted = sorted(_levels.keys())
-            for _prog, _fit, _trace, _sha in _candidates:
+    def _compute_level_weights(self, candidates, levels, verify_levels_sorted):
+        """Phase 3.5 + 4: Compute level-diversity and fitness weights."""
+        _level_data = []
+        if candidates:
+            if verify_levels_sorted is None:
+                verify_levels_sorted = sorted(levels.keys())
+            for _prog, _fit, _trace, _sha in candidates:
                 _task_score = 0.0
                 _solved_level = self.champion_level
-                _output = {
-                    "registers": _trace.get("final_regs", {}),
-                    "memory": _trace.get("final_memory", {}),
-                }
+                _output = {"registers": _trace.get("final_regs", {}), "memory": _trace.get("final_memory", {})}
                 try:
-                    for lvl in _verify_levels_sorted:
-                        level_cls = _levels[lvl]
+                    for lvl in verify_levels_sorted:
+                        level_cls = levels[lvl]
                         try:
                             score = level_cls(seed=lvl).verify(_output, self.task_instance)
                             if score > _task_score:
@@ -5375,21 +3482,13 @@ class EvolutionEngine:
                 except Exception:
                     pass
                 _level_data.append((_solved_level, _task_score))
-
-        # Phase 4: Fitness-weighted selection + Level-diversity weighting
-        # Compute softmax fitness weights AND level-diversity weights,
-        # then combine multiplicatively. Underrepresented levels get a
-        # boost to improve predictor generalization across levels.
         _weights = None
-        _n_levels_found = 1  # default for log message
-        if _candidates:
-            _fits = [c[1] for c in _candidates]
-            _max_f = max(_fits)
-            _min_f = min(_fits)
+        _n_levels_found = 1
+        if candidates:
+            _fits = [c[1] for c in candidates]
+            _max_f, _min_f = max(_fits), min(_fits)
             _fitness_range = _max_f - _min_f
-            # Softmax temperature: lower temp concentrates weight on best programs
             _temperature = max(0.5, _fitness_range * 0.2) if _fitness_range > 0 else 1.0
-
             if _fitness_range > 1e-6:
                 _logits = [((f - _min_f) / _fitness_range) * (1.0 / _temperature) for f in _fits]
                 _max_logit = max(_logits)
@@ -5398,145 +3497,72 @@ class EvolutionEngine:
                 _fitness_weights = [e / _sum_exp for e in _exp_logits] if _sum_exp > 0 else [1.0 / len(_logits)] * len(_logits)
             else:
                 _fitness_weights = [1.0 / len(_fits)] * len(_fits)
-
-            # Level-diversity weighting: boost underrepresented levels
-            # to improve predictor generalization across difficulty levels.
-            # Uses inverse-frequency weighting: levels with fewer candidates
-            # get proportionally higher weight in the training signal.
             _level_counter = {}
             for _sd, _ in _level_data:
                 _level_counter[_sd] = _level_counter.get(_sd, 0) + 1
-
             _n_levels_found = len(_level_counter)
-            _avg_per_level = len(_candidates) / max(1, _n_levels_found)
-
-            # Diversity multiplier: avg_count / level_count
-            # Underrepresented levels (count < avg) get multiplier > 1
-            # Overrepresented levels (count > avg) get multiplier < 1
-            _level_div_mult = {}
-            for _lvl, _cnt in _level_counter.items():
-                _level_div_mult[_lvl] = _avg_per_level / max(1, _cnt)
-
-            # Combine: multiplicative blend of fitness and diversity weights,
-            # then normalize to sum to 1 for probability distribution.
-            _weights = []
-            for i in range(len(_candidates)):
-                _lvl = _level_data[i][0]
-                fw = _fitness_weights[i]
-                dw = _level_div_mult[_lvl]
-                _weights.append(fw * dw)
+            _avg_per_level = len(candidates) / max(1, _n_levels_found)
+            _level_div_mult = {lvl: _avg_per_level / max(1, cnt) for lvl, cnt in _level_counter.items()}
+            _weights = [_fitness_weights[i] * _level_div_mult[_level_data[i][0]] for i in range(len(candidates))]
             _w_sum = sum(_weights)
             if _w_sum > 0:
                 _weights = [w / _w_sum for w in _weights]
+        return _level_data, _weights, _n_levels_found
 
-        # Phase 6: Novelty weighting — weight training examples by how
-        # structurally different they are from existing training data.
-        # Novel programs (far from existing data) contribute more learning
-        # signal; redundant programs are downweighted. Uses cached novelty
-        # anchors (up to 200 existing training programs) and computes
-        # minimum bitwise Hamming distance for each candidate.
-        _novelty_weight_applied = False
-        if _candidates:
-            # Lazily load and cache novelty anchors from the training JSONL
-            if not hasattr(self, '_novelty_anchors'):
-                self._novelty_anchors: list[list[int]] = []
-                self._novelty_anchors_file_size = 0
-
+    def _apply_novelty_weights(self, candidates, weights, jsonl_path):
+        """Phase 6: Apply novelty weighting to training examples."""
+        if not candidates: return weights, False
+        if not hasattr(self, '_novelty_anchors'): self._novelty_anchors, self._novelty_anchors_file_size = [], 0
+        try: cfs = os.path.getsize(jsonl_path) if os.path.isfile(jsonl_path) else 0
+        except OSError: cfs = 0
+        if cfs > self._novelty_anchors_file_size or not self._novelty_anchors:
+            na = []
             try:
-                _current_file_size = os.path.getsize(jsonl_path) if os.path.isfile(jsonl_path) else 0
-            except OSError:
-                _current_file_size = 0
-
-            # Refresh anchors when file grows (avoids stale cache)
-            if _current_file_size > self._novelty_anchors_file_size or not self._novelty_anchors:
-                _MAX_NOVELTY_ANCHORS = 200
-                _new_anchors = []
-                try:
-                    if os.path.isfile(jsonl_path):
-                        with open(jsonl_path) as _nf:
-                            for _nline in _nf:
-                                try:
-                                    _ne = json.loads(_nline)
-                                    _prog_hex = _ne.get("champion_program", [])
-                                    if _prog_hex:
-                                        _prog_words = [int(h, 16) for h in _prog_hex]
-                                        if len(_prog_words) >= 3:
-                                            _new_anchors.append(_prog_words)
-                                            if len(_new_anchors) >= _MAX_NOVELTY_ANCHORS:
-                                                break
-                                except (json.JSONDecodeError, ValueError):
-                                    continue
-                except Exception:
-                    pass
-                self._novelty_anchors = _new_anchors
-                self._novelty_anchors_file_size = _current_file_size
-
-            if self._novelty_anchors:
-                _novelty_scores = []
-                for prog, _fit, _trace, _sha in _candidates:
-                    _min_dist = float('inf')
-                    for _anchor in self._novelty_anchors:
-                        # XOR-based Hamming distance (count differing bits)
-                        _xor_bits = 0
-                        _compare_len = min(len(prog), len(_anchor))
-                        for j in range(_compare_len):
-                            _xor_bits += bin(prog[j] ^ _anchor[j]).count('1')
-                        # Penalize length difference (8 bits per word difference)
-                        _len_diff = abs(len(prog) - len(_anchor))
-                        _total_bits = (_xor_bits + _len_diff * 8) / max(1, len(prog) + len(_anchor))
-                        if _total_bits < _min_dist:
-                            _min_dist = _total_bits
-                    _novelty_scores.append(_min_dist if _min_dist != float('inf') else 0.5)
-
-                # Convert to novelty weights: sqrt scaling to avoid extremes
-                _max_novelty = max(_novelty_scores) if _novelty_scores else 1.0
-                if _max_novelty > 1e-6:
-                    _novelty_ws = [math.sqrt(s / _max_novelty) for s in _novelty_scores]
-                else:
-                    _novelty_ws = [1.0] * len(_novelty_scores)
-                # Floor at 0.1 so known programs aren't fully suppressed
-                _novelty_ws = [max(0.1, w) for w in _novelty_ws]
-
-                # Combine multiplicatively with existing weights
-                if _weights is not None:
-                    for i in range(len(_weights)):
-                        _weights[i] *= _novelty_ws[i]
-                    _w_sum2 = sum(_weights)
-                    if _w_sum2 > 0:
-                        _weights = [w / _w_sum2 for w in _weights]
-                _novelty_weight_applied = True
-
-        # Phase 2: Write training examples with fitness+diversity+novelty weights
-        # (levels pre-computed in Phase 3.5 above)
-        for i, (prog, challenger_fitness, trace, sha256) in enumerate(_candidates):
-            solved_level = _level_data[i][0] if _level_data else self.champion_level
-            task_score = _level_data[i][1] if _level_data else 0.0
-
-            # Phase 3.2: Add timestamp for recency decay in training
+                if os.path.isfile(jsonl_path):
+                    with open(jsonl_path) as f:
+                        for line in f:
+                            try:
+                                e = json.loads(line)
+                                ph = e.get("champion_program", [])
+                                if ph:
+                                    pw = [int(h, 16) for h in ph]
+                                    if len(pw) >= 3: na.append(pw)
+                                    if len(na) >= 200: break
+                            except (json.JSONDecodeError, ValueError): continue
+            except Exception: pass
+            self._novelty_anchors, self._novelty_anchors_file_size = na, cfs
+        if not self._novelty_anchors: return weights, False
+        ns = []
+        for prog, *_ in candidates:
+            md = float('inf')
+            for a in self._novelty_anchors:
+                xb = sum(bin(prog[j] ^ a[j]).count('1') for j in range(min(len(prog), len(a))))
+                tb = (xb + abs(len(prog) - len(a)) * 8) / max(1, len(prog) + len(a))
+                if tb < md: md = tb
+            ns.append(md if md != float('inf') else 0.5)
+        mx = max(ns) if ns else 1.0
+        nw = [max(0.1, math.sqrt(s / mx)) if mx > 1e-6 else 1.0 for s in ns]
+        if weights is not None:
+            for i in range(len(weights)): weights[i] *= nw[i]
+            ws = sum(weights)
+            if ws > 0: weights = [w / ws for w in weights]
+        return weights, True
+    def _write_recurrent_examples(self, candidates, weights, level_data, jsonl_path):
+        """Phase 2: Write training examples with fitness+diversity+novelty weights."""
+        saved_any = False
+        for i, (prog, challenger_fitness, trace, sha256) in enumerate(candidates):
+            solved_level = level_data[i][0] if level_data else self.champion_level
+            task_score = level_data[i][1] if level_data else 0.0
             example = {
-                "level": solved_level,
-                "generation": self.current_generation,
-                "fitness": challenger_fitness,
-                "champion_sha256": sha256,
-                "champion_words": len(prog),
-                "champion_program": [hex(w) for w in prog],
-                "trace_status": trace.get("status", ""),
-                "trace_instr_count": trace.get("instructions_count", 0),
-                "stalled_count": self.generations_stalled,
-                "task_score": task_score,
-                "timestamp": time.time(),
-                "trace_quality_score": min(1.0, max(0.0, challenger_fitness / 100.0)),
-                # Phase 4+6: Fitness+diversity+novelty training weight
-                # (softmax × inverse-freq × novelty_distance)
-                # Higher fitness, underrepresented level, AND novelty → higher weight
-                "training_weight": _weights[i] if _weights else 1.0,
+                "level": solved_level, "generation": self.current_generation,
+                "fitness": challenger_fitness, "champion_sha256": sha256,
+                "champion_words": len(prog), "champion_program": [hex(w) for w in prog],
+                "trace_status": trace.get("status", ""), "trace_instr_count": trace.get("instructions_count", 0),
+                "stalled_count": self.generations_stalled, "task_score": task_score,
+                "timestamp": time.time(), "trace_quality_score": min(1.0, max(0.0, challenger_fitness / 100.0)),
+                "training_weight": weights[i] if weights else 1.0,
             }
-
             self._saved_sha256s[sha256] = None
-            # R38: Cap sha256 dedup dict to prevent unbounded memory growth.
-            # Uses dict (insertion-ordered in Python 3.7+) instead of set
-            # for deterministic age-based eviction. When cap is hit, evicts
-            # the oldest 2000 entries (FIFO), preserving recent dedup data.
             if len(self._saved_sha256s) > 5000:
                 keys = list(self._saved_sha256s.keys())
                 self._saved_sha256s = {k: None for k in keys[-3000:]}
@@ -5544,24 +3570,43 @@ class EvolutionEngine:
                 f.write(json.dumps(example) + "\n")
             self.recurrent_examples_count += 1
             saved_any = True
-
+        return saved_any
+    def _try_recurrent_feedback(self) -> bool:
+        """Save model-generated programs that execute successfully to training data."""
+        if not self._last_challengers:
+            return False
+        recur_dir = self.config.recurrent_feedback_dir
+        if not recur_dir:
+            recur_dir = MILESTONE1_DIR
+        if getattr(self, "_recur_dir_made", None) != recur_dir:
+            os.makedirs(recur_dir, exist_ok=True)
+            self._recur_dir_made = recur_dir
+        jsonl_path = os.path.join(recur_dir, "recurrent_data.jsonl")
+        if not hasattr(self, "_saved_sha256s"):
+            self._saved_sha256s = {}
+            if os.path.isfile(jsonl_path):
+                try:
+                    with open(jsonl_path) as _f:
+                        for _line in _f:
+                            _e = json.loads(_line)
+                            if "champion_sha256" in _e:
+                                self._saved_sha256s[_e["champion_sha256"]] = None
+                except Exception:
+                    pass
+        if not hasattr(self, '_saved_size_counts'):
+            self._saved_size_counts = {}
+        fitnesses = self._last_challenger_fitnesses
+        n_fitnesses = len(fitnesses)
+        _candidates, rejected_count, _levels, _verify_levels_sorted = self._collect_recurrent_candidates(fitnesses, n_fitnesses)
+        _level_data, _weights, _n_levels_found = self._compute_level_weights(_candidates, _levels, _verify_levels_sorted)
+        _weights, _novelty_weight_applied = self._apply_novelty_weights(_candidates, _weights, jsonl_path)
+        saved_any = self._write_recurrent_examples(_candidates, _weights, _level_data, jsonl_path)
         if saved_any:
-            self._log(
-                f"Recurrent feedback saved ({self.recurrent_examples_count} total, "
-                f"{len(self._saved_sha256s)} unique, "
-                f"fitness+diversity+novelty-weighted={_novelty_weight_applied}, "
-                f"levels_covered={_n_levels_found}, "
-                f"novelty_anchors={len(self._novelty_anchors) if hasattr(self, '_novelty_anchors') else 0})"
-            )
+            self._log(f"Recurrent feedback saved ({self.recurrent_examples_count} total, {len(self._saved_sha256s)} unique, novelty={_novelty_weight_applied}, levels={_n_levels_found})")
         if rejected_count > 0:
-            self._log(f"Rejected {rejected_count} low-quality traces (fitness/length/trivial)")
-
-        # Phase 3.3: Quality-based eviction when buffer exceeds limit
-        # Evicts lowest-fitness traces (not oldest) to maintain training quality.
+            self._log(f"Rejected {rejected_count} low-quality traces")
         self._evict_recurrent_buffer(jsonl_path)
-
         return self.recurrent_examples_count >= 50
-
     def _evict_recurrent_buffer(self, jsonl_path: str) -> None:
         """Evict lowest-fitness traces when recurrent buffer exceeds MAX_RECURRENT_ENTRIES.
 

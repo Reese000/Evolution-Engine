@@ -295,7 +295,6 @@ class MetaEvolutionEngine:
         self._num_eval_seeds: int = _DEFAULT_NUM_EVAL_SEEDS
 
     # ── Public API ─────────────────────────────────────────────────────────
-
     def run(self) -> Dict[str, Any]:
         """Execute the meta-evolution loop.
 
@@ -412,7 +411,6 @@ class MetaEvolutionEngine:
             "history": self.history,
         }
         return meta_summary
-
     def best_config(self) -> Any:
         """Return the ``EvolutionConfig`` with the highest meta-fitness.
 
@@ -435,210 +433,53 @@ class MetaEvolutionEngine:
 
     # ── Internals ──────────────────────────────────────────────────────────
 
-    def _evaluate_genome(
-        self,
-        genome: MetaGenome,
-        meta_gen_idx: int = 0,
-    ) -> Tuple[float, Dict[str, Any]]:
-        """Run one meta-genome through the base evolution engine.
-
-        The genome is decoded to an ``EvolutionConfig``, serialised to a
-        temporary JSON file, and the base engine is launched as a
-        subprocess.  The output summary is parsed to compute meta-fitness.
-
-        Parameters
-        ----------
-        genome : MetaGenome
-            The meta-genome to evaluate.
-        meta_gen_idx : int
-            Index in the meta-population (used for logging only).
-
-        Returns
-        -------
-        Tuple[float, Dict[str, Any]]
-            (meta_fitness, summary_dict) where summary_dict contains the
-            raw output from the base evolution run.
-        """
-        # Decode the meta-genome to an EvolutionConfig
-        config = genome.decode()
-
-        # ── Build meta-params from config for configurable meta-fitness ──
-        meta_params = {
-            "max_fitness": getattr(config, "max_fitness", _DEFAULT_MAX_FITNESS),
-            "max_level": getattr(config, "max_level", _DEFAULT_MAX_LEVEL),
-            "max_champion_words": getattr(config, "max_champion_words", _DEFAULT_MAX_CHAMPION_WORDS),
-            "meta_weight_improvement": getattr(config, "meta_weight_improvement", 0.3),
-            "meta_weight_depth": getattr(config, "meta_weight_depth", 0.5),
-            "meta_weight_diversity": getattr(config, "meta_weight_diversity", 0.2),
-        }
-        # Cache on first decode
-        if self._meta_params is None:
-            self._meta_params = meta_params
-            self._num_eval_seeds = getattr(config, "num_eval_seeds", _DEFAULT_NUM_EVAL_SEEDS)
-
-        # Resolve the variance penalty coefficient from the config
-        variance_penalty_coeff = getattr(config, "variance_penalty_coeff", _DEFAULT_VARIANCE_PENALTY_COEFF)
-
-        # Build the base config dict (without seed — set per iteration)
-        base_config_dict = {
-            "population_size": config.population_size,
-            "max_generations": self.config.base_generations,
-            "mutation_rate": config.mutation_rate,
-            "crossover_rate": config.crossover_rate,
-            "elite_ratio": config.elite_ratio,
-            "tournament_size": config.tournament_size,
-            "curriculum_stall_threshold": config.curriculum_stall_threshold,
-            "novelty_weight": config.novelty_weight,
-            "curriculum_level": 0,
-            "auto_curriculum": True,
-            "instruction_budget": config.instruction_budget if hasattr(config, "instruction_budget") else 10000,
-            "eval_budget": config.eval_budget if hasattr(config, "eval_budget") else 5000,
+    def _build_eval_config(self, genome) -> dict:
+        """Build evaluation configuration from genome."""
+        return {
+            "mutation_rate": genome.mutation_rate,
+            "population_size": genome.population_size,
+            "elite_ratio": genome.elite_ratio,
+            "max_generations": genome.max_generations,
+            "eval_budget": genome.eval_budget,
+            "use_novelty_archive": genome.use_novelty_archive,
+            "novelty_weight": genome.novelty_weight,
+            "use_qd_archive": genome.use_qd_archive,
+            "qd_bonus_weight": genome.qd_bonus_weight,
         }
 
-        # ── Multi-seed ensemble evaluation ──────────────────────────────
-        # Average meta-fitness across _NUM_EVAL_SEEDS independent seeds to
-        # reduce evaluation variance.  Each seed runs a full base evolution
-        # as a subprocess.
-        ensemble_fitnesses: List[float] = []
-        best_summary: Dict[str, Any] = {}
-        best_meta_fitness: float = float("-inf")
+    def _run_eval_cycle(self, genome, config_dict):
+        """Run a single evaluation cycle and return fitness metrics."""
+        from evolution_engine import EvolutionEngine, EvolutionConfig
+        eval_config = EvolutionConfig(**config_dict)
+        engine = EvolutionEngine(config=eval_config)
+        engine._seed_model_path = genome.model_path if hasattr(genome, 'model_path') else ""
+        result = engine.run(num_generations=genome.max_generations)
+        return {
+            "fitness": result.get("final_fitness", 0.0),
+            "level": result.get("final_level", 0),
+            "generations": result.get("generations_completed", 0),
+            "elapsed": result.get("elapsed_seconds", 0.0),
+        }
 
-        for seed_idx in range(self._num_eval_seeds):
-            # Build config dict with a fresh random seed for this iteration
-            config_dict = dict(base_config_dict)
-            config_dict["seed"] = self._rng.randint(0, 2**31 - 1)
-
-            # Serialise to a temporary JSON file
-            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-            tmp_path = tmp.name
-            try:
-                json.dump(config_dict, tmp)
-                tmp.close()
-
-                # Build the subprocess command
-                runner_script = (
-                    "import sys, json\n"
-                    f"sys.path.insert(0, {str(_SCRIPT_DIR)!r})\n"
-                    f"with open({tmp_path!r}) as f:\n"
-                    "    d = json.load(f)\n"
-                    "from evolution_engine import EvolutionEngine, EvolutionConfig\n"
-                    "cfg = EvolutionConfig(**d)\n"
-                    "eng = EvolutionEngine(config=cfg)\n"
-                    "summary = eng.run()\n"
-                    "print('META_EVAL_RESULT:' + json.dumps(summary))"
-                )
-
-                result = subprocess.run(
-                    [sys.executable, "-c", runner_script],
-                    capture_output=True,
-                    text=True,
-                    timeout=600,
-                    cwd=str(_SCRIPT_DIR),
-                )
-
-                if result.returncode != 0:
-                    _logger.warning(
-                        "[Meta-eval seed %s] genome %s failed (rc=%s). stderr: %s",
-                        seed_idx,
-                        meta_gen_idx,
-                        result.returncode,
-                        result.stderr.strip()[:200],
-                    )
-                    # Skip this seed but continue with others (partial failure)
-                    continue
-
-                # Parse the summary from stdout
-                summary: Dict[str, Any] = {}
-                for line in result.stdout.splitlines():
-                    if line.startswith("META_EVAL_RESULT:"):
-                        try:
-                            summary = json.loads(line[len("META_EVAL_RESULT:") :])
-                        except json.JSONDecodeError:
-                            pass
-                        break
-
-                if not summary:
-                    _logger.warning(
-                        "[Meta-eval seed %s] genome %s returned no parseable " "summary. stdout: %s",
-                        seed_idx,
-                        meta_gen_idx,
-                        result.stdout.strip()[:200],
-                    )
-                    continue  # Skip this seed; do NOT discard previous successes
-
-                # Compute meta-fitness for this seed
-                meta_fitness = self._compute_meta_fitness(summary, meta_params=meta_params)
-                ensemble_fitnesses.append(meta_fitness)
-
-                # Log per-seed result for transparency
-                final_f = summary.get("final_fitness", "?")
-                final_l = summary.get("final_level", "?")
-                final_w = summary.get("champion_words", "?")
-                _logger.info(
-                    "[ensemble seed %s/%s] F=%s L=%s W=%s MF=%.4f",
-                    seed_idx,
-                    self._num_eval_seeds,
-                    final_f,
-                    final_l,
-                    final_w,
-                    meta_fitness,
-                )
-
-                # Track the best summary (for diagnostics)
-                if meta_fitness > best_meta_fitness:
-                    best_meta_fitness = meta_fitness
-                    best_summary = summary
-
-            except subprocess.TimeoutExpired:
-                _logger.warning(
-                    "[Meta-eval seed %s] genome %s timed out.",
-                    seed_idx,
-                    meta_gen_idx,
-                )
-                continue  # skip failed seed, continue with others
-            except Exception as exc:
-                _logger.error(
-                    "[Meta-eval seed %s] genome %s raised %s.",
-                    seed_idx,
-                    meta_gen_idx,
-                    exc,
-                )
-                continue  # skip failed seed, continue with others
-            finally:
-                # Clean up the temp file
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-        # End seed loop
-
-        # If all seeds failed, return -inf
-        if not ensemble_fitnesses or all(f == float("-inf") for f in ensemble_fitnesses):
-            return float("-inf"), {"error": "all seeds failed"}
-
-        # Apply variance penalty: adjusted = mean - std * coeff.
-        # Configs with consistent results across seeds score higher than
-        # those that spike on one seed but fail on others.
-        mean_fitness = sum(ensemble_fitnesses) / len(ensemble_fitnesses)
-        if len(ensemble_fitnesses) >= 2:
-            # Compute std dev, filtering any non-finite values
-            valid = [f for f in ensemble_fitnesses if math.isfinite(f)]
-            if len(valid) >= 2:
-                m = sum(valid) / len(valid)
-                var = sum((f - m) ** 2 for f in valid) / len(valid)
-                std_dev = math.sqrt(var)
-                penalty = std_dev * variance_penalty_coeff
-                adjusted = mean_fitness - penalty
-                # Only log if penalty is non-trivial
-                if penalty > 1e-10:
-                    _logger.info(
-                        "[variance penalty] mean=%.4f std=%.4f penalty=%.4f " "adjusted=%.4f",
-                        mean_fitness,
-                        std_dev,
-                        penalty,
-                        adjusted,
-                    )
-                mean_fitness = adjusted
-        return mean_fitness, best_summary
-
+    def _aggregate_eval_results(self, cycle_results: list[dict]) -> float:
+        """Aggregate multiple cycle results into a single fitness score."""
+        if not cycle_results:
+            return 0.0
+        fitnesses = [r["fitness"] for r in cycle_results]
+        levels = [r["level"] for r in cycle_results]
+        avg_fitness = sum(fitnesses) / len(fitnesses)
+        max_level = max(levels) if levels else 0
+        level_bonus = max_level * 25.0
+        return avg_fitness + level_bonus
+    def _evaluate_genome(self, genome) -> float:
+        """Evaluate a genome by running evolution and returning fitness."""
+        config_dict = self._build_eval_config(genome)
+        n_cycles = getattr(self, 'eval_cycles', 1)
+        cycle_results = []
+        for _cycle in range(n_cycles):
+            result = self._run_eval_cycle(genome, config_dict)
+            cycle_results.append(result)
+        return self._aggregate_eval_results(cycle_results)
     @staticmethod
     def _compute_meta_fitness(summary: Dict[str, Any], meta_params: Optional[Dict[str, Any]] = None) -> float:
         """Compute a weighted meta-fitness score from a base evolution summary.
