@@ -958,8 +958,8 @@ class TestAcceptCheckpointEdgeCases:
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             path = f.name
         try:
-            # threshold = 2.0 * 1.05 = 2.1
-            result = mc.accept_checkpoint(2.05, path)
+            # threshold = 2.0 * 1.0 = 2.0
+            result = mc.accept_checkpoint(1.95, path)
             assert result is True
         finally:
             os.unlink(path)
@@ -1276,6 +1276,7 @@ class TestUpdateChampionStage1Skip:
         engine._oscillation_window_size = 10
         engine._oscillation_threshold = 3
         engine._hysteresis_min_delta = 0.5
+        engine.champion_trace = {"status": "ok", "final_regs": {}, "instructions_count": 0}
 
         # One challenger with stage1 fitness worse than champion
         program = [0x00100073]
@@ -1315,6 +1316,7 @@ class TestUpdateChampionStage1Skip:
         engine._oscillation_threshold = 3
         engine._hysteresis_min_delta = 0.5
         engine._oscillation_positive_count = 0
+        engine.champion_trace = {"status": "ok", "final_regs": {}, "instructions_count": 0}
 
         program = [0x00100073]
         trace = {"status": "ok", "final_regs": {}, "instructions_count": 1}

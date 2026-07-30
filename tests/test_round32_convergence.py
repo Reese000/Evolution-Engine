@@ -91,7 +91,7 @@ class TestFastCrashSkip:
         challengers = [prog] * 3
         results = [_crash_trace(), _crash_trace(), _ok_trace()]
 
-        elites, fits = engine._select_elite(challengers, results)
+        elites, fits, _ = engine._select_elite(challengers, results)
         # The fitness cache should have -100 for the two crash programs
         cache = engine._last_challenger_fitnesses
         assert cache[0] == -100.0, f"Crash program should have -100, got {cache[0]}"
@@ -105,7 +105,7 @@ class TestFastCrashSkip:
         budget = engine.config.eval_budget // 2
         results = [_timeout_trace(budget), _ok_trace(), _ok_trace()]
 
-        elites, fits = engine._select_elite(challengers, results)
+        elites, fits, _ = engine._select_elite(challengers, results)
         # The fitness cache should have -25 for the timeout program
         cache = engine._last_challenger_fitnesses
         assert cache[0] == -25.0, f"Timeout program should have -25, got {cache[0]}"
@@ -117,7 +117,7 @@ class TestFastCrashSkip:
         challengers = [prog] * 5
         results = [_crash_trace(), _timeout_trace(), _ok_trace(), _ok_trace(), _crash_trace()]
 
-        elites, fits = engine._select_elite(challengers, results)
+        elites, fits, _ = engine._select_elite(challengers, results)
         # All 5 programs should be scored in the cache
         cache = engine._last_challenger_fitnesses
         assert len(cache) == 5, f"Expected 5 cached fitnesses, got {len(cache)}"
