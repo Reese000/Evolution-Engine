@@ -57,7 +57,7 @@ progress_report_extended.json
 .runner.pid
 cycle_data/
 metrics/
-archive/
+archive/cycle_*/
 stop
 cycle_*/
 *.bak
