@@ -10,11 +10,18 @@ from __future__ import annotations
 
 import os
 import random
+import sys
 import tempfile
 import time
 from typing import List
 
 import pytest
+
+if sys.platform == "win32":
+    pytest.skip(
+        "Requires GPU and Linux environment — PM Rule #27",
+        allow_module_level=True,
+    )
 
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from metrics import MetricsCollector

@@ -12,8 +12,11 @@ Tests for:
 
 import os
 import random
+import sys
 import tempfile
 from unittest.mock import MagicMock
+
+import pytest
 
 # ── _select_elite dedup fitness alignment ────────────────────────────
 
@@ -190,6 +193,11 @@ class TestSkipEvolutionFlag:
 
 # ── _close_log_handle lifecycle ─────────────────────────────────────
 
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="PermissionError on temp dir cleanup — PM Rule #27",
+)
 
 class TestCloseLogHandle:
     """Verify _close_log_handle properly cleans up."""
