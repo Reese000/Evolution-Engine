@@ -560,6 +560,12 @@ class EvolutionConfig:
     use_circuit_breaker: bool = False
     circuit_breaker_stall_limit: int = 50
 
+    # Level circuit breaker: auto-disable impossible levels
+    # If a level has 0% success rate after N consecutive cycles,
+    # it is auto-disabled and skipped in future cycles.
+    level_circuit_breaker_enabled: bool = True
+    level_circuit_breaker_threshold: int = 10
+
     # Multi-task fitness extension
     use_secondary_tasks: bool = True
     secondary_task_weight: float = 3.0
@@ -728,6 +734,10 @@ class EvolutionEngine:
         self._qd_coverage = 0.0
         self._champion_replacement_count = 0
         self._champion_replacement_history = []
+
+        # Level circuit breaker state
+        self._level_circuit_stats: dict[int, dict] = {}  # {level: {"cycles": N, "successes": M}}
+        self._disabled_levels: set[int] = set()
     def __init__(self, config=None, rng=None, vm_farm=None, champion_anchor=None):
         self.config = config or EvolutionConfig()
         self.rng = rng or random.Random(self.config.seed)
@@ -1379,6 +1389,9 @@ class EvolutionEngine:
         self._try_recurrent_feedback()
         if auto_curriculum:
             self._try_curriculum_advance()
+        # Level circuit breaker: record outcome after curriculum check
+        if self.config.level_circuit_breaker_enabled:
+            self._record_cycle_level_outcome()
         self._run_generation_meta_monitoring(gen)
         self._record_strategy_outcomes()
         self._update_qd_archive()
@@ -3365,9 +3378,21 @@ class EvolutionEngine:
             return False, 0.0
 
     def _advance_curriculum(self) -> None:
-        """Advance to the next curriculum level."""
+        """Advance to the next curriculum level.
+
+        Skips levels that have been disabled by the circuit breaker.
+        """
         old_level = self.champion_level
-        self.champion_level += 1
+        # Skip disabled levels
+        new_level = old_level + 1
+        max_level = min(len(LEVELS) - 1, self.config.max_level)
+        while new_level <= max_level and self._is_level_disabled(new_level):
+            self._log(f"[CircuitBreaker] Skipping disabled level {new_level}")
+            new_level += 1
+        if new_level > max_level:
+            self._log(f"[CircuitBreaker] No more enabled levels after L{old_level}")
+            return
+        self.champion_level = new_level
         self.generations_stalled = 0
         self._qd_champion_reset_tried = False
 
@@ -3417,6 +3442,105 @@ class EvolutionEngine:
 
         # Log
         self._log(f"Curriculum advanced: L{old_level} -> L{self.champion_level}")
+
+    # ------------------------------------------------------------------
+    # Level circuit breaker: auto-disable impossible levels
+    # ------------------------------------------------------------------
+
+    def _record_level_circuit_outcome(self, level: int, had_success: bool) -> None:
+        """Record a cycle outcome for the given level.
+
+        Args:
+            level: Curriculum level being evaluated.
+            had_success: True if at least one program passed verify() for this level.
+        """
+        if not self.config.level_circuit_breaker_enabled:
+            return
+        if level not in self._level_circuit_stats:
+            self._level_circuit_stats[level] = {"cycles": 0, "successes": 0}
+        stats = self._level_circuit_stats[level]
+        stats["cycles"] += 1
+        if had_success:
+            stats["successes"] += 1
+
+    def _check_level_circuit_breaker(self, level: int) -> bool:
+        """Check if a level should be disabled by the circuit breaker.
+
+        Returns True if the level is disabled (0% success after threshold cycles).
+        """
+        if not self.config.level_circuit_breaker_enabled:
+            return False
+        if level in self._disabled_levels:
+            return True
+        stats = self._level_circuit_stats.get(level)
+        if stats is None:
+            return False
+        threshold = self.config.level_circuit_breaker_threshold
+        if stats["cycles"] >= threshold and stats["successes"] == 0:
+            self._disabled_levels.add(level)
+            self._log(
+                f"[CircuitBreaker] Level {level} DISABLED: "
+                f"0% success over {stats['cycles']} cycles "
+                f"(threshold={threshold})"
+            )
+            return True
+        return False
+
+    def _is_level_disabled(self, level: int) -> bool:
+        """Check if a level has been auto-disabled by the circuit breaker."""
+        return level in self._disabled_levels
+
+    def _record_cycle_level_outcome(self) -> None:
+        """Record the current cycle's outcome for the circuit breaker.
+
+        Called after each generation's evaluation to track per-level success.
+        Checks if any challenger (or the champion) passed verify() for the
+        current level.
+        """
+        level = self.champion_level
+        # Check champion verification
+        had_success = False
+        if self.champion_trace is not None:
+            try:
+                level_cls = get_task_level(level)
+                output = {
+                    "registers": self.champion_trace.get("final_regs", {}),
+                    "memory": self.champion_trace.get("final_memory", {}),
+                }
+                score = level_cls(seed=level).verify(output, self.task_instance)
+                if score >= 1.0:
+                    had_success = True
+            except Exception:
+                pass
+        # Also check last challengers
+        if not had_success and self._last_results:
+            try:
+                level_cls = get_task_level(level)
+                for trace in self._last_results:
+                    if not isinstance(trace, dict):
+                        continue
+                    if trace.get("status") != "ok":
+                        continue
+                    output = {
+                        "registers": trace.get("final_regs", {}),
+                        "memory": trace.get("final_memory", {}),
+                    }
+                    score = level_cls(seed=level).verify(output, self.task_instance)
+                    if score >= 1.0:
+                        had_success = True
+                        break
+            except Exception:
+                pass
+        self._record_level_circuit_outcome(level, had_success)
+        self._check_level_circuit_breaker(level)
+
+    def get_disabled_levels(self) -> frozenset[int]:
+        """Return the set of levels disabled by the circuit breaker."""
+        return frozenset(self._disabled_levels)
+
+    def get_level_circuit_stats(self) -> dict[int, dict]:
+        """Return per-level circuit breaker statistics."""
+        return {k: dict(v) for k, v in self._level_circuit_stats.items()}
 
     # ------------------------------------------------------------------
     # Recurrent feedback

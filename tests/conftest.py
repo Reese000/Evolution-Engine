@@ -107,6 +107,8 @@ def make_engine(
     engine._oscillation_window_size = 10
     engine._champion_oscillation_window = collections.deque(maxlen=10)
     engine.circuit_breaker = EvolutionConfig.CIRCUIT_BREAKER_SENTINEL
+    engine._level_circuit_stats = {}
+    engine._disabled_levels = set()
     engine._seed_model_path = ""
     engine._prefix_generator = None
     engine._external_evolution_params = {}
