@@ -1304,6 +1304,7 @@ class TestUpdateChampionStage1Skip:
         cfg = EvolutionConfig(eval_budget=1000)
         engine = EvolutionEngine.__new__(EvolutionEngine)
         engine.config = cfg
+        engine.champion = None  # P1-3: set to prevent AttributeError in _verify_champion
         engine.champion_fitness = 50.0
         engine.champion_level = 0
         engine._hall_of_fame = MagicMock()
@@ -1317,6 +1318,8 @@ class TestUpdateChampionStage1Skip:
         engine._hysteresis_min_delta = 0.5
         engine._oscillation_positive_count = 0
         engine.champion_trace = {"status": "ok", "final_regs": {}, "instructions_count": 0}
+        # P1-3: mock _verify_champion to skip real verify (needs task_instance)
+        engine._verify_champion = MagicMock(return_value=(True, 1.0))
 
         program = [0x00100073]
         trace = {"status": "ok", "final_regs": {}, "instructions_count": 1}

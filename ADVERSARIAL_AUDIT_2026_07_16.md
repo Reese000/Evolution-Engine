@@ -47,6 +47,8 @@ collected 1321 items (after ignoring 4 torch-dependent files)
     4 files couldn't collect (torch import)
 ```
 
+> **⚠ Historical snapshot** (July 16, 2026): The test suite has since grown to 8900+ tests. These counts reflect the suite at the time of this audit.
+
 **What passes:** Unit tests for non-torch modules (evolution engine logic, task definitions, strategy archive, etc.)
 **What fails:** All tests touching the training pipeline, checkpoint save/load, model migration
 

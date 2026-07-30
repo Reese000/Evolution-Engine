@@ -172,7 +172,7 @@ rm -f retrain_decisions.jsonl
 ## VERIFICATION CHECKLIST
 
 After all tasks, verify:
-- [ ] `python -m pytest tests/ -q` — all 1373 tests pass
+- [ ] `python -m pytest tests/ -q` — all 1373 tests pass *(Note: historical count — suite now has 8900+ tests.)*
 - [ ] 3-cycle smoke test produces real val_loss
 - [ ] `retrain_decisions.jsonl` has entries
 - [ ] `meta_controller_state.json` shows cycles observed > 0

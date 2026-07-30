@@ -11,7 +11,7 @@ You are working on the Evolution Engine project at `C:\Users\reese\Projects\Evol
 ### Context
 An adversarial audit has been completed. Read `ADVERSARIAL_AUDIT.md` for the full report. The summary:
 
-- **1,373 tests pass, 108 Python files, 0 syntax errors** — code quality is high
+- **1,373 tests pass, 108 Python files, 0 syntax errors** — code quality is high *(Note: historical snapshot — suite now has 8900+ tests.)*
 - **The system does not evolve** — best fitness (320.51) was achieved in Cycle 1, Gen 4. After 1,534 cycles, no improvement. The system oscillates between 160-220 fitness.
 - **Root cause: Fitness function rewards simplicity too aggressively** — trivial 3-5 instruction programs at level 0 beat complex programs at level 17
 - **Benchmark bug**: `benchmarks/verify_improvements.py` line 211 passes `tasks` list as `rng` argument to `EvolutionEngine(cfg, tasks)` — should be `EvolutionEngine(cfg)`

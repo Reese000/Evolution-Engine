@@ -3058,6 +3058,14 @@ class EvolutionEngine:
         # ── Base score ──────────────────────────────────────────────
         base = reg_matches * 100.0 - bloat + exec_credit + solved_bonus
 
+        # ── Bonus normalization (per-bonus cap) ──────────────────────
+        # Match _compute_fitness: cap each structural bonus at
+        # max_bonus_fraction of the base score to prevent any single
+        # fitness dimension from dominating the total.
+        _base_for_norm = np.maximum(base, 1.0)
+        _mbf = getattr(self.config, "max_bonus_fraction", 1.0)
+        _max_single = _mbf * _base_for_norm
+
         # ── Efficiency scoring (vectorised) ─────────────────────────
         eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
         if eff_weight > 0:
@@ -3088,7 +3096,7 @@ class EvolutionEngine:
                         np.where(useful >= 5, 0.7 + (useful - 5) * 0.1, useful / 5.0),
                     )
                     opcode_bonus = unique_ratios * 0.5
-                    base += (instr_eff + opcode_bonus) * 30.0 * eff_weight
+                    base += np.minimum((instr_eff + opcode_bonus) * 30.0 * eff_weight, _max_single)
                 else:
                     instr_eff = np.where(
                         useful <= 5,
@@ -3100,7 +3108,7 @@ class EvolutionEngine:
                         ),
                     )
                     opcode_bonus = (1.0 - unique_ratios) * 0.5
-                    base += (instr_eff + opcode_bonus) * 30.0 * eff_weight
+                    base += np.minimum((instr_eff + opcode_bonus) * 30.0 * eff_weight, _max_single)
 
         # ── Multi-task scoring (vectorized aggregation) ────────────
         # Hoist getattr and dict lookups outside the N-program loop.
@@ -3168,12 +3176,14 @@ class EvolutionEngine:
 
             # Vectorized final bonus computation (single numpy pass)
             has_tasks = _tc > 0
-            base[has_tasks] += (
+            _mt_bonus = np.zeros(n_ok, dtype=np.float64)
+            _mt_bonus[has_tasks] = (
                 (_ts[has_tasks] / _tc[has_tasks].astype(np.float64))
                 * 5.0
                 * np.minimum(_tc[has_tasks].astype(np.float64), 3.0)
                 * mt_weight
             )
+            base += np.minimum(_mt_bonus, _max_single)
 
         # ── Time-to-solution credit (vectorised) ────────────────────
         solved_ok = reg_matches >= 0.99
@@ -3186,7 +3196,7 @@ class EvolutionEngine:
         tc[can5] = 20.0
         tc[can15] = 20.0 * (1.0 - (ok_instr[can15].astype(np.float64) - 5) / 10.0)
         tc[can_slow] = np.maximum(0.0, 10.0 - (ok_instr[can_slow].astype(np.float64) - 15) * 0.2)
-        base += tc
+        base += np.minimum(tc, _max_single)
 
         # R45: Adaptive bonus scaling -- scale structural bonuses based on
         # population diversity (same logic as _compute_fitness).
@@ -3224,7 +3234,7 @@ class EvolutionEngine:
                 if n_loops > 0:
                     loop_bonuses[j] = _loop_min(5.0, n_loops * 2.0)
             loop_bonuses *= _bonus_scale
-            base += loop_bonuses
+            base += np.minimum(loop_bonuses, _max_single)
 
         # Memory access credit for L7+
         if lvl >= 7:
@@ -3235,7 +3245,7 @@ class EvolutionEngine:
                 if mem_accesses:
                     mem_bonuses[j] = min(3.0, len(mem_accesses) * 0.5)
             mem_bonuses *= _bonus_scale
-            base += mem_bonuses
+            base += np.minimum(mem_bonuses, _max_single)
 
         # Instruction diversity credit for L5+
         if lvl >= 5:
@@ -3252,7 +3262,7 @@ class EvolutionEngine:
                 if n_cats >= 3:
                     div_bonuses[j] = min(2.0, (n_cats - 2) * 0.5)
             div_bonuses *= _bonus_scale
-            base += div_bonuses
+            base += np.minimum(div_bonuses, _max_single)
 
         # ── SMC pattern bonus (vectorised) ──────────────────────────
         if lvl >= 12:
@@ -3263,7 +3273,8 @@ class EvolutionEngine:
                         smc_mask[j, wi] = True
             smc_counts = smc_mask.sum(axis=1)
             smc_ok = smc_counts >= 3
-            base[smc_ok] += np.minimum(25.0, smc_counts[smc_ok].astype(np.float64) * 5.0)
+            _smc_bonus = np.minimum(25.0, smc_counts[smc_ok].astype(np.float64) * 5.0)
+            base[smc_ok] += np.minimum(_smc_bonus, _max_single[smc_ok])
 
         # ── Level-aware graduated bonus (vectorised) ────────────────
         cached = self._bonus_threshold_cache
@@ -3281,7 +3292,10 @@ class EvolutionEngine:
             50.0 * (reg_matches - bonus_threshold) / denom if denom > 0 else 0.0,
             0.0,
         )
-        base += grad_bonus
+        base += np.minimum(grad_bonus, _max_single)
+
+        # ── Level bonus (matches _compute_fitness) ───────────────────
+        base += np.minimum(lvl * 25.0, _max_single)
 
         # ── Raw task scores ─────────────────────────────────────────
         raw_scores[ok_indices] = base
