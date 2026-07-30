@@ -12,13 +12,15 @@ from __future__ import annotations
 import os
 import sys
 
-# Ensure milestone1/ is on sys.path so the subpackages resolve.
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-_LOGIT_MASK_DIR = os.path.join(BASE_DIR, "..", "milestone0", "logit-masking")
-if os.path.isdir(_LOGIT_MASK_DIR) and _LOGIT_MASK_DIR not in sys.path:
-    sys.path.insert(0, _LOGIT_MASK_DIR)
+# Ensure project paths are on sys.path so subpackages resolve.
+from pathlib import Path as _Path
+
+_root = str(_Path(__file__).resolve().parent.parent)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+from paths import ensure_project_on_path
+
+ensure_project_on_path()
 
 from training.loop import train
 from data.augmentation import register_rename_augment

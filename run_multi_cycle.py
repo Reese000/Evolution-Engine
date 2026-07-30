@@ -79,15 +79,10 @@ from logging_config import get_logger as _get_logger
 _logger_rmc = _get_logger("RunMultiCycle")
 
 
-# Ensure script dir is on path for imports (project-relative, not hardcoded /root/)
-sys.path.insert(0, SCRIPT_DIR)
-sys.path.insert(0, M1_DIR)
-_m0 = os.path.join(PROJECT_ROOT, "milestone0")
-_m3 = os.path.join(PROJECT_ROOT, "milestone3")
-sys.path.insert(0, os.path.join(_m0, "logit-masking"))
-sys.path.insert(0, os.path.join(_m0, "vm-farm"))
-sys.path.insert(0, os.path.join(_m0, "gpu-vm"))
-sys.path.insert(0, _m3)
+# Centralized path setup (replaces manual sys.path.insert hacks)
+from paths import ensure_project_on_path
+
+ensure_project_on_path()
 
 # Prometheus metrics export (optional)
 try:
@@ -235,18 +230,7 @@ def run_evolution(
     if meta_evolution_params:
         log(f"  Cycle {cycle}: Meta-tuned evolution params: {meta_evolution_params}")
 
-    # Ensure path setup for evolution_engine import
-    if SCRIPT_DIR not in sys.path:
-        sys.path.insert(0, SCRIPT_DIR)
-    import_paths = [
-        os.path.join(PROJECT_ROOT, "milestone0", "logit-masking"),
-        os.path.join(PROJECT_ROOT, "milestone0", "vm-farm"),
-        os.path.join(PROJECT_ROOT, "milestone3"),
-        M1_DIR,
-    ]
-    for p in import_paths:
-        if os.path.isdir(p) and p not in sys.path:
-            sys.path.insert(0, p)
+    # Paths already configured at module level via ensure_project_on_path()
 
     from evolution_engine import EvolutionConfig, EvolutionEngine
 

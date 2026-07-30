@@ -14,13 +14,15 @@ from typing import Any
 
 import torch
 
-# Ensure milestone1/ and parent are on sys.path so sibling modules resolve.
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-_LOGIT_MASK_DIR = os.path.join(BASE_DIR, "..", "milestone0", "logit-masking")
-if os.path.isdir(_LOGIT_MASK_DIR) and _LOGIT_MASK_DIR not in sys.path:
-    sys.path.insert(0, _LOGIT_MASK_DIR)
+# Ensure project paths are on sys.path so sibling modules resolve.
+from pathlib import Path as _Path
+
+_root = str(_Path(__file__).resolve().parent.parent.parent)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+from paths import MILESTONE1_DIR as BASE_DIR, ensure_project_on_path
+
+ensure_project_on_path()
 
 
 def train(
