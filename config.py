@@ -49,7 +49,7 @@ class EvolutionSection:
     auto_curriculum: bool = True
     curriculum_stall_threshold: int = 3
     checkpoint_interval: int = 25
-    max_level: int = 13
+    max_level: int = 30
     max_champion_words: int = 500
     num_eval_seeds: int = 3
     stall_threshold: int = 10

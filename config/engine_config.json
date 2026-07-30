@@ -13,7 +13,7 @@
     "auto_curriculum": true,
     "curriculum_stall_threshold": 3,
     "checkpoint_interval": 25,
-    "max_level": 13,
+    "max_level": 30,
     "max_champion_words": 500,
     "num_eval_seeds": 3,
     "stall_threshold": 10,
