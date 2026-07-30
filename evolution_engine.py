@@ -966,6 +966,12 @@ class EvolutionEngine:
         # decide whether the champion has solved the task.
         self._champion_raw_task_score: float = 0.0
 
+        # Partial verify scoring: captures the float verify() score even when
+        # the champion fails full verification. Used to create a fitness gradient
+        # so the system can improve incrementally rather than being stuck at 0.0.
+        # Default 1.0 (no scaling) until first verify() call.
+        self._champion_partial_verify: float = 1.0
+
         # R21: Track whether champion changed since last QD archive update.
         # When champion is unchanged, _update_qd_archive can skip entirely
         # (avoids redundant QD axes recomputation every generation).
@@ -2926,6 +2932,14 @@ class EvolutionEngine:
             except (TypeError, ValueError, RuntimeError):
                 pass
 
+        # Partial verify gradient: scale fitness by champion's verify progress.
+        # When verify() returns 0.0 (all fail), fitness is scaled to 0.3 floor,
+        # creating a gradient from 0.3 (0% verify) to 1.0 (100% verify).
+        # This enables incremental improvement even when no champion fully
+        # verifies (the L4 plateau escape mechanism).
+        _partial_v = getattr(self, '_champion_partial_verify', 1.0)
+        fitness *= max(0.3, _partial_v)
+
         return fitness
 
     # ------------------------------------------------------------------
@@ -3356,6 +3370,15 @@ class EvolutionEngine:
                     pass
 
             fitnesses[idx] = fj
+
+        # Partial verify gradient: scale OK-program fitnesses by champion's
+        # verify progress (same as _compute_fitness). 0.3 floor ensures non-zero
+        # gradient even when verify() returns 0.0.  Only scale OK entries --
+        # crash/timeout penalties (-100, -50, -25) must remain unscaled
+        # to match _compute_fitness which returns early for crashes.
+        _partial_v = getattr(self, '_champion_partial_verify', 1.0)
+        _pv_mult = max(0.3, _partial_v)
+        fitnesses[ok_indices] *= _pv_mult
 
         return fitnesses.tolist(), raw_scores.tolist()
 
@@ -4911,14 +4934,27 @@ class EvolutionEngine:
             self.champion_trace = _old_champion_trace  # restore immediately
 
             if not verified:
-                self._log(
-                    f"[Champion] BLOCKED (PM Rule #19): challenger verify failed "
-                    f"({verify_score:.2f} < 1.0). Keeping old champion "
-                    f"(fitness={self.champion_fitness:.1f})."
-                )
-                self._champion_verified = False
-                self._champion_verify_score = verify_score
-                return False
+                # Partial verify scoring: when verify_score > 0, the challenger
+                # passes SOME test cases. Allow replacement with gradient signal.
+                # The partial verify score is stored and used by _compute_fitness
+                # to create a fitness gradient for future generations.
+                if verify_score > 0.0:
+                    self._log(
+                        f"[Champion] Partial verify: challenger passes {verify_score:.2f} "
+                        f"of verify. Allowing replacement (gradient active)."
+                    )
+                    # Store partial verify score for fitness gradient
+                    self._champion_partial_verify = verify_score
+                else:
+                    self._log(
+                        f"[Champion] BLOCKED (PM Rule #19): challenger verify failed "
+                        f"({verify_score:.2f} < 1.0). Keeping old champion "
+                        f"(fitness={self.champion_fitness:.1f})."
+                    )
+                    self._champion_verified = False
+                    self._champion_verify_score = verify_score
+                    self._champion_partial_verify = 0.0
+                    return False
 
             # R32: Archive old champion's behavioral descriptor before replacing.
             # This preserves the old champion's niche data in the QD archive
@@ -5102,6 +5138,9 @@ class EvolutionEngine:
                 "memory": self.champion_trace.get("final_memory", {}),
             }
             score = level_cls(seed=self.champion_level).verify(output, self.task_instance)
+            # Partial verify scoring: store the float score even when < 1.0
+            # to create a fitness gradient for the L4 plateau escape.
+            self._champion_partial_verify = score
             return score >= 1.0, score
         except Exception:
             return False, 0.0

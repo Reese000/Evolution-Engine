@@ -73,3 +73,4 @@ multi_cycle_summary.json
 
 # Test-generated scratch artifacts left behind by local test runs
 test_atomic_state.json
+.venv_linux/
