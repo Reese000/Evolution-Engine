@@ -56,6 +56,23 @@ M1_RECURRENT = os.path.join(PROJECT_ROOT, "milestone1", "recurrent_data")  # leg
 M1_RECURRENT_DATA = os.path.join(M1_DIR, "recurrent_data.jsonl")  # canonical training path
 RESULTS_FILE = os.path.join(PROJECT_ROOT, "multi_cycle_results.jsonl")
 
+# PM Rule #17: Minimum elapsed seconds to credit a cycle as completed.
+# Crash-truncated cycles (< MIN_CYCLE_SECONDS) are excluded from resume.
+MIN_CYCLE_SECONDS = float(os.environ.get("EE_MIN_CYCLE_SECONDS", "30"))
+
+
+def _is_valid_cycle_result(r: dict) -> bool:
+    """PM Rule #17: A cycle result is only valid if it has no error and
+    elapsed for at least MIN_CYCLE_SECONDS.  Crash-truncated partial
+    cycles must not be credited as completed on resume."""
+    if "error" in r:
+        return False
+    elapsed = r.get("elapsed_seconds", 0)
+    if not isinstance(elapsed, (int, float)):
+        return False
+    return elapsed >= MIN_CYCLE_SECONDS
+
+
 # Structured logging
 from logging_config import get_logger as _get_logger
 
@@ -363,6 +380,8 @@ def run_evolution(
         "qd_occupied_cells": qd_occupied,
         "qd_total_cells": qd_total,
         "checkpoint": checkpoint_path,
+        # PM Rule #18: task_fitness = fitness minus capped level_bonus
+        "task_fitness": getattr(engine, "_task_fitness", 0.0),
         # Self-calibrate state (for cross-cycle persistence)
         "mutation_rate": getattr(engine.config, "mutation_rate", 0.3),
         "diversity_threshold": getattr(engine.config, "diversity_threshold", 0.3),
@@ -1118,9 +1137,12 @@ def cycle_resume_state(cycle: int) -> dict[str, Any]:
                         results.append(r)
                         c = r.get("cycle")
                         if c is not None:
-                            completed_cycles.add(c)
+                            # PM Rule #17: Only credit cycles that completed
+                            # successfully (no error, elapsed >= MIN_CYCLE_SECONDS)
+                            if _is_valid_cycle_result(r):
+                                completed_cycles.add(c)
                             if c == cycle:
-                                found = True
+                                found = _is_valid_cycle_result(r)
                         # Track highest level and fitness across all cycles
                         rl = r.get("final_level", 0)
                         rf = r.get("final_fitness", 0.0)
@@ -1400,7 +1422,9 @@ def main() -> None:
                 if line.strip():
                     try:
                         r = json.loads(line)
-                        completed_cycles.add(r.get("cycle", -1))
+                        # PM Rule #17: Only credit valid cycles for resume
+                        if _is_valid_cycle_result(r):
+                            completed_cycles.add(r.get("cycle", -1))
                         all_results.append(r)
                         # Track the last successfully retrained checkpoint
                         if r.get("retrained") and r.get("checkpoint"):
@@ -2406,6 +2430,44 @@ def main() -> None:
             retrain_ckpt = os.path.join(M1_CHECKPOINTS, "checkpoint_best.pt")
         if retrain_ckpt:
             pass  # Retrain checkpoint available but diagnostics skipped
+
+        # -- v13 Phase D: Forgetting curve + weight delta diagnostics ---
+        # Only run when retrain succeeded and we have a champion program.
+        if retrain_result.get("retrained") and champion_int and champion_level > 0:
+            try:
+                from evolution_engine import VMFarm as _DiagVMFarm
+                _diag_vm = _DiagVMFarm(num_workers=1, use_gpu=False)
+                forgetting_scores = compute_forgetting_curve(
+                    champion_int, champion_level, _diag_vm
+                )
+                _fc_perfect = sum(1 for s in forgetting_scores.values() if s >= 140.0)
+                _fc_total = len(forgetting_scores)
+                log(
+                    f"  Cycle {cycle}: [ForgettingCurve] "
+                    f"{_fc_perfect}/{_fc_total} levels still perfect"
+                )
+            except Exception as e:
+                log(f"  Cycle {cycle}: Forgetting curve failed: {e}")
+
+            backup_ckpt = retrain_result.get("backup_checkpoint")
+            if (
+                backup_ckpt
+                and os.path.isfile(backup_ckpt)
+                and retrain_ckpt
+                and os.path.isfile(retrain_ckpt)
+            ):
+                try:
+                    weight_deltas = compute_weight_delta(backup_ckpt, retrain_ckpt)
+                    if weight_deltas:
+                        _max_delta = max(weight_deltas.values())
+                        _mean_delta = sum(weight_deltas.values()) / len(weight_deltas)
+                        log(
+                            f"  Cycle {cycle}: [WeightDelta] "
+                            f"max_L2={_max_delta:.4f} mean_L2={_mean_delta:.4f} "
+                            f"({len(weight_deltas)} layers)"
+                        )
+                except Exception as e:
+                    log(f"  Cycle {cycle}: Weight delta failed: {e}")
 
         all_results.append(combined)
 

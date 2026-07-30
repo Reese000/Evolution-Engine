@@ -693,7 +693,7 @@ class EvolutionConfig:
     # Bonus normalization -- cap each bonus at a fraction of the base score
     # to prevent any single fitness dimension from dominating the total.
     # 0.30 = no single bonus can contribute more than 30% of the base score.
-    max_bonus_fraction: float = 1.0
+    max_bonus_fraction: float = 0.30
     # How often (in generations) to log bonus distribution diagnostics.
     # Runs regardless of whether bonus normalization is active, helping
     # diagnose the fitness landscape at any setting. 0 = never log.
@@ -2793,6 +2793,13 @@ class EvolutionEngine:
 
         # Store raw task score (before novelty/QD blending)
         self._raw_task_score = base_score
+
+        # PM Rule #18: task_fitness = fitness minus the capped level bonus,
+        # so users can see the real task-solving fitness separate from
+        # curriculum advancement reward.
+        _capped_level_bonus = min(level_bonus, _max_single)
+        self._task_fitness = base_score - _capped_level_bonus
+
         fitness = base_score
 
         # When raw_only=True (at max curriculum level), skip novelty/QD
@@ -4895,6 +4902,24 @@ class EvolutionEngine:
                 improved = True
 
         if improved and best_program is not None:
+            # PM Rule #19: Verify the challenger BEFORE replacing the champion.
+            # If verify() fails, the challenger's fitness is unreliable (e.g.
+            # inflated by level_bonus) and we must NOT replace the champion.
+            _old_champion_trace = self.champion_trace
+            self.champion_trace = best_trace  # temporarily set for verify
+            verified, verify_score = self._verify_champion()
+            self.champion_trace = _old_champion_trace  # restore immediately
+
+            if not verified:
+                self._log(
+                    f"[Champion] BLOCKED (PM Rule #19): challenger verify failed "
+                    f"({verify_score:.2f} < 1.0). Keeping old champion "
+                    f"(fitness={self.champion_fitness:.1f})."
+                )
+                self._champion_verified = False
+                self._champion_verify_score = verify_score
+                return False
+
             # R32: Archive old champion's behavioral descriptor before replacing.
             # This preserves the old champion's niche data in the QD archive
             # so we don't lose behavioral diversity when the champion is replaced.
@@ -4923,8 +4948,7 @@ class EvolutionEngine:
             if hasattr(self, "_champion_raw_task_score"):
                 self._champion_raw_task_score = best_raw_score
             self.champion_fitness = best_fitness
-            # R50: Run verify() on champion after replacement (uses current task instance)
-            verified, verify_score = self._verify_champion()
+            # R50: Store verified results (verify already ran above)
             self._champion_verified = verified
             self._champion_verify_score = verify_score
             # R21: Mark champion changed so _update_qd_archive and
