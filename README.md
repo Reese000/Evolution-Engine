@@ -58,23 +58,21 @@ Evolution Engine/
 ├── config/
 │   ├── engine_config.json       # Default engine configuration
 │   └── tool_library.json        # Tool definitions
-├── tests/
-│   ├── test_integration.py             # Full pipeline integration tests (40 tests)
-│   ├── test_e2e_smoke.py               # End-to-end smoke test
-│   ├── test_phase8_production.py       # Production hardening tests
-│   ├── test_champion_archive_integration.py  # Champion archive lifecycle tests
-│   ├── test_checkpoint_manager_integration.py  # Checkpoint manager tests
-│   ├── test_progression_tracker_integration.py  # Progression/auto-tuning tests
-│   ├── test_scale_integration.py       # Model scaling integration tests
-│   ├── test_scale_validator.py         # Scale validator tests
-│   ├── test_scaling_types.py           # Scaling type dataclass tests
-│   ├── test_warm_start.py              # Warm-start training tests
-│   ├── test_model_migrator.py          # Weight migration tests
-│   ├── test_batch_evaluation.py        # Batch evaluation tests
-│   ├── test_batch_prefix.py            # Batch prefix tests
-│   ├── test_recurrent_data_filter.py   # Recurrent data filtering tests
-│   ├── test_progression_snapshot.py    # Progression snapshot tests
-│   └── test_round*.py                  # Round-specific improvement tests
+├── tests/                              # 8859 tests across 4 groups (P2-1 reorg)
+│   ├── e2e/                            # End-to-end smoke tests (1 file)
+│   │   └── test_e2e_smoke.py
+│   ├── integration/                    # Pipeline integration tests (14 files)
+│   │   ├── test_integration.py         # Full pipeline (40 tests)
+│   │   ├── test_prefix_guided_integration.py  # Prefix-guided generation (12 tests)
+│   │   ├── test_l14_l30.py             # L14-L30 curriculum tests
+│   │   ├── test_warm_start.py          # Warm-start training tests
+│   │   └── ...                         # Champion archive, checkpoint, scaling, etc.
+│   ├── quality_gate/                   # Round-specific and quality tests (96 files)
+│   │   ├── test_round*_convergence.py  # Per-round convergence tests
+│   │   ├── test_batch_prefix.py        # Batch prefix tests
+│   │   └── ...
+│   └── unit/                           # Unit tests (75 files)
+│       └── ...
 └── lessons_learned.md           # Post-mortem analysis of failure modes
 ```
 
@@ -97,7 +95,7 @@ Evolution Engine/
 | Feature benchmarks | **5/5 passed** | `benchmarks/verify_v13_features.py` — MG scheduler, temperature annealing, tournament selection with elitism, MG ratio, full evolution cycle |
 | Average fitness/generation vs baseline | **5.3× faster** | `benchmarks/verify_improvements.py` |
 | Per-generation speed | **1.6× faster** | `benchmarks/verify_improvements.py` |
-| Test suite | **8482/8919 passing (95.1%)** | `python -m pytest tests/ -v` |
+|| Test suite | **8448/8859 passing (95.4%)** | `python -m pytest tests/ -v` |
 
 ### Verified-But-Not-Yet-Activated Fixes
 
@@ -182,7 +180,7 @@ python milestone1/train_model.py             # Train model on accumulated traces
 python milestone1/build_recurrent_dataset.py # Build dataset from champion traces
 
 # Testing
-python -m pytest tests/ -v                   # Run full test suite (8919 tests)
+python -m pytest tests/ -v                   # Run full test suite (8859 tests)
 
 # Deployment
 ./deploy.sh                                  # Deploy via Docker
