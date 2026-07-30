@@ -21,6 +21,14 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+try:
+    import log_rotation  # noqa: F401
+    _has_log_rotation = True
+except ImportError:
+    _has_log_rotation = False
+
+import pytest
+
 # Ensure project is on path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__))))
 
@@ -404,6 +412,7 @@ class TestExecCreditBudgetDenominator:
 # ── Log Rotation Cascade ─────────────────────────────────────────────
 
 
+@pytest.mark.skipif(not _has_log_rotation, reason="Module archived 2026-07-29")
 class TestLogRotationCascade:
     """Verify compressed log rotation cascades correctly."""
 

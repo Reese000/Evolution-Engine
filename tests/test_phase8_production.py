@@ -18,6 +18,14 @@ import time
 import unittest
 from pathlib import Path
 
+try:
+    import log_rotation  # noqa: F401
+    _has_log_rotation = True
+except ImportError:
+    _has_log_rotation = False
+
+import pytest
+
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -270,6 +278,7 @@ class TestMonitoringAlerts(unittest.TestCase):
 # ══════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skipif(not _has_log_rotation, reason="Module archived 2026-07-29")
 class TestLogRotation(unittest.TestCase):
     """Tests for production log rotation."""
 

@@ -7,7 +7,17 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+try:
+    import run_evolution_supervised  # noqa: F401
+    _has_supervisor = True
+except ImportError:
+    _has_supervisor = False
 
+
+import pytest
+
+
+@pytest.mark.skipif(not _has_supervisor, reason="Module archived 2026-07-29")
 class TestSupervisorStateReading(unittest.TestCase):
     """Test state reading functions."""
 
@@ -74,6 +84,7 @@ class TestSupervisorStateReading(unittest.TestCase):
             os.unlink(results_path)
 
 
+@pytest.mark.skipif(not _has_supervisor, reason="Module archived 2026-07-29")
 class TestSupervisorLogging(unittest.TestCase):
     """Test supervisor logging."""
 
@@ -95,6 +106,7 @@ class TestSupervisorLogging(unittest.TestCase):
             os.unlink(log_path)
 
 
+@pytest.mark.skipif(not _has_supervisor, reason="Module archived 2026-07-29")
 class TestSupervisorResume(unittest.TestCase):
     """Test resume logic."""
 

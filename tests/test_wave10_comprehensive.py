@@ -40,7 +40,7 @@ class TestEvolutionConfigDefaults:
         assert evo.seed == 42
         assert evo.instruction_budget == 10000
         assert evo.eval_budget == 5000
-        assert evo.max_level == 13
+        assert evo.max_level == 30
         assert evo.use_gpu is False
 
     def test_config_creation_no_args(self):

@@ -24,6 +24,12 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+try:
+    import v11_dashboard  # noqa: F401
+    _has_v11_dashboard = True
+except ImportError:
+    _has_v11_dashboard = False
+
 
 # ══════════════════════════════════════════════════════════════════════
 # Phase 5.1: CycleState persistence with integrity checksums
@@ -361,6 +367,7 @@ class TestRetrainFailureRecovery(unittest.TestCase):
 # ══════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skipif(not _has_v11_dashboard, reason="Module archived 2026-07-29")
 class TestDashboardHealthMetrics(unittest.TestCase):
     """Tests for v11_dashboard.py health.json and metrics reading."""
 
