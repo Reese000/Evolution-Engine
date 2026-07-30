@@ -241,6 +241,53 @@ del _opcode_val, _cat_val
 _STRATEGY_ENUM_CACHE: dict[str, MutationStrategy] = {s.value: s for s in MutationStrategy}
 from tasks_rv32i import LEVELS, get_task_level, reference_solution
 
+# --- Extracted helper modules (P1-1 refactoring) ---
+from evolution.fitness_helpers import (
+    score_register_match as _score_register_match_fn,
+    compute_base_score as _compute_base_score_fn,
+    compute_time_credit as _compute_time_credit_fn,
+    compute_efficiency_score as _compute_efficiency_score_fn,
+    compute_smc_bonus as _compute_smc_bonus_fn,
+    compute_multi_task_score as _compute_multi_task_score_fn,
+    compute_structural_bonuses as _compute_structural_bonuses_fn,
+    log_bonus_diagnostics as _log_bonus_diagnostics_fn,
+    extract_trace_info as _extract_trace_info_fn,
+    apply_novelty_qd_blending as _apply_novelty_qd_blending_fn,
+    compute_fitness as _compute_fitness_fn,
+    compute_all_bonuses as _compute_all_bonuses_fn,
+    apply_bonuses_and_normalize as _apply_bonuses_and_normalize_fn,
+    finalize_with_blending as _finalize_with_blending_fn,
+    batch_classify_programs as _batch_classify_programs_fn,
+    batch_score_registers as _batch_score_registers_fn,
+    batch_compute_efficiency as _batch_compute_efficiency_fn,
+    batch_compute_structural_bonuses as _batch_compute_structural_bonuses_fn,
+    batch_apply_crash_penalties as _batch_apply_crash_penalties_fn,
+    batch_get_expected as _batch_get_expected_fn,
+    batch_compute_base as _batch_compute_base_fn,
+    batch_apply_bonuses as _batch_apply_bonuses_fn,
+    batch_blend_novelty_qd as _batch_blend_novelty_qd_fn,
+    batch_compute_fitness as batch_compute_fitness_fn,
+)
+from evolution.mutation_helpers import (
+    check_variance_override as _check_variance_override_fn,
+    check_priority_overrides as _check_priority_overrides_fn,
+    apply_cycle_phase_bias as _apply_cycle_phase_bias_fn,
+    apply_affinity_bias as _apply_affinity_bias_fn,
+    apply_level_aware_strategy_bias as _apply_level_aware_strategy_bias_fn,
+    get_model_guided_ratio as _get_model_guided_ratio_fn,
+    get_model_guided_prefix as _get_model_guided_prefix_fn,
+    compute_model_temperature as _compute_model_temperature_fn,
+)
+from evolution.diversity_helpers import (
+    count_backward_branches as _count_backward_branches_fn,
+    compute_population_diversity as _compute_population_diversity_fn,
+    inject_diversity as _inject_diversity_fn,
+    record_level_circuit_outcome as _record_level_circuit_outcome_fn,
+    check_level_circuit_breaker as _check_level_circuit_breaker_fn,
+    is_level_disabled as _is_level_disabled_fn,
+    record_cycle_level_outcome as _record_cycle_level_outcome_fn,
+)
+
 # Optional: curriculum integration from milestone1
 try:
     from curriculum_generator import CurriculumConfig, CurriculumGenerator  # type: ignore
@@ -1739,530 +1786,79 @@ class EvolutionEngine:
 
     def _score_register_match(self, expected_regs: dict, expected_total: int, final_regs: dict) -> float:
         """Score per-register match with distance-weighted partial credit."""
-        if expected_total == 0:
-            return 1.0
-        total_score = 0.0
-        get_actual = final_regs.get
-        for reg_idx, expected_val in expected_regs.items():
-            actual_val = get_actual(reg_idx, 0)
-            if actual_val == expected_val:
-                total_score += 1.0
-                continue
-            if expected_val == 0:
-                total_score += 0.0
-            else:
-                error_ratio = abs(actual_val - expected_val) / max(1, abs(expected_val))
-                total_score += 1.0 / (1.0 + error_ratio)
-        return total_score / expected_total
-
+        return _score_register_match_fn(expected_regs, expected_total, final_regs)
     def _compute_structural_bonuses(self, status: str, instr_count: int, program: list[int], bonus_scale: float) -> tuple[float, float, float]:
         """Compute loop, memory, and instruction diversity bonuses."""
-        loop_bonus = 0.0
-        if self.champion_level >= 5 and status == "ok" and instr_count > 0:
-            _gen = self.current_generation
-            if not hasattr(self, '_backward_branch_cache') or self._backward_branch_cache_gen != _gen:
-                if not hasattr(self, '_backward_branch_cache'):
-                    self._backward_branch_cache = {}
-                    self._backward_branch_cache_gen = -1
-                self._backward_branch_cache.clear()
-                self._backward_branch_cache_gen = _gen
-            _prog_key = hash(tuple(program))
-            n_loops = self._backward_branch_cache.get(_prog_key)
-            if n_loops is None:
-                n_loops = self._count_backward_branches(program)
-                self._backward_branch_cache[_prog_key] = n_loops
-            if n_loops > 0:
-                loop_bonus = min(5.0, n_loops * 2.0)
-        loop_bonus *= bonus_scale
-        mem_bonus = 0.0
-        if self.champion_level >= 7 and status == "ok":
-            mem_accesses = getattr(self, '_current_trace', {}).get("memory_accesses", []) if hasattr(self, '_current_trace') else []
-            if mem_accesses:
-                mem_bonus = min(3.0, len(mem_accesses) * 0.5)
-        mem_bonus *= bonus_scale
-        div_bonus = 0.0
-        if self.champion_level >= 5 and status == "ok" and instr_count > 0:
-            seen_cats = set()
-            for word in program:
-                if isinstance(word, int):
-                    cat = word & 0x7F
-                    if 0 <= cat < 128:
-                        seen_cats.add(_OPCODE_CAT_ARRAY[cat])
-            n_cats = len(seen_cats - {-1})
-            if n_cats >= 3:
-                div_bonus = min(2.0, (n_cats - 2) * 0.5)
-        div_bonus *= bonus_scale
-        return loop_bonus, mem_bonus, div_bonus
-
+        return _compute_structural_bonuses_fn(self, status, instr_count, program, bonus_scale, _OPCODE_CAT_ARRAY)
     def _compute_efficiency_score(self, program: list[int], instr_count: int, status: str) -> float:
         """Compute efficiency scoring (+15 points max)."""
         eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
-        if eff_weight <= 0 or instr_count <= 0 or status != "ok":
-            return 0.0
-        nop_count = 0
-        unique_vals = set()
-        for word in program:
-            unique_vals.add(word)
-            if word == 0x00000013:
-                nop_count += 1
-        total_instr = len(program) if program else 1
-        useful = max(1, total_instr - nop_count)
-        unique_ratio = len(unique_vals) / total_instr if total_instr > 0 else 1.0
-        if self.champion_level >= 8:
-            if useful >= 8:
-                instr_eff = 1.0
-            elif useful >= 5:
-                instr_eff = 0.7 + (useful - 5) * 0.1
-            else:
-                instr_eff = useful / 5.0
-            opcode_bonus = unique_ratio * 0.5
-        else:
-            if useful <= 5:
-                instr_eff = 1.0
-            elif useful <= 10:
-                instr_eff = 1.0 - (useful - 5) * 0.1
-            else:
-                instr_eff = max(0.0, 0.5 - (useful - 10) * 0.05)
-            opcode_bonus = (1.0 - unique_ratio) * 0.5
-        return (instr_eff + opcode_bonus) * 30.0 * eff_weight
-
+        return _compute_efficiency_score_fn(program, instr_count, status, self.champion_level, eff_weight)
     def _compute_multi_task_score(self) -> float:
         """Compute multi-task scoring (+15 points max)."""
         mt_weight = getattr(self.config, "secondary_task_weight", 1.0)
         secondary_results = getattr(self, "_secondary_task_results", None)
-        if mt_weight <= 0 or secondary_results is None or len(secondary_results) == 0:
-            return 0.0
-        task_count = 0
-        task_total = 0.0
-        for sec_task, sec_trace in secondary_results:
-            sec_status = sec_trace.get("status", "")
-            if sec_status in ("crash", "trap", "exception", "timeout"):
-                continue
-            task_count += 1
-            sec_expected = sec_task.get("expected_output", {}).get("registers", {})
-            sec_final = sec_trace.get("final_regs", {})
-            sec_total = len(sec_expected)
-            if sec_total == 0:
-                task_total += 1.0
-                continue
-            sec_score = 0.0
-            for reg_idx, exp_val in sec_expected.items():
-                act_val = sec_final.get(reg_idx, 0)
-                if act_val == exp_val:
-                    sec_score += 1.0
-                else:
-                    diff = abs(act_val - exp_val)
-                    max_diff = max(abs(exp_val), 1)
-                    sec_score += 1.0 / (1.0 + diff / max_diff)
-            task_total += sec_score / sec_total
-        if task_count > 0:
-            return (task_total / task_count) * 5.0 * min(task_count, 3) * mt_weight
-        return 0.0
-
+        return _compute_multi_task_score_fn(secondary_results, mt_weight)
     def _compute_time_credit(self, status: str, reg_match: float, instr_count: int) -> float:
         """Compute time-to-solution credit (+20 points max)."""
-        if status != "ok" or reg_match < 0.99 or instr_count <= 0:
-            return 0.0
-        if instr_count <= 5:
-            return 20.0
-        elif instr_count <= 15:
-            return 20.0 * (1.0 - (instr_count - 5) / 10.0)
-        else:
-            return max(0.0, 10.0 - (instr_count - 15) * 0.2)
-
+        return _compute_time_credit_fn(status, reg_match, instr_count)
     def _compute_smc_bonus(self, status: str, program: list[int], instr_count: int) -> float:
         """Compute SMC pattern bonus (+25 points max) for L12+."""
-        if status != "ok" or self.champion_level < 12 or instr_count <= 0:
-            return 0.0
-        smc_opcodes = {0x37, 0x13, 0x33, 0x23, 0x67, 0x0F}
-        smc_count = sum(1 for w in program if (w & 0x7F) in smc_opcodes)
-        return min(25.0, smc_count * 5.0) if smc_count >= 3 else 0.0
-
+        return _compute_smc_bonus_fn(status, program, instr_count, self.champion_level)
     def _log_bonus_diagnostics(self, base_score: float, bonuses: dict, max_single: float, norm_active: bool) -> None:
         """Log per-dimension bonus breakdown periodically."""
-        _blog_int = getattr(self.config, "bonus_log_interval", 50)
-        if _blog_int <= 0 or self.current_generation % _blog_int != 0:
-            return
-        _mbf = getattr(self.config, "max_bonus_fraction", 1.0)
-        _gen = self.current_generation
-        _names = list(bonuses.keys())
-        _vals = list(bonuses.values())
-        _raw_total = sum(_vals)
-        _parts = [f"{_n}={_v:.2f}" for _n, _v in zip(_names, _vals)]
-        if norm_active:
-            _cap = _mbf * base_score
-            _capped_names = [_n for _n, _v in zip(_names, _vals) if _v > _cap]
-            _capped_str = ",".join(_capped_names) if _capped_names else "none"
-            _norm_total = sum(min(_v, _cap) for _v in _vals)
-            self._log(f"[BonusDiag] gen={_gen} base={base_score:.2f} fraction={_mbf:.2f} cap={_cap:.2f} capped=[{_capped_str}] raw_total={_raw_total:.2f} norm_total={_norm_total:.2f} {' '.join(_parts)}")
-        else:
-            self._log(f"[BonusDiag] gen={_gen} base={base_score:.2f} norm=off raw_total={_raw_total:.2f} {' '.join(_parts)}")
-
+        _log_bonus_diagnostics_fn(self, base_score, bonuses, max_single, norm_active)
     def _apply_novelty_qd_blending(self, fitness, program, trace, base_score, _qd_fn, _prog_qd_desc):
         """Apply novelty-weighted fitness and QD archive bonus/penalty."""
-        nw = self._novelty_weight_cache
-        if self._current_diversity < 0.2 and nw > 0.0:
-            nw = min(nw * (1.0 + (1.0 - self._current_diversity / 0.2)), 0.8)
-        ef = self._extract_behavioral_descriptor
-        if nw > 0.0 and self.novelty_archive is not None and ef is not None:
-            try:
-                d = ef(trace, program, budget=self.config.eval_budget)
-                try: nv = self.novelty_archive.decayed_novelty(program, self.current_generation)
-                except Exception: nv = self.novelty_archive.novelty_score(d)
-                fitness = fitness * (1.0 - nw) + nv * (base_score / 10.0 if base_score > 0 else 1.0) * nw
-            except (TypeError, ValueError, RuntimeError): pass
-        if self.config.qd_bonus_weight > 0.0 and self.qd_archive is not None and _qd_fn is not None:
-            try:
-                if _prog_qd_desc is None: _prog_qd_desc = _qd_fn(program, trace)
-                if _prog_qd_desc is not None:
-                    qb = self.qd_archive.selection_bias(_prog_qd_desc)
-                    qw = self.config.qd_bonus_weight
-                    st = self.generations_stalled
-                    if st > 10: qw *= min(2.5, 1.0 + 0.0375 * (st - 10))
-                    try: ds = self.qd_archive.get_illumination_diversity().get('overall_diversity_score', self._qd_coverage)
-                    except Exception: ds = self._qd_coverage
-                    if ds < 0.20: qw *= 1.0 + 2.5 * (0.20 - ds)
-                    try:
-                        fd = self.qd_archive.get_cell_freshness(self.current_generation)
-                        fv = fd.get("avg_freshness", 0.5) if isinstance(fd, dict) else 0.5
-                        qw *= 1.5 - fv
-                    except Exception: pass
-                    fitness += qb * qw
-                    if self.champion is not None and self.champion_trace is not None:
-                        cd = self._cached_champion_qd_desc if self._champion_qd_valid else _qd_fn(self.champion, self.champion_trace)
-                        if cd is not None:
-                            self._cached_champion_qd_desc = cd
-                            self._champion_qd_valid = True
-                            dist = abs(_prog_qd_desc[0] - cd[0]) + abs(_prog_qd_desc[1] - cd[1])
-                            if dist < 2.0: fitness *= 1.0 - 0.10 * (1.0 - dist / 2.0)
-            except (TypeError, ValueError, RuntimeError): pass
-        return fitness
+        return _apply_novelty_qd_blending_fn(self, fitness, program, trace, base_score, _qd_fn, _prog_qd_desc)
     def _compute_fitness(self, program: list[int], trace: dict[str, Any], eval_budget: int | None = None, raw_only: bool = False) -> float:
         """Compute crash-penalized fitness."""
-        if self.task_instance is None:
-            return 0.0
-        budget = eval_budget if eval_budget is not None else self._cached_eval_budget
-        expected_regs, expected_total, status, final_regs, instr_count, trap = self._extract_trace_info(trace)
-        if status in ("crash", "trap", "exception"):
-            self._raw_task_score = 0.0
-            return -100.0 if ("illegal" in trap or "invalid" in trap) else -50.0
-        if status == "timeout" or instr_count >= budget:
-            self._raw_task_score = 0.0
-            return -25.0
-        reg_match = self._score_register_match(expected_regs, expected_total, final_regs)
-        base_score = self._compute_base_score(reg_match, instr_count, status, budget)
-        bonuses = self._compute_all_bonuses(status, instr_count, program, reg_match, base_score)
-        base_score = self._apply_bonuses_and_normalize(base_score, bonuses)
-        if raw_only:
-            return base_score
-        return self._finalize_with_blending(base_score, program, trace)
-
+        return _compute_fitness_fn(self, program, trace, eval_budget, raw_only)
     def _extract_trace_info(self, trace: dict) -> tuple:
         """Extract and cache trace information for fitness computation."""
-        task_inst = self.task_instance
-        if self._cached_task_instance_id == self.current_generation:
-            expected_regs = self._cached_expected_regs
-            expected_total = self._cached_expected_total
-        else:
-            expected = task_inst.get("expected_output", {})
-            expected_regs = expected.get("registers", {})
-            expected_total = len(expected_regs)
-            self._cached_expected_regs = expected_regs
-            self._cached_expected_total = expected_total
-            self._cached_task_instance_id = self.current_generation
-        return expected_regs, expected_total, trace.get("status", ""), trace.get("final_regs", {}), trace.get("instructions_count", 0), trace.get("trap_cause", "")
-
+        return _extract_trace_info_fn(self, trace)
     def _compute_base_score(self, reg_match: float, instr_count: int, status: str, budget: int) -> float:
         """Compute base fitness score from register match and execution metrics."""
-        bloat_penalty = (instr_count - 50) * 0.05 if instr_count > 50 else 0.0
-        exec_credit = min(10.0, (instr_count / budget) * 10.0) if (status == "ok" and instr_count > 0 and reg_match > 0.0 and budget > 0) else 0.0
-        solved_bonus = 50.0 if reg_match >= 0.99 else 0.0
-        return reg_match * 100.0 - bloat_penalty + exec_credit + solved_bonus
-
+        return _compute_base_score_fn(reg_match, instr_count, status, budget)
     def _compute_all_bonuses(self, status: str, instr_count: int, program: list[int], reg_match: float, base_score: float) -> dict:
         """Compute all bonus components."""
-        try:
-            _bonus_scale = self._get_structural_bonus_scale().get("scale_factor", 1.0)
-        except Exception:
-            _bonus_scale = 1.0
-        loop_bonus, mem_bonus, div_bonus = self._compute_structural_bonuses(status, instr_count, program, _bonus_scale)
-        level_bonus = self.champion_level * 25.0
-        cached = self._bonus_threshold_cache
-        lvl = self.champion_level
-        bonus_threshold = cached[1] if cached and cached[0] == lvl else max(0.85, 0.95 - 0.10 * (lvl / max(1, len(LEVELS) - 1)))
-        graduated_bonus = 50.0 * (reg_match - bonus_threshold) / (1.0 - bonus_threshold) if reg_match >= bonus_threshold else 0.0
-        return {"loop": loop_bonus, "mem": mem_bonus, "div": div_bonus, "level": level_bonus,
-                "efficiency": self._compute_efficiency_score(program, instr_count, status),
-                "multi_task": self._compute_multi_task_score(), "time_credit": self._compute_time_credit(status, reg_match, instr_count),
-                "smc": self._compute_smc_bonus(status, program, instr_count), "graduated": graduated_bonus}
-
+        return _compute_all_bonuses_fn(self, status, instr_count, program, reg_match, base_score, _OPCODE_CAT_ARRAY)
     def _apply_bonuses_and_normalize(self, base_score: float, bonuses: dict) -> float:
         """Apply bonuses with normalization and store raw score."""
-        _base_for_norm = base_score if base_score > 0 else 1.0
-        _max_single = getattr(self.config, "max_bonus_fraction", 1.0) * _base_for_norm
-        _norm_active = getattr(self.config, "max_bonus_fraction", 1.0) < 1.0
-        self._log_bonus_diagnostics(base_score, bonuses, _max_single, _norm_active)
-        base_score += sum(min(b, _max_single) for b in bonuses.values())
-        self._raw_task_score = base_score
-        self._task_fitness = base_score - min(bonuses["level"], _max_single)
-        return base_score
-
+        return _apply_bonuses_and_normalize_fn(self, base_score, bonuses)
     def _finalize_with_blending(self, base_score: float, program: list[int], trace: dict) -> float:
         """Apply novelty/QD blending and partial verify scaling."""
-        fitness = base_score
-        _qd_fn = self._compute_qd_axes_fn
-        _prog_qd_desc = None
-        if self.config.qd_bonus_weight > 0.0 and self.qd_archive is not None and _qd_fn is not None:
-            try:
-                _prog_qd_desc = _qd_fn(program, trace)
-            except (TypeError, ValueError, RuntimeError):
-                pass
-        fitness = self._apply_novelty_qd_blending(fitness, program, trace, base_score, _qd_fn, _prog_qd_desc)
-        fitness *= max(0.3, getattr(self, '_champion_partial_verify', 1.0))
-        return fitness
+        return _finalize_with_blending_fn(self, base_score, program, trace)
     def _batch_classify_programs(self, traces: list, n: int, budget: int):
         """Classify programs by status (crash/timeout/ok) for batch fitness."""
-        import numpy as np
-        statuses = [t.get("status", "") for t in traces]
-        instr_counts = np.array([t.get("instructions_count", 0) for t in traces], dtype=np.int64)
-        trap_causes = [t.get("trap_cause", "") for t in traces]
-        crash_mask = np.zeros(n, dtype=bool)
-        illegal_mask = np.zeros(n, dtype=bool)
-        timeout_mask = np.zeros(n, dtype=bool)
-        for i in range(n):
-            s = statuses[i]
-            if s in ("crash", "trap", "exception"):
-                crash_mask[i] = True
-                if "illegal" in trap_causes[i] or "invalid" in trap_causes[i]:
-                    illegal_mask[i] = True
-            elif s == "timeout" or instr_counts[i] >= budget:
-                timeout_mask[i] = True
-        return instr_counts, crash_mask, illegal_mask, timeout_mask
-
+        return _batch_classify_programs_fn(traces, n, budget)
     def _batch_score_registers(self, ok_traces: list, expected_keys: list, expected_vals, n_ok: int):
         """Vectorized register scoring for batch fitness."""
-        import numpy as np
-        expected_total = len(expected_keys)
-        if expected_total == 0:
-            return np.ones(n_ok, dtype=np.float64)
-        actual_vals = np.zeros((n_ok, len(expected_keys)), dtype=np.float64)
-        for j, trace in enumerate(ok_traces):
-            fr = trace.get("final_regs", {})
-            if isinstance(fr, dict):
-                for k, key in enumerate(expected_keys):
-                    actual_vals[j, k] = fr.get(key, 0)
-        exact_match = actual_vals == expected_vals
-        diff = np.abs(actual_vals - expected_vals)
-        max_diff = np.maximum(np.abs(expected_vals), 1.0)
-        scores = np.where(exact_match, 1.0, 1.0 / (1.0 + diff / max_diff))
-        return scores.mean(axis=1)
-
+        return _batch_score_registers_fn(ok_traces, expected_keys, expected_vals, n_ok)
     def _batch_compute_efficiency(self, ok_programs: list, n_ok: int, ok_instr, max_prog_len: int):
         """Vectorized efficiency scoring for batch fitness."""
-        import numpy as np
-        eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
-        if eff_weight <= 0 or max_prog_len <= 0:
-            return np.zeros(n_ok, dtype=np.float64)
-        padded = np.zeros((n_ok, max_prog_len), dtype=np.int64)
-        prog_lengths = np.zeros(n_ok, dtype=np.int64)
-        for j, prog in enumerate(ok_programs):
-            pl = len(prog)
-            prog_lengths[j] = pl
-            padded[j, :pl] = prog
-        nop_counts = np.sum(padded == 0x00000013, axis=1)
-        useful = np.maximum(1, prog_lengths - nop_counts)
-        unique_ratios = np.zeros(n_ok, dtype=np.float64)
-        for j in range(n_ok):
-            total_i = int(prog_lengths[j]) or 1
-            unique_ratios[j] = len(set(ok_programs[j])) / total_i
-        if self.champion_level >= 8:
-            instr_eff = np.where(useful >= 8, 1.0, np.where(useful >= 5, 0.7 + (useful - 5) * 0.1, useful / 5.0))
-            opcode_bonus = unique_ratios * 0.5
-        else:
-            instr_eff = np.where(useful <= 5, 1.0, np.where(useful <= 10, 1.0 - (useful - 5) * 0.1, np.maximum(0.0, 0.5 - (useful - 10) * 0.05)))
-            opcode_bonus = (1.0 - unique_ratios) * 0.5
-        return (instr_eff + opcode_bonus) * 30.0 * eff_weight
-
+        return _batch_compute_efficiency_fn(self, ok_programs, n_ok, ok_instr, max_prog_len)
     def _batch_compute_structural_bonuses(self, ok_programs: list, ok_indices, traces: list, n_ok: int, ok_instr, _bonus_scale: float, _max_single):
         """Vectorized structural bonuses (loop, mem, div, smc, graduated, level)."""
-        import numpy as np
-        lvl = self.champion_level
-        base = np.zeros(n_ok, dtype=np.float64)
-        if lvl >= 5:
-            _gen = self.current_generation
-            if not hasattr(self, '_backward_branch_cache') or self._backward_branch_cache_gen != _gen:
-                if not hasattr(self, '_backward_branch_cache'):
-                    self._backward_branch_cache = {}
-                    self._backward_branch_cache_gen = -1
-                self._backward_branch_cache.clear()
-                self._backward_branch_cache_gen = _gen
-            _bb_cache = self._backward_branch_cache
-            loop_bonuses = np.zeros(n_ok, dtype=np.float64)
-            for j, prog in enumerate(ok_programs):
-                _prog_key = hash(tuple(prog))
-                n_loops = _bb_cache.get(_prog_key)
-                if n_loops is None:
-                    n_loops = self._count_backward_branches(prog)
-                    _bb_cache[_prog_key] = n_loops
-                if n_loops > 0:
-                    loop_bonuses[j] = min(5.0, n_loops * 2.0)
-            loop_bonuses *= _bonus_scale
-            base += np.minimum(loop_bonuses, _max_single)
-        if lvl >= 7:
-            mem_bonuses = np.zeros(n_ok, dtype=np.float64)
-            for j, idx in enumerate(ok_indices):
-                mem_accesses = traces[idx].get("memory_accesses", [])
-                if mem_accesses:
-                    mem_bonuses[j] = min(3.0, len(mem_accesses) * 0.5)
-            mem_bonuses *= _bonus_scale
-            base += np.minimum(mem_bonuses, _max_single)
-        if lvl >= 5:
-            div_bonuses = np.zeros(n_ok, dtype=np.float64)
-            cat_arr = _OPCODE_CAT_ARRAY
-            for j, prog in enumerate(ok_programs):
-                seen_cats = set()
-                for word in prog:
-                    if isinstance(word, int):
-                        cat = word & 0x7F
-                        if 0 <= cat < 128:
-                            seen_cats.add(cat_arr[cat])
-                n_cats = len(seen_cats - {-1})
-                if n_cats >= 3:
-                    div_bonuses[j] = min(2.0, (n_cats - 2) * 0.5)
-            div_bonuses *= _bonus_scale
-            base += np.minimum(div_bonuses, _max_single)
-        base += np.minimum(lvl * 25.0, _max_single)
-        return base
+        return _batch_compute_structural_bonuses_fn(self, ok_programs, ok_indices, traces, n_ok, ok_instr, _bonus_scale, _max_single, _OPCODE_CAT_ARRAY)
     def _batch_blend_novelty_qd(self, fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw):
         """Apply novelty/QD blending to batch fitness values."""
-        ef = self._extract_behavioral_descriptor
-        qdf = self._compute_qd_axes_fn
-        for j, idx in enumerate(ok_indices):
-            fj = float(base[j])
-            prog, trace = programs[idx], traces[idx]
-            ms = float(len(expected_regs)) if expected_regs else 1.0
-            if nw > 0.0 and self.novelty_archive is not None and ef is not None:
-                try:
-                    d = ef(trace, prog, budget=self.config.eval_budget)
-                    try: nv = self.novelty_archive.decayed_novelty(prog, self.current_generation)
-                    except Exception: nv = self.novelty_archive.novelty_score(d)
-                    fj = fj * (1.0 - nw) + nv * (ms / 10.0) * nw
-                except (TypeError, ValueError, RuntimeError): pass
-            if self.config.qd_bonus_weight > 0.0 and self.qd_archive is not None and qdf is not None:
-                try:
-                    pd = qdf(prog, trace)
-                    if pd is not None:
-                        qb = self.qd_archive.selection_bias(pd)
-                        qw = self.config.qd_bonus_weight
-                        st = self.generations_stalled
-                        if st > 10: qw *= min(2.5, 1.0 + 0.0375 * (st - 10))
-                        try: ds = self.qd_archive.get_illumination_diversity().get('overall_diversity_score', self._qd_coverage)
-                        except Exception: ds = self._qd_coverage
-                        if ds < 0.20: qw *= 1.0 + 2.5 * (0.20 - ds)
-                        try:
-                            fd = self.qd_archive.get_cell_freshness(self.current_generation)
-                            fv = fd.get("avg_freshness", 0.5) if isinstance(fd, dict) else 0.5
-                            qw *= 1.5 - fv
-                        except Exception: pass
-                        fj += qb * qw
-                        if self.champion is not None and self.champion_trace is not None:
-                            cd = self._cached_champion_qd_desc if self._champion_qd_valid else qdf(self.champion, self.champion_trace)
-                            if cd is not None:
-                                self._cached_champion_qd_desc = cd
-                                self._champion_qd_valid = True
-                                dist = abs(pd[0] - cd[0]) + abs(pd[1] - cd[1])
-                                if dist < 2.0: fj *= 1.0 - 0.10 * (1.0 - dist / 2.0)
-                except (TypeError, ValueError, RuntimeError): pass
-            fitnesses[idx] = fj
+        _batch_blend_novelty_qd_fn(self, fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw)
     def batch_compute_fitness(self, programs: list[list[int]], traces: list[dict[str, Any]], eval_budget: int | None = None, raw_only: bool = False) -> tuple[list[float], list[float]]:
         """Vectorized batch fitness computation using numpy arrays."""
-        import numpy as np
-        n = len(programs)
-        if n == 0:
-            return [], []
-        if self.task_instance is None:
-            return [0.0] * n, [0.0] * n
-        budget = eval_budget if eval_budget is not None else self._cached_eval_budget
-        expected_regs, expected_keys, expected_vals = self._batch_get_expected()
-        instr_counts, crash_mask, illegal_mask, timeout_mask = self._batch_classify_programs(traces, n, budget)
-        fitnesses, raw_scores = self._batch_apply_crash_penalties(n, crash_mask, illegal_mask, timeout_mask)
-        ok_mask = ~crash_mask & ~timeout_mask
-        ok_indices = np.where(ok_mask)[0]
-        n_ok = len(ok_indices)
-        if n_ok == 0:
-            return fitnesses.tolist(), raw_scores.tolist()
-        base = self._batch_compute_base(programs, traces, ok_indices, ok_instr := instr_counts[ok_indices], n_ok, expected_keys, expected_vals, budget, expected_regs)
-        base = self._batch_apply_bonuses(base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr)
-        raw_scores[ok_indices] = base
-        if raw_only:
-            fitnesses[ok_indices] = base
-            return fitnesses.tolist(), raw_scores.tolist()
-        nw = self._novelty_weight_cache
-        if self._current_diversity < 0.2 and nw > 0.0:
-            nw = min(nw * (1.0 + (1.0 - self._current_diversity / 0.2)), 0.8)
-        self._batch_blend_novelty_qd(fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw)
-        fitnesses[ok_indices] *= max(0.3, getattr(self, '_champion_partial_verify', 1.0))
-        return fitnesses.tolist(), raw_scores.tolist()
-
+        return batch_compute_fitness_fn(self, programs, traces, eval_budget, raw_only)
     def _batch_get_expected(self):
         """Extract expected output arrays for batch computation."""
-        import numpy as np
-        expected = self.task_instance.get("expected_output", {})
-        expected_regs = expected.get("registers", {})
-        expected_keys = list(expected_regs.keys()) if expected_regs else []
-        expected_vals = np.array([expected_regs[k] for k in expected_keys], dtype=np.float64) if expected_keys else np.array([], dtype=np.float64)
-        return expected_regs, expected_keys, expected_vals
-
+        return _batch_get_expected_fn(self)
     def _batch_apply_crash_penalties(self, n, crash_mask, illegal_mask, timeout_mask):
         """Apply crash/timeout penalties to fitness array."""
-        import numpy as np
-        fitnesses = np.zeros(n, dtype=np.float64)
-        raw_scores = np.zeros(n, dtype=np.float64)
-        fitnesses[illegal_mask] = -100.0
-        fitnesses[crash_mask & ~illegal_mask] = -50.0
-        fitnesses[timeout_mask] = -25.0
-        return fitnesses, raw_scores
-
+        return _batch_apply_crash_penalties_fn(n, crash_mask, illegal_mask, timeout_mask)
     def _batch_compute_base(self, programs, traces, ok_indices, ok_instr, n_ok, expected_keys, expected_vals, budget, expected_regs):
         """Compute base fitness scores for batch."""
-        import numpy as np
-        ok_programs = [programs[i] for i in ok_indices]
-        ok_traces = [traces[i] for i in ok_indices]
-        reg_matches = self._batch_score_registers(ok_traces, expected_keys, expected_vals, n_ok)
-        bloat = np.maximum(0.0, (ok_instr - 10).astype(np.float64) * 0.2)
-        exec_credit = np.zeros(n_ok, dtype=np.float64)
-        pos = reg_matches > 0.0
-        if budget > 0:
-            exec_credit[pos] = np.minimum(10.0, (ok_instr[pos].astype(np.float64) / budget) * 10.0)
-        solved_bonus = np.where(reg_matches >= 0.99, 50.0, 0.0)
-        return reg_matches * 100.0 - bloat + exec_credit + solved_bonus
-
+        return _batch_compute_base_fn(self, programs, traces, ok_indices, ok_instr, n_ok, expected_keys, expected_vals, budget, expected_regs)
     def _batch_apply_bonuses(self, base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr):
         """Apply efficiency, structural, and graduated bonuses."""
-        import numpy as np
-        _base_for_norm = np.maximum(base, 1.0)
-        _max_single = getattr(self.config, "max_bonus_fraction", 1.0) * _base_for_norm
-        ok_programs = [programs[i] for i in ok_indices]
-        max_prog_len = max((len(p) for p in ok_programs), default=0)
-        base += np.minimum(self._batch_compute_efficiency(ok_programs, n_ok, ok_instr, max_prog_len), _max_single)
-        base += self._batch_compute_structural_bonuses(ok_programs, ok_indices, traces, n_ok, ok_instr, 1.0, _max_single)
-        lvl = self.champion_level
-        if lvl >= 12:
-            smc_mask = np.zeros((n_ok, max_prog_len if max_prog_len > 0 else 1), dtype=bool)
-            for j, prog in enumerate(ok_programs):
-                for wi, word in enumerate(prog):
-                    if (word & 0x7F) in (0x37, 0x13, 0x33, 0x23, 0x67, 0x0F):
-                        smc_mask[j, wi] = True
-            smc_counts = smc_mask.sum(axis=1)
-            smc_ok = smc_counts >= 3
-            base[smc_ok] += np.minimum(np.minimum(25.0, smc_counts[smc_ok].astype(np.float64) * 5.0), _max_single[smc_ok])
-        cached = self._bonus_threshold_cache
-        bonus_threshold = cached[1] if cached and cached[0] == lvl else max(0.85, 0.95 - 0.10 * (lvl / max(1, len(LEVELS) - 1)))
-        above = self._batch_score_registers(ok_traces, list(expected_regs.keys()), np.array([expected_regs[k] for k in expected_regs.keys()], dtype=np.float64) if expected_regs else np.array([], dtype=np.float64), n_ok) >= bonus_threshold
-        denom = 1.0 - bonus_threshold
-        grad_bonus = np.where(above, 50.0 * (above.astype(np.float64) - bonus_threshold) / denom if denom > 0 else 0.0, 0.0)
-        base += np.minimum(grad_bonus, _max_single)
-        return base
+        return _batch_apply_bonuses_fn(self, base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr, _OPCODE_CAT_ARRAY)
     def _generate_initial_champion(self) -> list[int]:
         """Generate or load the initial champion."""
         # Try loading from champion dir
@@ -2343,227 +1939,20 @@ class EvolutionEngine:
         return challengers
     @staticmethod
     def _compute_population_diversity(challengers: list[list[int]]) -> float:
-        """Compute opcode diversity of the challenger population.
-
-        Returns a value in [0.0, 1.0] representing the fraction of
-        distinct RV32I opcode categories used across all challengers.
-        0.0 = all programs use the same opcode; 1.0 = all 11 categories
-        represented.
-
-        Uses a 128-element list for O(1) opcode-to-category lookup
-        without hash computation per word. ~30% faster than dict.get()
-        for the hot inner loop.
-
-        R37: Early termination -- once all 11 categories are discovered
-        (seen_bits == ALL_CATEGORIES_MASK), stops scanning immediately.
-        For diverse populations this cuts the scan short by 30-70%
-        depending on program lengths, saving O(remaining_words) work
-        per generation.
-
-        O(N * M) worst case where N = population size, M = avg program
-        length; typical case is significantly shorter due to early exit.
-        """
-        if not challengers:
-            return 0.0
-
-        cat_arr = _OPCODE_CAT_ARRAY
-        seen_bits = 0  # bitset: bit i = category i seen
-        # R37: Pre-computed mask for all 11 categories (bits 0-10 set)
-        all_mask = (1 << NUM_OPCODE_CATEGORIES) - 1
-        for prog in challengers:
-            for word in prog:
-                if not isinstance(word, int):
-                    continue
-                cat = cat_arr[word & 0x7F]
-                if cat >= 0:
-                    seen_bits |= 1 << cat
-            # R37: Early termination -- all categories found
-            if seen_bits == all_mask:
-                return 1.0
-
-        # Count set bits via C-implemented int.bit_count()
-        return seen_bits.bit_count() / NUM_OPCODE_CATEGORIES
-
+        """Compute opcode diversity of the challenger population."""
+        return _compute_population_diversity_fn(challengers, _OPCODE_CAT_ARRAY, NUM_OPCODE_CATEGORIES)
     def _inject_diversity(self, challengers: list[list[int]], n_inject: int) -> None:
-        """Replace the least-diverse challengers with fresh random programs.
-
-        Uses a fast O(N * M) heuristic: for each challenger, count how
-        many of its opcodes are shared by the majority of the population.
-        Programs whose opcodes are all "common" (appear in > 60% of
-        population) are replaced.  This is cheaper than the O(N^2) full
-        overlap approach and still correctly identifies redundant programs.
-
-        Injected programs are generated from scratch (not mutated) to
-        maximize opcode diversity. They receive the DIVERSITY_INJECT
-        strategy tag for archive tracking.
-        """
-        if not challengers or n_inject <= 0:
-            return
-
-        pop_size = len(challengers)
-        n_inject = min(n_inject, pop_size)
-
-        # Use 128-element array for O(1) opcode-to-category lookup
-        # without hash computation per word (~30% faster than dict.get).
-        cat_arr = _OPCODE_CAT_ARRAY
-
-        # Compute opcode frequency across population (O(N * M))
-        # Use bitsets per program + frequency array for speed.
-        opcode_count: list[int] = [0] * NUM_OPCODE_CATEGORIES
-        prog_opcodes_bits: list[int] = []
-        for prog in challengers:
-            bits = 0
-            for word in prog:
-                cat = cat_arr[word & 0x7F]
-                if cat >= 0:
-                    bits |= 1 << cat
-                    opcode_count[cat] += 1
-            prog_opcodes_bits.append(bits)
-
-        # Score each program: fraction of its opcodes that are "common"
-        common_threshold = pop_size * 0.6
-        # R21: Precompute a bitmask of which categories are "common" (above threshold).
-        # This replaces the per-bit inner loop with a single AND + bit_count,
-        # giving a significant speedup for the hot path (~pop_size iterations).
-        common_mask = 0
-        for cat in range(NUM_OPCODE_CATEGORIES):
-            if opcode_count[cat] > common_threshold:
-                common_mask |= 1 << cat
-        # R37: Merge scoring + top-k selection into a single pass.
-        # Instead of building a full redundancy_scores list and then
-        # calling heapq.nlargest/sort, maintain a fixed-size min-heap
-        # of size n_inject during the scoring pass. This eliminates
-        # the O(pop_size) list allocation and the separate O(N log k)
-        # top-k step, reducing total work by ~50% for the common case
-        # (n_inject << pop_size, e.g. 3 out of 50).
-        import heapq as _heapq
-
-        top_heap: list[tuple[float, int]] = []  # min-heap of (score, idx)
-        for i, bits in enumerate(prog_opcodes_bits):
-            if bits == 0:
-                score = 1.0
-            else:
-                common_count = (bits & common_mask).bit_count()
-                total_bits = bits.bit_count()
-                score = common_count / total_bits if total_bits > 0 else 1.0
-            if len(top_heap) < n_inject:
-                _heapq.heappush(top_heap, (score, i))
-            elif score > top_heap[0][0]:
-                _heapq.heapreplace(top_heap, (score, i))
-        # R37: The top-k selection was already done inline during scoring
-        # (min-heap of size n_inject), so top_heap IS the sorted
-        # top-n list. No second pass needed.
-        # Sort descending by score to inject most-redundant first.
-        top_heap.sort(reverse=True)
-        top_n = top_heap
-        rng = self.rng
-        strategies = self._last_challenger_strategies
-        for _, idx in top_n:
-            challengers[idx] = generate_seed_program(rng=rng)
-            strategies[idx] = "DIVERSITY_INJECT"
-
+        """Replace the least-diverse challengers with fresh random programs."""
+        _inject_diversity_fn(challengers, n_inject, self.rng, self._last_challenger_strategies, _OPCODE_CAT_ARRAY, NUM_OPCODE_CATEGORIES, generate_seed_program)
     def _check_variance_override(self):
         """Check variance-aware strategy override (priority 1)."""
-        try:
-            pf = self._last_challenger_fitnesses
-            if not pf or len(pf) < 3: return 0, None, ""
-            n = len(pf)
-            m = sum(pf) / n
-            if abs(m) <= 1e-9: return 0, None, ""
-            v = sum((f - m) ** 2 for f in pf) / n
-            s = v ** 0.5
-            cv = s / abs(m)
-            sf = sorted(pf)
-            iqr = sf[3*n//4] - sf[n//4]
-            fr = max(pf) - min(pf) + 1e-9
-            skew = sum(((f - m) / max(s, 1e-9)) ** 3 for f in pf) / n
-            vs = 0.5 * min(cv, 2.0) / 2.0 + 0.5 * iqr / fr
-            if not hasattr(self, '_variance_history'): self._variance_history = []
-            self._variance_history.append(vs)
-            if len(self._variance_history) > 10: self._variance_history = self._variance_history[-10:]
-            vt = 0.0
-            if len(self._variance_history) >= 4:
-                h = len(self._variance_history) // 2
-                vt = sum(self._variance_history[h:]) / max(1, len(self._variance_history) - h) - sum(self._variance_history[:h]) / max(1, h)
-            if vs > 0.5:
-                ep = min(0.85, 0.4 + vs * 0.5 + (0.10 if vt > 0.05 else 0))
-                if self.rng.random() < ep:
-                    es = [s for s in MutationStrategy if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
-                    if es: return 1, self.rng.choice(es), f"[Strategy] Variance exploit: vs={vs:.2f}"
-            elif vs < 0.3:
-                ep = min(0.85, 0.4 + (1.0 - vs) * 0.5 + (0.10 if vt < -0.05 else 0))
-                if self.rng.random() < ep:
-                    es = [s for s in MutationStrategy if s.value in ('GROW', 'PERTURBATION_CAPPED', 'MODEL_GUIDED', 'HYBRID')]
-                    if es: return 1, self.rng.choice(es), f"[Strategy] Variance explore: vs={vs:.2f}"
-            elif skew < -0.5 and self.rng.random() < 0.35:
-                es = [s for s in MutationStrategy if s.value in ('GROW', 'PERTURBATION_CAPPED', 'MODEL_GUIDED', 'HYBRID')]
-                if es: return 1, self.rng.choice(es), f"[Strategy] Skew explore: skew={skew:+.2f}"
-            elif skew > 0.5 and self.rng.random() < 0.35:
-                es = [s for s in MutationStrategy if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
-                if es: return 1, self.rng.choice(es), f"[Strategy] Skew exploit: skew={skew:+.2f}"
-        except Exception: pass
-        return 0, None, ""
+        return _check_variance_override_fn(self)
     def _check_priority_overrides(self, current_priority: int) -> tuple[int, 'MutationStrategy | None', str]:
         """Check cross-cycle, mutation stats, and plateau overrides (priorities 2-4)."""
-        override_priority = current_priority
-        override_strategy = None
-        override_log_msg = ""
-        try:
-            if hasattr(self, 'meta_controller') and self.meta_controller is not None:
-                _trends = self.meta_controller.get_cross_cycle_trends()
-                _fitness_trend = _trends.get('fitness', {})
-                if _fitness_trend.get('direction') == 'declining' and self.rng.random() < 0.25 and override_priority < 2:
-                    _explore = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _explore:
-                        override_priority = 2
-                        override_strategy = self.rng.choice(_explore)
-                        override_log_msg = f"[Strategy] Trend override: fitness declining, slope={_fitness_trend.get('slope', 0):.4f}"
-        except Exception:
-            pass
-        try:
-            from mutation_proposer import DirectedMutator as _DM
-            _mstats = _DM.get_mutation_stats()
-            if _mstats['total_attempts'] > 50 and _mstats['recent_avg_delta'] < -0.5 and self.rng.random() < 0.3 and override_priority < 3:
-                _exploration_strats = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                if _exploration_strats:
-                    override_priority = 3
-                    override_strategy = self.rng.choice(_exploration_strats)
-                    override_log_msg = f"[Strategy] Mutation stats override: recent_avg_delta={_mstats['recent_avg_delta']:.3f}"
-        except Exception:
-            pass
-        try:
-            if hasattr(self, 'progression_tracker') and self.progression_tracker is not None:
-                _pa = self.progression_tracker.get_plateau_analysis()
-                if _pa.get('status') == 'plateau' and _pa.get('plateau_duration', 0) > 10 and self.rng.random() < 0.3 and override_priority < 4:
-                    _explore2 = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _explore2:
-                        override_priority = 4
-                        override_strategy = self.rng.choice(_explore2)
-                        override_log_msg = f"[Strategy] Plateau override: duration={_pa.get('plateau_duration', 0)}"
-        except Exception:
-            pass
-        return override_priority, override_strategy, override_log_msg
-
+        return _check_priority_overrides_fn(self, current_priority)
     def _apply_cycle_phase_bias(self, chosen: 'MutationStrategy', override_priority: int) -> 'MutationStrategy':
         """Apply cycle-phase exploration-exploitation balance."""
-        if self.champion_level in self._unsolved_levels_set:
-            return chosen
-        try:
-            if self.current_generation > 0 and override_priority < 3:
-                _cycle_progress = self.current_generation / max(self.config.max_generations, 1)
-                if _cycle_progress <= 0.3:
-                    _explore_pool = [s for s in MutationStrategy if s.value in ('GROW', 'PERTURBATION_CAPPED', 'MODEL_GUIDED', 'HYBRID')]
-                    if _explore_pool and self.rng.random() < 0.40:
-                        chosen = self.rng.choice(_explore_pool)
-                        self._log(f"[Strategy] Cycle-phase early explore: progress={_cycle_progress:.2f}, chosen={chosen.value}")
-                elif _cycle_progress >= 0.7:
-                    _exploit_pool = [s for s in MutationStrategy if s.value in ('RANDOM', 'TASK_AWARE', 'DIRECTED')]
-                    if _exploit_pool and self.rng.random() < 0.40:
-                        chosen = self.rng.choice(_exploit_pool)
-                        self._log(f"[Strategy] Cycle-phase late exploit: progress={_cycle_progress:.2f}, chosen={chosen.value}")
-        except Exception:
-            pass
-        return chosen
+        return _apply_cycle_phase_bias_fn(self, chosen, override_priority)
     def _choose_mutation_strategy(self, idx: int) -> MutationStrategy:
         """Choose a mutation strategy for challenger idx."""
         effective_cap = max(self.config.max_consecutive_same_strategy // 2, 10) if self.champion_level >= 5 else self.config.max_consecutive_same_strategy
@@ -2604,144 +1993,23 @@ class EvolutionEngine:
 
     def _apply_affinity_bias(self, chosen):
         """Apply per-program mutation affinity bias."""
-        try:
-            _champ = getattr(self, 'champion', None)
-            if _champ is None or len(_champ) == 0:
-                return chosen
-            from mutation_proposer import DirectedMutator as _AffDM
-            _affinity = _AffDM.get_program_mutation_affinity(_champ, top_n=5)
-            if not _affinity:
-                return chosen
-            _sv = {s.value for s in MutationStrategy}
-            _as = [(_STRATEGY_ENUM_CACHE.get(a, MutationStrategy.HYBRID) if a in _sv else MutationStrategy[a], r, at) for a, r, at in _affinity if a in _sv or hasattr(MutationStrategy, a)]
-            if not _as:
-                return chosen
-            _ta = sum(a for _, _, a in _as)
-            if _ta < 20:
-                return chosen
-            _tr, _rr = _as[0][1], _as[1][1] if len(_as) > 1 else 0.0
-            if _tr - _rr >= 0.15 and self.rng.random() < 0.6:
-                return _as[0][0]
-            if self.rng.random() < 0.4:
-                _w = [r for _, r, _ in _as]
-                if sum(_w) > 0:
-                    _p = self.rng.choices([s for s, _, _ in _as], weights=_w, k=1)
-                    if _p: return _p[0]
-        except Exception: pass
-        return chosen
+        return _apply_affinity_bias_fn(self, chosen)
     def _apply_level_aware_strategy_bias(self, chosen: MutationStrategy) -> MutationStrategy:
-        """Apply level-aware strategy weighting to bias selection by task difficulty.
-
-        Different levels benefit from different mutation strategies:
-          L1-L4:  Simple programs — small changes (RANDOM, TASK_AWARE, DIRECTED)
-          L5-L6:  Structural mutations needed (GROW, PERTURBATION_CAPPED)
-          L7-L11: Complex operations (GROW, PERTURBATION_CAPPED, HYBRID)
-          L12+:   Full program redesign (MODEL_GUIDED, GROW, HYBRID)
-
-        Returns the (possibly modified) chosen strategy.
-        """
-        try:
-            lvl = self.champion_level
-            if lvl <= 4:
-                tier_key = "L1_L4"
-            elif lvl <= 6:
-                tier_key = "L5_L6"
-            elif lvl <= 11:
-                tier_key = "L7_L11"
-            else:
-                tier_key = "L12_plus"
-
-            _lvl_weights = self._LEVEL_WEIGHT_PROFILES[tier_key]
-            _lvl_prob = self._LEVEL_OVERRIDE_PROBS[tier_key]
-
-            if self.rng.random() < _lvl_prob:
-                _candidates = [s for s in MutationStrategy if s.value in _lvl_weights]
-                if _candidates:
-                    _weighted: list[MutationStrategy] = []
-                    for _s in _candidates:
-                        _w = _lvl_weights.get(_s.value, 1.0)
-                        _count = max(1, int(round(_w * 4)))
-                        _weighted.extend([_s] * _count)
-                    chosen = self.rng.choice(_weighted)
-                    self._log(
-                        f"[Strategy] Level-aware bias: L{lvl}, "
-                        f"prob={_lvl_prob:.2f}, chosen={chosen.value}"
-                    )
-        except Exception:
-            pass
-        return chosen
-
+        """Apply level-aware strategy weighting to bias selection by task difficulty."""
+        return _apply_level_aware_strategy_bias_fn(self, chosen)
     # --------------------------------------------------------------
     # Model-guided generation (v12.5)
     # --------------------------------------------------------------
 
     def _get_model_guided_ratio(self) -> float:
-        """Determine model-guided replacement ratio based on level and stall.
-
-        Returns fraction of challengers to replace with model completions.
-        When model_guided_ratio is None (or 0), uses curriculum-adaptive
-        defaults (low/mid/high) based on champion level.
-        When set to a specific value > 0, that value is used directly.
-        """
-        ratio = self.config.model_guided_ratio
-        if ratio is not None and ratio > 0:
-            return float(ratio)
-        # None or 0 means curriculum-adaptive defaults
-        if self.champion_level <= 5:
-            return self.config.model_guided_ratio_low
-        elif self.champion_level <= 7:
-            return self.config.model_guided_ratio_mid
-        else:
-            return self.config.model_guided_ratio_high
-
+        """Determine model-guided replacement ratio based on level and stall."""
+        return _get_model_guided_ratio_fn(self.config, self.champion_level)
     def _get_model_guided_prefix(self, champion_hex: list[str], ref_prefix_hex: list[str] | None) -> tuple[list[str], str]:
         """Select prefix source using Adaptive Prefix Scheduler (APS)."""
-        stalled = self.generations_stalled
-        champion_level = self.champion_level
-        composite_hex = None
-        source_name = None
-        if champion_level >= 8 and len(champion_hex) >= 4:
-            if stalled >= 50:
-                composite = list(champion_hex)
-                if ref_prefix_hex and len(ref_prefix_hex) >= 2:
-                    composite.extend(ref_prefix_hex[:min(12, len(ref_prefix_hex))])
-                composite_hex = composite
-                source_name = f"composite(L{champion_level}): champ({len(composite)}w)+ref({len(ref_prefix_hex or [])}w) [stall={stalled}]"
-            elif stalled >= 20:
-                if ref_prefix_hex and len(ref_prefix_hex) >= 4:
-                    composite_hex = ref_prefix_hex[:min(12, len(ref_prefix_hex))]
-                    source_name = f"ref-only(L{champion_level}): {len(composite_hex)}w [stall={stalled}]"
-                else:
-                    prefix_len = min(8, len(champion_hex))
-                    composite_hex = champion_hex[:prefix_len]
-                    source_name = f"champion-fallback(L{champion_level}): {prefix_len}w [stall={stalled}]"
-            else:
-                if ref_prefix_hex and len(ref_prefix_hex) >= 2:
-                    prefix_len = min(6, max(2, len(ref_prefix_hex) // 3))
-                    composite_hex = ref_prefix_hex[:prefix_len]
-                    source_name = f"ref-short(L{champion_level}): {len(composite_hex)}w [stall={stalled}]"
-                else:
-                    prefix_len = min(4, len(champion_hex))
-                    composite_hex = champion_hex[:prefix_len]
-                    source_name = f"champion-short(L{champion_level}): {prefix_len}w [stall={stalled}]"
-        if composite_hex is not None:
-            return composite_hex, source_name or f"default (L{champion_level})"
-        if ref_prefix_hex is not None:
-            return ref_prefix_hex, source_name or f"reference (L{champion_level})"
-        return champion_hex, source_name or f"champion body (L{champion_level})"
-
+        return _get_model_guided_prefix_fn(champion_hex, ref_prefix_hex, self.champion_level, self.generations_stalled)
     def _compute_model_temperature(self) -> float:
         """Compute model temperature with optional annealing."""
-        gen = getattr(self, "current_generation", 0)
-        if self.config.use_temperature_annealing:
-            anneal_progress = min(1.0, gen / max(1, self.config.temperature_schedule_generations))
-            return self.config.temperature_start + (self.config.temperature_end - self.config.temperature_start) * anneal_progress
-        if gen < 10:
-            return 1.2
-        elif gen < 30:
-            return 0.9
-        return 0.6
-
+        return _compute_model_temperature_fn(self.config, getattr(self, "current_generation", 0))
     def _run_model_inference(self, prefix_source, model_temp, num_replace, prefix_counts):
         """Run model inference loop and return replaced indices."""
         ri, reps = [], 0
@@ -3448,92 +2716,25 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
 
     def _record_level_circuit_outcome(self, level: int, had_success: bool) -> None:
-        """Record a cycle outcome for the given level.
-
-        Args:
-            level: Curriculum level being evaluated.
-            had_success: True if at least one program passed verify() for this level.
-        """
+        """Record a cycle outcome for the given level."""
         if not self.config.level_circuit_breaker_enabled:
             return
-        if level not in self._level_circuit_stats:
-            self._level_circuit_stats[level] = {"cycles": 0, "successes": 0}
-        stats = self._level_circuit_stats[level]
-        stats["cycles"] += 1
-        if had_success:
-            stats["successes"] += 1
-
+        _record_level_circuit_outcome_fn(self._level_circuit_stats, level, had_success)
     def _check_level_circuit_breaker(self, level: int) -> bool:
-        """Check if a level should be disabled by the circuit breaker.
-
-        Returns True if the level is disabled (0% success after threshold cycles).
-        """
+        """Check if a level should be disabled by the circuit breaker."""
         if not self.config.level_circuit_breaker_enabled:
             return False
-        if level in self._disabled_levels:
-            return True
-        stats = self._level_circuit_stats.get(level)
-        if stats is None:
-            return False
-        threshold = self.config.level_circuit_breaker_threshold
-        if stats["cycles"] >= threshold and stats["successes"] == 0:
-            self._disabled_levels.add(level)
-            self._log(
-                f"[CircuitBreaker] Level {level} DISABLED: "
-                f"0% success over {stats['cycles']} cycles "
-                f"(threshold={threshold})"
-            )
-            return True
-        return False
-
+        return _check_level_circuit_breaker_fn(
+            self._level_circuit_stats, self._disabled_levels, level,
+            self.config.level_circuit_breaker_threshold,
+            self.config.level_circuit_breaker_enabled, self._log,
+        )
     def _is_level_disabled(self, level: int) -> bool:
         """Check if a level has been auto-disabled by the circuit breaker."""
-        return level in self._disabled_levels
-
+        return _is_level_disabled_fn(self._disabled_levels, level)
     def _record_cycle_level_outcome(self) -> None:
-        """Record the current cycle's outcome for the circuit breaker.
-
-        Called after each generation's evaluation to track per-level success.
-        Checks if any challenger (or the champion) passed verify() for the
-        current level.
-        """
-        level = self.champion_level
-        # Check champion verification
-        had_success = False
-        if self.champion_trace is not None:
-            try:
-                level_cls = get_task_level(level)
-                output = {
-                    "registers": self.champion_trace.get("final_regs", {}),
-                    "memory": self.champion_trace.get("final_memory", {}),
-                }
-                score = level_cls(seed=level).verify(output, self.task_instance)
-                if score >= 1.0:
-                    had_success = True
-            except Exception:
-                pass
-        # Also check last challengers
-        if not had_success and self._last_results:
-            try:
-                level_cls = get_task_level(level)
-                for trace in self._last_results:
-                    if not isinstance(trace, dict):
-                        continue
-                    if trace.get("status") != "ok":
-                        continue
-                    output = {
-                        "registers": trace.get("final_regs", {}),
-                        "memory": trace.get("final_memory", {}),
-                    }
-                    score = level_cls(seed=level).verify(output, self.task_instance)
-                    if score >= 1.0:
-                        had_success = True
-                        break
-            except Exception:
-                pass
-        self._record_level_circuit_outcome(level, had_success)
-        self._check_level_circuit_breaker(level)
-
+        """Record the current cycle's outcome for the circuit breaker."""
+        _record_cycle_level_outcome_fn(self)
     def get_disabled_levels(self) -> frozenset[int]:
         """Return the set of levels disabled by the circuit breaker."""
         return frozenset(self._disabled_levels)
@@ -3965,35 +3166,8 @@ class EvolutionEngine:
 
     @staticmethod
     def _count_backward_branches(program: list[int]) -> int:
-        """Count backward branches (loop structures) in RV32I bytecode.
-
-        Decodes B-type instructions (BEQ, BNE, BLT, BGE, BLTU, BGEU)
-        by extracting the 13-bit signed immediate and checking for
-        negative offsets (which indicate backward jumps / loops).
-        """
-        if not program or len(program) < 2:
-            return 0
-        count = 0
-        for word in program:
-            if not isinstance(word, int):
-                continue
-            opcode = word & 0x7F
-            # B-type instructions: opcode = 0x63 (0b1100011)
-            if opcode == 0x63:
-                # B-type immediate encoding (bits 31,7,30:25,11:8 → 12-bit signed)
-                imm = (
-                    ((word >> 31) & 0x1) << 12
-                    | ((word >> 7) & 0x1) << 11
-                    | ((word >> 25) & 0x3F) << 5
-                    | ((word >> 8) & 0xF) << 1
-                )
-                # Sign-extend 13-bit immediate
-                if imm & 0x1000:
-                    imm -= 0x2000
-                if imm < 0:
-                    count += 1
-        return count
-
+        """Count backward branches (loop structures) in RV32I bytecode."""
+        return _count_backward_branches_fn(program)
     def get_champion_program_analysis(self) -> dict:
         """Analyze the current champion program structure."""
         if self.champion is None:
