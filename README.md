@@ -97,7 +97,7 @@ Evolution Engine/
 | Feature benchmarks | **5/5 passed** | `benchmarks/verify_v13_features.py` — MG scheduler, temperature annealing, tournament selection with elitism, MG ratio, full evolution cycle |
 | Average fitness/generation vs baseline | **5.3× faster** | `benchmarks/verify_improvements.py` |
 | Per-generation speed | **1.6× faster** | `benchmarks/verify_improvements.py` |
-| Test suite | **8911/8976 passing (99.3%)** | `python -m pytest tests/ -v` |
+| Test suite | **8482/8919 passing (95.1%)** | `python -m pytest tests/ -v` |
 
 ### Verified-But-Not-Yet-Activated Fixes
 
@@ -182,7 +182,7 @@ python milestone1/train_model.py             # Train model on accumulated traces
 python milestone1/build_recurrent_dataset.py # Build dataset from champion traces
 
 # Testing
-python -m pytest tests/ -v                   # Run full test suite (8976 tests)
+python -m pytest tests/ -v                   # Run full test suite (8919 tests)
 
 # Deployment
 ./deploy.sh                                  # Deploy via Docker

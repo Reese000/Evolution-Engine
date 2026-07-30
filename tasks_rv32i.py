@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-RV32I curriculum tasks — 12-level monotonic curriculum ported from
-simulation/tasks_monotonic.py.
+RV32I curriculum tasks — 31-level monotonic curriculum (L0-L30).
 
 Each level adds a NEW output register. Previous levels' outputs are never
 overwritten because each level's output goes to a DIFFERENT register.
