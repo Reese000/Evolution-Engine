@@ -327,8 +327,8 @@ class TestMetaEvolutionConsistency:
         summary = {"final_fitness": 0.5, "final_level": 5, "champion_words": 30, "generations_completed": 50}
         mf = MetaEvolutionEngine._compute_meta_fitness(summary)
         # diversity component should be 1.0 (sweet spot)
-        # mf = 0.5/1.5 * 0.3 + 5/13 * 0.5 + 1.0 * 0.2 = 0.1 + 0.192 + 0.2 = 0.492
-        assert mf > 0.4
+        # mf = 0.5/1.5 * 0.3 + 5/30 * 0.5 + 1.0 * 0.2 = 0.1 + 0.0833 + 0.2 = 0.3833
+        assert mf > 0.3
 
     def test_compute_meta_fitness_stub_penalty(self):
         """Champion words < 5 gets stub penalty."""

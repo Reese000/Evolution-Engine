@@ -65,9 +65,9 @@ from meta_genome import MetaGenome  # noqa: E402
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Maximum curriculum level (0-indexed). The tasks_rv32i module defines 14
-# levels (0…13). Used to normalise curriculum_speed in meta-fitness.
-_DEFAULT_MAX_LEVEL: int = 13
+# Maximum curriculum level (0-indexed). The tasks_rv32i module defines 31
+# levels (0…30). Used to normalise curriculum_speed in meta-fitness.
+_DEFAULT_MAX_LEVEL: int = 30
 
 # Upper bound for champion program length (words), used as a diversity
 # normaliser.  Well beyond typical solutions to avoid clamping.

@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evolution Engine Progress Report",
+  "description": "JSON Schema for the Evolution Engine schema-v1.0 progress report written to progress_report.json after each cycle.",
+  "type": "object",
+  "schema_version": "1.0",
+  "required": [
+    "generated_at",
+    "cycle",
+    "schema_version",
+    "summary",
+    "fitness",
+    "level",
+    "retrain",
+    "diversity",
+    "time_breakdown",
+    "errors",
+    "trends",
+    "latest_cycle",
+    "resource_usage"
+  ],
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "description": "ISO-8601 timestamp of when the report was generated."
+    },
+    "cycle": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Current cycle number."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version identifier."
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "fitness": {
+      "$ref": "#/$defs/fitness_section"
+    },
+    "level": {
+      "$ref": "#/$defs/level_section"
+    },
+    "retrain": {
+      "$ref": "#/$defs/retrain_section"
+    },
+    "diversity": {
+      "$ref": "#/$defs/diversity_section"
+    },
+    "time_breakdown": {
+      "$ref": "#/$defs/time_breakdown"
+    },
+    "errors": {
+      "$ref": "#/$defs/errors_section"
+    },
+    "trends": {
+      "$ref": "#/$defs/trends_section"
+    },
+    "latest_cycle": {
+      "type": "object",
+      "description": "Raw cycle_metrics dict captured at the time of the report."
+    },
+    "resource_usage": {
+      "$ref": "#/$defs/resource_usage"
+    }
+  },
+  "$defs": {
+    "trend_stats": {
+      "type": "object",
+      "properties": {
+        "current": {
+          "type": ["number", "null"],
+          "description": "Most recent value."
+        },
+        "avg": {
+          "type": ["number", "null"],
+          "description": "Moving-average value."
+        },
+        "min": {
+          "type": ["number", "null"],
+          "description": "Minimum value in the window."
+        },
+        "max": {
+          "type": ["number", "null"],
+          "description": "Maximum value in the window."
+        },
+        "trend": {
+          "type": "string",
+          "enum": ["improving", "declining", "stable", "unknown"],
+          "description": "Overall trend direction."
+        },
+        "window_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of data points in the trend window."
+        }
+      },
+      "required": ["current", "avg", "min", "max", "trend", "window_size"]
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "best_fitness": { "type": "number" },
+        "best_level": { "type": "integer" },
+        "cycles_completed": { "type": "integer" },
+        "total_errors": { "type": "integer" },
+        "uptime_seconds": { "type": "number" },
+        "start_timestamp": { "type": "string" }
+      },
+      "required": ["best_fitness", "best_level", "cycles_completed", "total_errors", "uptime_seconds", "start_timestamp"]
+    },
+    "fitness_section": {
+      "type": "object",
+      "properties": {
+        "trajectory": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Recent fitness values per cycle."
+        },
+        "trend": { "$ref": "#/$defs/trend_stats" },
+        "best_ever": { "type": "number" }
+      },
+      "required": ["trajectory", "trend", "best_ever"]
+    },
+    "level_section": {
+      "type": "object",
+      "properties": {
+        "progression_history": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "description": "Historical level values per cycle."
+        },
+        "trend": { "$ref": "#/$defs/trend_stats" }
+      },
+      "required": ["progression_history", "trend"]
+    },
+    "retrain_section": {
+      "type": "object",
+      "properties": {
+        "val_loss_history": {
+          "type": "array",
+          "items": { "type": ["number", "null"] }
+        },
+        "last_val_loss": { "type": ["number", "null"] },
+        "retrain_count": { "type": "integer" }
+      },
+      "required": ["val_loss_history", "last_val_loss", "retrain_count"]
+    },
+    "diversity_section": {
+      "type": "object",
+      "properties": {
+        "unique_individuals": { "type": ["integer", "null"] },
+        "qd_occupied": { "type": ["integer", "null"] },
+        "qd_total": { "type": ["integer", "null"] },
+        "diversity_score": { "type": ["number", "null"] },
+        "latest_diversity": { "type": ["number", "null"] }
+      },
+      "required": ["unique_individuals", "qd_occupied", "qd_total", "diversity_score", "latest_diversity"]
+    },
+    "time_breakdown": {
+      "type": "object",
+      "properties": {
+        "evolution_seconds": { "type": ["number", "null"] },
+        "retrain_seconds": { "type": ["number", "null"] },
+        "total_cycle_seconds": { "type": ["number", "null"] },
+        "avg_cycle_seconds": { "type": ["number", "null"] }
+      },
+      "required": ["evolution_seconds", "retrain_seconds", "total_cycle_seconds", "avg_cycle_seconds"]
+    },
+    "errors_section": {
+      "type": "object",
+      "properties": {
+        "total_count": { "type": "integer" },
+        "types": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "consecutive_errors": { "type": "integer" }
+      },
+      "required": ["total_count", "types", "consecutive_errors"]
+    },
+    "trends_section": {
+      "type": "object",
+      "properties": {
+        "fitness": { "$ref": "#/$defs/trend_stats" },
+        "level": { "$ref": "#/$defs/trend_stats" }
+      },
+      "required": ["fitness", "level"]
+    },
+    "resource_usage": {
+      "type": "object",
+      "properties": {
+        "checkpoint_disk_mb": { "type": "number" },
+        "population_size": { "type": "integer" }
+      },
+      "required": ["checkpoint_disk_mb", "population_size"]
+    }
+  }
+}

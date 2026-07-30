@@ -68,7 +68,7 @@ _FIELDS: Tuple[Tuple[str, bool, float, float, float, float], ...] = (
     ("archive_cx_adjust_factor", False, 1.1, 1.01, 1.5, 1.0),
     ("archive_pop_adjust_factor", False, 1.25, 1.01, 2.0, 1.0),
     ("archive_elite_reduce_factor", False, 0.80, 0.5, 0.99, 1.0),
-    ("max_level", True, 13, 5, 20, 2.0),
+    ("max_level", True, 30, 5, 30, 2.0),
     ("adaptive_tourney_mid_add", True, 3, 0, 10, 2.0),
     ("adaptive_tourney_high_add", True, 5, 0, 10, 2.0),
     ("archive_consecutive_wins_trigger", True, 3, 1, 10, 2.0),
@@ -166,7 +166,7 @@ class MetaGenome:
     archive_elite_reduce_factor: float = 0.80
 
     # ── New int fields ────────────────────────────────────────────────────
-    max_level: int = 13
+    max_level: int = 30
     adaptive_tourney_mid_add: int = 3
     adaptive_tourney_high_add: int = 5
     archive_consecutive_wins_trigger: int = 3

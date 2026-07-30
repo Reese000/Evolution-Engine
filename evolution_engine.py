@@ -678,7 +678,7 @@ class EvolutionConfig:
     # Misc
     variance_penalty_coeff: float = 0.1
     stall_threshold: int = 10
-    max_level: int = 13
+    max_level: int = 30
     max_champion_words: int = 500
     num_eval_seeds: int = 3
     self_calibrate_delta_threshold: float = 0.05
