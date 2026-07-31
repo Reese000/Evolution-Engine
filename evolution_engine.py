@@ -449,17 +449,33 @@ class HallOfFame:
         best = max(self._heap, key=lambda e: e[0])
         return list(best[2])
 
-    def get_random(self, rng=None):
-        """Return a random entry from the Hall of Fame."""
+    def get_random(self, rng=None, level=None):
+        """Return a random program from the Hall of Fame.
+
+        Args:
+            rng: Random number generator (default: stdlib random.Random()).
+            level: If given, only return programs at this level.
+
+        Returns:
+            A defensive copy of the program list, or None if empty.
+        """
         import random
         if rng is None:
             rng = random.Random()
         heap = getattr(self, '_heap', [])
         if not heap:
             return None
-        idx = rng.randint(0, len(heap) - 1)
-        entry = heap[idx]
-        return {"fitness": entry[0], "program": entry[1], "level": entry[2], "generation": entry[3]}
+        # Heap tuple: (fitness, generation, program, level)
+        if level is not None:
+            candidates = [(f, g, p, l) for f, g, p, l in heap if l == level]
+            if candidates:
+                entry = candidates[rng.randint(0, len(candidates) - 1)]
+            else:
+                # Fall through to unfiltered when no entries match level
+                entry = heap[rng.randint(0, len(heap) - 1)]
+        else:
+            entry = heap[rng.randint(0, len(heap) - 1)]
+        return list(entry[2])  # entry[2] is the program
     @property
     def size(self) -> int:
         return len(self._heap)
@@ -818,7 +834,8 @@ class EvolutionEngine:
         self._champion_oscillation_window = __import__('collections').deque(maxlen=self._oscillation_window_size)
         self._oscillation_positive_count, self._oscillation_threshold, self._hysteresis_min_delta = 0, 3, 0.5
         self.meta_controller, self.progression_tracker = None, None
-        self._log_handle, self._log_path = None, None
+        self._log_file = None
+        self._log_path_cache = None
         if self.config.log_dir: os.makedirs(self.config.log_dir, exist_ok=True)
     def apply_external_params(self, params: dict[str, Any]) -> None:
         """Apply externally-tuned evolution params (from BarrierTuner/MetaController).
@@ -2434,7 +2451,7 @@ class EvolutionEngine:
         seen_fps = {(len(p) << 32) ^ (p[0] if p else 0) ^ ((p[-1] << 16) if len(p) > 1 else 0) for p in elites}
         seen_indices = set(elite_indices)
         n_scored = len(scored)
-        for (win_prog, _, _, _), best_i in self._tournament_select(scored, elite_size, n_scored):
+        for (_, _, win_prog, _), best_i in self._tournament_select(scored, elite_size, n_scored):
             fp = (len(win_prog) << 32) ^ (win_prog[0] if win_prog else 0) ^ ((win_prog[-1] << 16) if len(win_prog) > 1 else 0)
             if fp not in seen_fps and best_i not in seen_indices:
                 seen_fps.add(fp)

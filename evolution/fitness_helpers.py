@@ -710,7 +710,7 @@ def batch_compute_base(
     reg_matches = batch_score_registers(
         ok_traces, expected_keys, expected_vals, n_ok
     )
-    bloat = np.maximum(0.0, (ok_instr - 10).astype(np.float64) * 0.2)
+    bloat = np.where(ok_instr > 50, (ok_instr - 50).astype(np.float64) * 0.05, 0.0)
     exec_credit = np.zeros(n_ok, dtype=np.float64)
     pos = reg_matches > 0.0
     if budget > 0:
@@ -773,6 +773,29 @@ def batch_apply_bonuses(
             np.minimum(25.0, smc_counts[smc_ok].astype(np.float64) * 5.0),
             _max_single[smc_ok],
         )
+    # Time credit: +20 points for fast solutions (reg_match >= 0.99, instr_count <= 5)
+    ok_traces_for_tc = [traces[i] for i in ok_indices]
+    tc_reg_matches = batch_score_registers(
+        ok_traces_for_tc,
+        list(expected_regs.keys()),
+        (
+            np.array([expected_regs[k] for k in expected_regs.keys()], dtype=np.float64)
+            if expected_regs
+            else np.array([], dtype=np.float64)
+        ),
+        n_ok,
+    )
+    tc_eligible = (tc_reg_matches >= 0.99) & (ok_instr > 0)
+    tc_5_or_less = tc_eligible & (ok_instr <= 5)
+    tc_6_to_15 = tc_eligible & (ok_instr > 5) & (ok_instr <= 15)
+    tc_above_15 = tc_eligible & (ok_instr > 15)
+    time_credit = np.zeros(n_ok, dtype=np.float64)
+    time_credit[tc_5_or_less] = 20.0
+    time_credit[tc_6_to_15] = 20.0 * (1.0 - (ok_instr[tc_6_to_15].astype(np.float64) - 5.0) / 10.0)
+    time_credit[tc_above_15] = np.maximum(
+        0.0, 10.0 - (ok_instr[tc_above_15].astype(np.float64) - 15.0) * 0.2
+    )
+    base += np.minimum(time_credit, _max_single)
     cached = engine._bonus_threshold_cache
     bonus_threshold = (
         cached[1]
@@ -780,27 +803,25 @@ def batch_apply_bonuses(
         else max(0.85, 0.95 - 0.10 * (lvl / max(1, len(LEVELS) - 1)))
     )
     ok_traces = [traces[i] for i in ok_indices]
-    above = (
-        batch_score_registers(
-            ok_traces,
-            list(expected_regs.keys()),
-            (
-                np.array(
-                    [expected_regs[k] for k in expected_regs.keys()],
-                    dtype=np.float64,
-                )
-                if expected_regs
-                else np.array([], dtype=np.float64)
-            ),
-            n_ok,
-        )
-        >= bonus_threshold
+    grad_reg_matches = batch_score_registers(
+        ok_traces,
+        list(expected_regs.keys()),
+        (
+            np.array(
+                [expected_regs[k] for k in expected_regs.keys()],
+                dtype=np.float64,
+            )
+            if expected_regs
+            else np.array([], dtype=np.float64)
+        ),
+        n_ok,
     )
+    above = grad_reg_matches >= bonus_threshold
     denom = 1.0 - bonus_threshold
     grad_bonus = np.where(
         above,
         (
-            50.0 * (above.astype(np.float64) - bonus_threshold) / denom
+            50.0 * (grad_reg_matches - bonus_threshold) / denom
             if denom > 0
             else 0.0
         ),
