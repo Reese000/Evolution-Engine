@@ -1937,6 +1937,25 @@ class EvolutionEngine:
             return
         n_model = max(1, int(len(challengers) * self.config.model_guided_ratio))
         replaced = self._replace_with_model_guided(challengers, model_ratio=n_model / len(challengers))
+    def _apply_mutation(self, strategy) -> list[int]:
+        """Apply a mutation strategy to the champion and return the mutated program."""
+        task_inst = self.task_instance or {}
+        expected = task_inst.get("expected_output", {})
+        inputs = task_inst.get("inputs", {})
+        trace_input = [self.champion_trace] if self.champion_trace is not None else []
+        sa = self.strategy_archive if self.config.use_strategy_archive else None
+        mutated, _desc, _analysis = propose_mutation(
+            program=self.champion,
+            trace=trace_input,
+            expected=expected,
+            inputs=inputs,
+            rng=self.rng,
+            task_level=self.champion_level,
+            strategy=strategy,
+            strategy_archive=sa,
+        )
+        return mutated
+
     def _generate_challengers(self) -> list[list[int]]:
         """Generate a population of challenger programs."""
         pop_size = self.config.population_size
