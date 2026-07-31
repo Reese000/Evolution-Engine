@@ -474,16 +474,12 @@ class Level9(TaskLevel):
         total = _cap32(sum(vals))
         mem_dict = {base_addr + i * 4: vals[i] for i in range(count)}
 
-        # Cumulative: L8 needs x11 = mem[x1] + mem[x2].
-        # Use a dummy value at a safe address that won't overlap with data.
-        # Store at MEMORY_SIZE-8 (last safe word address) to avoid overlap.
-        dummy_addr = MEMORY_SIZE - 8
-        dummy_val = self._pick_value()
-        mem_dict[dummy_addr] = dummy_val
-
+        # L8 reference loads mem[x1] + mem[x2] where x2 = count.
+        # We need mem[count] to exist for correct x11 expected value.
+        # If count doesn't fall within the array, mem[count] defaults to 0.
         base = _compute_base_expected(base_addr, count)
         base[10] = vals[0]
-        base[11] = _cap32(vals[0] + dummy_val)
+        base[11] = _cap32(vals[0] + mem_dict.get(count, 0))
         base[12] = total
 
         return {
@@ -538,12 +534,11 @@ class Level10(TaskLevel):
         max_val = max(vals)
         mem_dict = {base_addr + i * 4: vals[i] for i in range(count)}
 
-        dummy_val = self._pick_value()
-        mem_dict[MEMORY_SIZE - 8] = dummy_val
-
+        # L8 reference loads mem[x1] + mem[x2] where x2 = count.
+        # Compute x11 correctly based on what's actually at mem[count].
         base = _compute_base_expected(base_addr, count)
         base[10] = vals[0]
-        base[11] = _cap32(vals[0] + dummy_val)
+        base[11] = _cap32(vals[0] + mem_dict.get(count, 0))
         base[12] = _cap32(sum(vals))
         base[13] = max_val
 
@@ -585,7 +580,7 @@ class Level10(TaskLevel):
             {"name": "SLLI", "rd": 20, "rs1": 16, "imm": 2},  # x20 = i * 4
             {"name": "ADD", "rd": 17, "rs1": 1, "rs2": 20},  # addr = base + i*4
             {"name": "LW", "rd": 18, "rs1": 17, "imm": 0},  # val
-            {"name": "SLT", "rd": 19, "rs1": 13, "rs2": 18},  # x19 = 1 if x13 < x18 (SIGNED)
+            {"name": "SLTU", "rd": 19, "rs1": 13, "rs2": 18},  # x19 = 1 if x13 < x18 (UNSIGNED)
             {"name": "BEQ", "rd": 0, "rs1": 19, "rs2": 0, "imm": 8},  # skip if x13 >= val
             {"name": "ADDI", "rd": 13, "rs1": 18, "imm": 0},  # x13 = val (new max)
             {"name": "ADDI", "rd": 16, "rs1": 16, "imm": 1},  # i++
