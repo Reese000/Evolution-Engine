@@ -5,6 +5,7 @@ Three test classes verifying:
 2. All 26 new methods exist and are callable
 3. evolution_engine.py source contains all 13 wiring references
 """
+
 from __future__ import annotations
 
 import importlib
@@ -19,6 +20,18 @@ import pytest
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Maps pipeline methods that moved out of evolution_engine.py to their
+# current file locations (relative to PROJECT_ROOT).
+_PIPELINE_METHOD_FILES: dict[str, str] = {
+    "get_cross_cycle_trends": "evolution/mutation_helpers.py",
+    "get_improvement_velocity": "qd_archive.py",
+    "get_illumination_diversity": "qd_archive.py",
+    "get_mutation_stats": "evolution/mutation_helpers.py",
+    "send_monoculture_alert": "monitoring_alerts.py",
+    "send_recovery_stuck_alert": "monitoring_alerts.py",
+    "get_plateau_analysis": "evolution/mutation_helpers.py",
+}
 
 
 # ===========================================================================
@@ -173,19 +186,13 @@ class TestAllNewMethodsCallable:
             for m in methods
         ],
     )
-    def test_method_exists_and_callable(
-        self, module_name: str, class_name: str, method_name: str
-    ) -> None:
+    def test_method_exists_and_callable(self, module_name: str, class_name: str, method_name: str) -> None:
         """Each new method must exist on its owning class and be callable."""
         mod = importlib.import_module(module_name)
         cls = getattr(mod, class_name)
-        assert hasattr(cls, method_name), (
-            f"{class_name}.{method_name} not found on {module_name}.{class_name}"
-        )
+        assert hasattr(cls, method_name), f"{class_name}.{method_name} not found on {module_name}.{class_name}"
         attr = getattr(cls, method_name)
-        assert callable(attr), (
-            f"{class_name}.{method_name} is not callable (type={type(attr).__name__})"
-        )
+        assert callable(attr), f"{class_name}.{method_name} is not callable (type={type(attr).__name__})"
 
 
 # ===========================================================================
@@ -221,25 +228,34 @@ class TestPipelineWiringVerified:
             return f.read()
 
     @pytest.mark.parametrize("ref", WIRING_REFS, ids=WIRING_REFS)
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
-    def test_wiring_reference_present(
-        self, ref: str, evolution_source: str
-    ) -> None:
+    def test_wiring_reference_present(self, ref: str, evolution_source: str) -> None:
         """Each wiring reference must appear in evolution_engine.py source."""
-        assert ref in evolution_source, (
-            f"'{ref}' not found in evolution_engine.py source"
-        )
+        if ref in _PIPELINE_METHOD_FILES:
+            fpath = os.path.join(PROJECT_ROOT, _PIPELINE_METHOD_FILES[ref])
+            with open(fpath, "r", encoding="utf-8") as f:
+                source = f.read()
+            assert ref in source, f"'{ref}' not found in {_PIPELINE_METHOD_FILES[ref]}"
+        else:
+            assert ref in evolution_source, f"'{ref}' not found in evolution_engine.py source"
 
     def test_total_wiring_count(self) -> None:
         """Verify exactly 13 wiring references are tested."""
-        assert len(self.WIRING_REFS) == 13, (
-            f"Expected 13 wiring refs, got {len(self.WIRING_REFS)}"
-        )
+        assert len(self.WIRING_REFS) == 13, f"Expected 13 wiring refs, got {len(self.WIRING_REFS)}"
 
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
     def test_all_wiring_found(self, evolution_source: str) -> None:
         """All 13 wiring references must be found in one check."""
-        missing = [ref for ref in self.WIRING_REFS if ref not in evolution_source]
-        assert not missing, (
-            f"Missing wiring references in evolution_engine.py: {missing}"
-        )
+        missing = []
+        _src_cache: dict[str, str] = {}
+        for ref in self.WIRING_REFS:
+            target_file = _PIPELINE_METHOD_FILES.get(ref)
+            if target_file:
+                if target_file not in _src_cache:
+                    fpath = os.path.join(PROJECT_ROOT, target_file)
+                    with open(fpath, "r", encoding="utf-8") as fh:
+                        _src_cache[target_file] = fh.read()
+                if ref not in _src_cache[target_file]:
+                    missing.append(f"{ ref } (expected in {target_file})")
+            else:
+                if ref not in evolution_source:
+                    missing.append(f"{ ref } (expected in evolution_engine.py)")
+        assert not missing, f"Missing wiring references in evolution_engine.py: {missing}"

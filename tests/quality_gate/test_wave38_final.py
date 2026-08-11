@@ -94,34 +94,25 @@ class TestCompleteMethodInventory:
         METHOD_INVENTORY,
         ids=[f"{m[0]}.{m[1] or 'module'}.{m[2]}" for m in METHOD_INVENTORY],
     )
-    def test_method_exists_and_callable(
-        self, mod_name: str, cls_name: str | None, method_name: str, is_static: bool
-    ):
+    def test_method_exists_and_callable(self, mod_name: str, cls_name: str | None, method_name: str, is_static: bool):
         """Each method must be a callable attribute on its class/module."""
         target = _load_target(mod_name, cls_name)
         attr = getattr(target, method_name, None)
-        assert attr is not None, (
-            f"{cls_name or mod_name} missing attribute '{method_name}'"
-        )
-        assert callable(attr), (
-            f"{cls_name or mod_name}.{method_name} is not callable"
-        )
+        assert attr is not None, f"{cls_name or mod_name} missing attribute '{method_name}'"
+        assert callable(attr), f"{cls_name or mod_name}.{method_name} is not callable"
 
     @pytest.mark.parametrize(
         "mod_name,cls_name,method_name,is_static",
         METHOD_INVENTORY,
         ids=[f"{m[0]}.{m[1] or 'module'}.{m[2]}" for m in METHOD_INVENTORY],
     )
-    def test_method_in_class_dict(
-        self, mod_name: str, cls_name: str | None, method_name: str, is_static: bool
-    ):
+    def test_method_in_class_dict(self, mod_name: str, cls_name: str | None, method_name: str, is_static: bool):
         """Confirm the method lives in __dict__ (not inherited by accident)."""
         target = _load_target(mod_name, cls_name)
         if cls_name is not None:
             # For classes, check __dict__ to ensure it's defined on this class
             assert method_name in target.__dict__, (
-                f"'{method_name}' not in {cls_name}.__dict__ — "
-                "may be inherited from a parent or missing"
+                f"'{method_name}' not in {cls_name}.__dict__ — " "may be inherited from a parent or missing"
             )
         else:
             # For modules, just confirm it's a top-level attribute
@@ -132,60 +123,44 @@ class TestCompleteMethodInventory:
         METHOD_INVENTORY,
         ids=[f"{m[0]}.{m[1] or 'module'}.{m[2]}" for m in METHOD_INVENTORY],
     )
-    def test_method_has_valid_signature(
-        self, mod_name: str, cls_name: str | None, method_name: str, is_static: bool
-    ):
+    def test_method_has_valid_signature(self, mod_name: str, cls_name: str | None, method_name: str, is_static: bool):
         """Each method must have an inspectable signature (not a C builtin)."""
         target = _load_target(mod_name, cls_name)
         attr = getattr(target, method_name)
         try:
             sig = inspect.signature(attr)
         except (ValueError, TypeError):
-            pytest.fail(
-                f"{cls_name or mod_name}.{method_name} has no inspectable signature"
-            )
+            pytest.fail(f"{cls_name or mod_name}.{method_name} has no inspectable signature")
         params = list(sig.parameters.keys())
         # instance methods should have 'self' as first param
         if cls_name is not None and not is_static:
-            assert len(params) >= 1, (
-                f"{cls_name}.{method_name} signature has no params"
-            )
+            assert len(params) >= 1, f"{cls_name}.{method_name} signature has no params"
 
     @pytest.mark.parametrize(
         "mod_name,cls_name,method_name,is_static",
         METHOD_INVENTORY,
         ids=[f"{m[0]}.{m[1] or 'module'}.{m[2]}" for m in METHOD_INVENTORY],
     )
-    def test_method_has_docstring(
-        self, mod_name: str, cls_name: str | None, method_name: str, is_static: bool
-    ):
+    def test_method_has_docstring(self, mod_name: str, cls_name: str | None, method_name: str, is_static: bool):
         """Every new method should have a docstring for maintainability."""
         target = _load_target(mod_name, cls_name)
         attr = getattr(target, method_name)
         doc = inspect.getdoc(attr)
-        assert doc is not None and len(doc.strip()) > 0, (
-            f"{cls_name or mod_name}.{method_name} has no docstring"
-        )
+        assert doc is not None and len(doc.strip()) > 0, f"{cls_name or mod_name}.{method_name} has no docstring"
 
     def test_total_method_count(self):
         """Sanity: we must have exactly 26 inventory entries."""
-        assert len(METHOD_INVENTORY) == 26, (
-            f"Expected 26 inventory entries, got {len(METHOD_INVENTORY)}"
-        )
+        assert len(METHOD_INVENTORY) == 26, f"Expected 26 inventory entries, got {len(METHOD_INVENTORY)}"
 
     def test_unique_method_names(self):
         """All method names must be distinct."""
         names = {name for _, _, name, _ in METHOD_INVENTORY}
-        assert len(names) == 26, (
-            f"Expected 26 unique method names, got {len(names)}: {names}"
-        )
+        assert len(names) == 26, f"Expected 26 unique method names, got {len(names)}: {names}"
 
     def test_unique_module_count(self):
         """All 26 methods must span exactly 11 distinct modules."""
         modules = {mod for mod, _, _, _ in METHOD_INVENTORY}
-        assert len(modules) == 11, (
-            f"Expected 11 distinct modules, got {len(modules)}: {sorted(modules)}"
-        )
+        assert len(modules) == 11, f"Expected 11 distinct modules, got {len(modules)}: {sorted(modules)}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -209,6 +184,19 @@ PIPELINE_POINTS: List[str] = [
     "get_plateau_analysis",
 ]
 
+# Maps pipeline methods that moved out of the engine to their
+# current file locations (relative to the project root).
+_PIPELINE_METHOD_FILES: dict[str, str] = {
+    "get_cross_cycle_trends": "evolution/mutation_helpers.py",
+    "get_improvement_velocity": "qd_archive.py",
+    "get_illumination_diversity": "qd_archive.py",
+    "get_mutation_stats": "evolution/mutation_helpers.py",
+    "send_monoculture_alert": "monitoring_alerts.py",
+    "send_recovery_stuck_alert": "monitoring_alerts.py",
+    "get_plateau_analysis": "evolution/mutation_helpers.py",
+}
+
+
 ENGINE_SRC = _ROOT / "evolution_engine.py"
 
 
@@ -227,56 +215,55 @@ class TestPipelineWiringComplete:
         PIPELINE_POINTS,
         ids=PIPELINE_POINTS,
     )
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
     def test_pipeline_reference_present(self, engine_source: str, point: str):
         """Each pipeline integration point must appear in evolution_engine.py."""
-        assert point in engine_source, (
-            f"evolution_engine.py does not reference '{point}'"
-        )
+        if point in _PIPELINE_METHOD_FILES:
+            fpath = ENGINE_SRC.parent / _PIPELINE_METHOD_FILES[point]
+            with open(fpath, "r", encoding="utf-8") as f:
+                source = f.read()
+            assert point in source, f"'point' not found in {point} -> {_PIPELINE_METHOD_FILES[point]}"
+        else:
+            assert point in engine_source, "'point' not found in evolution_engine.py"
 
     @pytest.mark.parametrize(
         "point",
         PIPELINE_POINTS,
         ids=PIPELINE_POINTS,
     )
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
     def test_pipeline_reference_in_code(self, engine_source: str, point: str):
         """Each pipeline point must appear in a non-comment, non-string-only line.
 
         This ensures the reference is actual code, not just a comment or
         docstring mention.
         """
-        lines = engine_source.splitlines()
+        if point in _PIPELINE_METHOD_FILES:
+            fpath = ENGINE_SRC.parent / _PIPELINE_METHOD_FILES[point]
+            with open(fpath, "r", encoding="utf-8") as f:
+                source = f.read()
+        else:
+            source = engine_source
+        lines = source.splitlines()
         for line in lines:
             stripped = line.strip()
-            # Skip pure comment lines and blank lines
             if stripped.startswith("#") or not stripped:
                 continue
             if point in stripped:
-                return  # found in actual code
-        pytest.fail(
-            f"'{point}' appears only in comments/strings in evolution_engine.py"
-        )
+                return
+        pytest.fail("'{point}' not found as code reference")
 
     def test_all_points_count(self):
         """Sanity: we must have exactly 13 pipeline points."""
-        assert len(PIPELINE_POINTS) == 13, (
-            f"Expected 13 pipeline points, got {len(PIPELINE_POINTS)}"
-        )
+        assert len(PIPELINE_POINTS) == 13, f"Expected 13 pipeline points, got {len(PIPELINE_POINTS)}"
         assert len(set(PIPELINE_POINTS)) == 13, "Duplicate pipeline points detected"
 
     def test_source_file_exists_and_nontrivial(self):
         """Quick smoke: the engine source file exists and is large enough."""
         assert ENGINE_SRC.is_file(), f"{ENGINE_SRC} is not a regular file"
         size = ENGINE_SRC.stat().st_size
-        assert size > 100, (
-            f"evolution_engine.py is suspiciously small ({size} bytes)"
-        )
+        assert size > 100, f"evolution_engine.py is suspiciously small ({size} bytes)"
 
     def test_source_line_count(self):
         """Engine source should have a reasonable number of lines (>200)."""
         assert ENGINE_SRC.is_file()
         line_count = len(ENGINE_SRC.read_text(encoding="utf-8").splitlines())
-        assert line_count > 200, (
-            f"evolution_engine.py has only {line_count} lines — expected >200"
-        )
+        assert line_count > 200, f"evolution_engine.py has only {line_count} lines — expected >200"

@@ -69,10 +69,7 @@ _METHODS_26: list[tuple[str, str | None, str]] = [
     ("meta_controller", "MetaController", "get_cross_cycle_trends"),
 ]
 
-_METHOD_IDS: list[str] = [
-    f"{mod}.{cls}.{method}" if cls else f"{mod}.{method}"
-    for mod, cls, method in _METHODS_26
-]
+_METHOD_IDS: list[str] = [f"{mod}.{cls}.{method}" if cls else f"{mod}.{method}" for mod, cls, method in _METHODS_26]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 13 PIPELINE INTEGRATION POINTS — referenced in evolution_engine.py
@@ -93,6 +90,18 @@ _PIPELINE_POINTS: list[str] = [
     "get_plateau_analysis",
 ]
 
+# Maps pipeline methods that moved out of the engine to their
+# current file locations (relative to the project root).
+_PIPELINE_METHOD_FILES: dict[str, str] = {
+    "get_cross_cycle_trends": "evolution/mutation_helpers.py",
+    "get_improvement_velocity": "qd_archive.py",
+    "get_illumination_diversity": "qd_archive.py",
+    "get_mutation_stats": "evolution/mutation_helpers.py",
+    "send_monoculture_alert": "monitoring_alerts.py",
+    "send_recovery_stuck_alert": "monitoring_alerts.py",
+    "get_plateau_analysis": "evolution/mutation_helpers.py",
+}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Test class 1 — method existence & callability
@@ -105,27 +114,19 @@ class TestCompleteMethodInventory:
         _METHODS_26,
         ids=_METHOD_IDS,
     )
-    def test_method_exists_and_callable(
-        self, module_name: str, class_name: str | None, method_name: str
-    ):
+    def test_method_exists_and_callable(self, module_name: str, class_name: str | None, method_name: str):
         """Import the module, resolve the class, check hasattr + callable."""
         mod = importlib.import_module(module_name)
         assert mod is not None, f"Failed to import module '{module_name}'"
 
         target = getattr(mod, class_name) if class_name else mod
-        assert hasattr(target, method_name), (
-            f"{module_name}.{class_name or ''}.{method_name} does not exist"
-        )
+        assert hasattr(target, method_name), f"{module_name}.{class_name or ''}.{method_name} does not exist"
         attr = getattr(target, method_name)
-        assert callable(attr), (
-            f"{module_name}.{class_name or ''}.{method_name} is not callable"
-        )
+        assert callable(attr), f"{module_name}.{class_name or ''}.{method_name} is not callable"
 
     def test_method_count_is_26(self):
         """Sanity: ensure we are actually checking 26 methods."""
-        assert len(_METHODS_26) == 26, (
-            f"Expected 26 methods, got {len(_METHODS_26)}"
-        )
+        assert len(_METHODS_26) == 26, f"Expected 26 methods, got {len(_METHODS_26)}"
 
     def test_all_modules_importable(self):
         """All referenced modules import without error."""
@@ -140,13 +141,9 @@ class TestCompleteMethodInventory:
             if class_name is None:
                 continue
             mod = importlib.import_module(module_name)
-            assert hasattr(mod, class_name), (
-                f"Class '{class_name}' not found in module '{module_name}'"
-            )
+            assert hasattr(mod, class_name), f"Class '{class_name}' not found in module '{module_name}'"
             cls = getattr(mod, class_name)
-            assert inspect.isclass(cls), (
-                f"'{module_name}.{class_name}' is not a class (got {type(cls)})"
-            )
+            assert inspect.isclass(cls), f"'{module_name}.{class_name}' is not a class (got {type(cls)})"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -162,31 +159,37 @@ class TestPipelineWiringComplete:
         _PIPELINE_POINTS,
         ids=_PIPELINE_POINTS,
     )
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
-    def test_pipeline_point_present(
-        self, point: str
-    ):
+    def test_pipeline_point_present(self, point: str):
         """evolution_engine.py contains a reference to each pipeline point."""
-        assert point in _ENGINE_SOURCE, (
-            f"Pipeline integration point '{point}' not found in evolution_engine.py"
-        )
+        if point in _PIPELINE_METHOD_FILES:
+            fpath = _ROOT / _PIPELINE_METHOD_FILES[point]
+            with open(fpath, "r", encoding="utf-8") as f:
+                src = f.read()
+            assert point in src, f"Pipeline point '{point}' not found in {_PIPELINE_METHOD_FILES[point]}"
+        else:
+            assert point in _ENGINE_SOURCE, f"Pipeline integration point '{point}' not found in evolution_engine.py"
 
     def test_pipeline_point_count(self):
         """Sanity: ensure we are checking 13 pipeline points."""
-        assert len(_PIPELINE_POINTS) == 13, (
-            f"Expected 13 pipeline points, got {len(_PIPELINE_POINTS)}"
-        )
+        assert len(_PIPELINE_POINTS) == 13, f"Expected 13 pipeline points, got {len(_PIPELINE_POINTS)}"
 
     def test_engine_source_readable(self):
         """evolution_engine.py is non-empty and contains class definition."""
         assert len(_ENGINE_SOURCE) > 1000, "evolution_engine.py seems too short"
         assert "class EvolutionEngine" in _ENGINE_SOURCE
 
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
     def test_pipeline_points_are_method_calls(self):
         """Each pipeline point appears as a method call (with dot or assignment)."""
         for point in _PIPELINE_POINTS:
-            # Should appear somewhere as part of a method call chain
-            assert f".{point}" in _ENGINE_SOURCE or point in _ENGINE_SOURCE, (
-                f"'{point}' does not appear as a method call in evolution_engine.py"
-            )
+            target_file = _PIPELINE_METHOD_FILES.get(point)
+            if target_file:
+                fpath = _ROOT / target_file
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    src = fh.read()
+                assert (
+                    f".{point}" in src or point in src
+                ), f"'{point}' does not appear as a method call in {target_file}"
+            else:
+                assert (
+                    f".{point}" in _ENGINE_SOURCE or point in _ENGINE_SOURCE
+                ), f"'{point}' does not appear as a method call in evolution_engine.py"
