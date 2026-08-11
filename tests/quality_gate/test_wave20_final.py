@@ -25,22 +25,22 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+import data_rotation
+from champion_archive import ChampionArchive, ChampionEntry
+from config import EvolutionSection
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Lazy imports — one-time, cached by Python
 # ══════════════════════════════════════════════════════════════════════════════
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, compute_qd_axes
-from meta_controller import MetaController, TelemetrySnapshot, StagnationResult
-from strategy_archive import StrategyArchive
-from champion_archive import ChampionArchive, ChampionEntry
-from mutation_proposer import EBREAK, NOP, generate_seed_program, make_rv32i
-from config import EvolutionSection
-from novelty import SparseArchive
-from qd_archive import MAPElitesArchive
-from mutation_proposer import DirectedMutator
-from monitoring_alerts import AlertManager
+from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from metrics import MetricsCollector
+from monitoring_alerts import AlertManager
+from mutation_proposer import EBREAK, NOP, DirectedMutator, generate_seed_program, make_rv32i
+from novelty import SparseArchive
 from progression_tracker import ProgressionTracker
-import data_rotation
+from qd_archive import MAPElitesArchive
+from strategy_archive import StrategyArchive
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Wave test files expected to exist
@@ -125,6 +125,19 @@ _PIPELINE_METHODS: list[str] = [
     "send_recovery_stuck_alert",
     "get_plateau_analysis",
 ]
+
+# Maps pipeline methods that moved out of evolution_engine.py to their
+# current file locations (relative to _ROOT).  Methods NOT listed here
+# are still referenced in evolution_engine.py.
+_PIPELINE_METHOD_FILES: dict[str, str] = {
+    "get_cross_cycle_trends": "evolution/mutation_helpers.py",
+    "get_improvement_velocity": "qd_archive.py",
+    "get_illumination_diversity": "qd_archive.py",
+    "get_mutation_stats": "evolution/mutation_helpers.py",
+    "send_monoculture_alert": "monitoring_alerts.py",
+    "send_recovery_stuck_alert": "monitoring_alerts.py",
+    "get_plateau_analysis": "evolution/mutation_helpers.py",
+}
 
 
 def _make_snapshot(
@@ -217,12 +230,8 @@ class TestCompleteSystemHealth:
         """All 26 new methods exist and are callable on their classes."""
         for target, name, is_static in _METHOD_SPECS:
             attr = getattr(target, name, None)
-            assert attr is not None, (
-                f"{getattr(target, '__name__', target)} missing '{name}'"
-            )
-            assert callable(attr), (
-                f"{getattr(target, '__name__', target)}.{name} not callable"
-            )
+            assert attr is not None, f"{getattr(target, '__name__', target)} missing '{name}'"
+            assert callable(attr), f"{getattr(target, '__name__', target)}.{name} not callable"
 
     @pytest.mark.parametrize(
         "target,name,is_static",
@@ -235,36 +244,34 @@ class TestCompleteSystemHealth:
         try:
             sig = inspect.signature(attr)
         except (ValueError, TypeError):
-            pytest.fail(
-                f"{getattr(target, '__name__', target)}.{name} has no inspectable signature"
-            )
+            pytest.fail(f"{getattr(target, '__name__', target)}.{name} has no inspectable signature")
         params = list(sig.parameters.keys())
         if not isinstance(target, type):
             pass  # Module function
         elif is_static:
             pass  # Static method
         else:
-            assert len(params) >= 1, (
-                f"{target.__name__}.{name} signature has no params"
-            )
+            assert len(params) >= 1, f"{target.__name__}.{name} signature has no params"
 
     def test_no_shadow_imports(self):
         """Key classes must be importable from their expected modules."""
-        from meta_controller import MetaController as MC
-        from strategy_archive import StrategyArchive as SA
         from champion_archive import ChampionArchive as CA
+        from meta_controller import MetaController as MC
         from novelty import SparseArchive as NovA
         from qd_archive import MAPElitesArchive as QDA
-        assert MC.__name__ == 'MetaController'
-        assert SA.__name__ == 'StrategyArchive'
-        assert CA.__name__ == 'ChampionArchive'
-        assert NovA.__name__ == 'SparseArchive'
-        assert QDA.__name__ == 'MAPElitesArchive'
+        from strategy_archive import StrategyArchive as SA
+
+        assert MC.__name__ == "MetaController"
+        assert SA.__name__ == "StrategyArchive"
+        assert CA.__name__ == "ChampionArchive"
+        assert NovA.__name__ == "SparseArchive"
+        assert QDA.__name__ == "MAPElitesArchive"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. TestEndToEndIntegration
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestEndToEndIntegration:
     """Full pipeline integration tests for MetaController, StrategyArchive,
@@ -329,21 +336,34 @@ class TestEndToEndIntegration:
         )
         # Create plateau: fitness flat for many cycles
         for i in range(10):
-            mc.update_cycle(_make_snapshot(
-                cycle=i + 1, fitness=100.0, level=0, diversity=0.5,
-            ))
+            mc.update_cycle(
+                _make_snapshot(
+                    cycle=i + 1,
+                    fitness=100.0,
+                    level=0,
+                    diversity=0.5,
+                )
+            )
         stag = mc.detect_stagnation()
-        assert stag in (StagnationResult.FITNESS_PLATEAU, StagnationResult.LEVEL_STALLED,
-                        StagnationResult.COMPOUND_STALL)
+        assert stag in (
+            StagnationResult.FITNESS_PLATEAU,
+            StagnationResult.LEVEL_STALLED,
+            StagnationResult.COMPOUND_STALL,
+        )
 
     def test_meta_controller_trends_with_improving_fitness(self, tmp_path):
         """Cross-cycle trends show improving fitness."""
         mc = MetaController(checkpoint_dir=str(tmp_path))
         for i in range(10):
-            mc.update_cycle(_make_snapshot(
-                cycle=i + 1, fitness=50.0 + i * 10.0, level=min(i, 5),
-                diversity=0.5, val_loss=3.0 - i * 0.2,
-            ))
+            mc.update_cycle(
+                _make_snapshot(
+                    cycle=i + 1,
+                    fitness=50.0 + i * 10.0,
+                    level=min(i, 5),
+                    diversity=0.5,
+                    val_loss=3.0 - i * 0.2,
+                )
+            )
         trends = mc.get_cross_cycle_trends()
         assert trends["fitness"]["direction"] == "improving"
 
@@ -354,8 +374,7 @@ class TestEndToEndIntegration:
         dominance, summary)."""
         sa = StrategyArchive()
         rng = random.Random(42)
-        strategies = ["RANDOM", "TASK_AWARE", "PERTURBATION_CAPPED",
-                       "DIRECTED", "NOVELTY"]
+        strategies = ["RANDOM", "TASK_AWARE", "PERTURBATION_CAPPED", "DIRECTED", "NOVELTY"]
 
         # Record 100 outcomes
         for i in range(100):
@@ -424,10 +443,7 @@ class TestEndToEndIntegration:
     def test_strategy_archive_batch_record(self):
         """record_batch stores records correctly."""
         sa = StrategyArchive()
-        records = [
-            {"strategy": "BATCH_STRAT", "level": 3, "success": True, "gen": i}
-            for i in range(20)
-        ]
+        records = [{"strategy": "BATCH_STRAT", "level": 3, "success": True, "gen": i} for i in range(20)]
         sa.record_batch(records)
         assert sa.total_records() == 20
         recs = sa.records_by_strategy("BATCH_STRAT")
@@ -447,8 +463,7 @@ class TestEndToEndIntegration:
             prog = generate_seed_program(length=rng.randint(3, 8), rng=rng)
             fitness = 50.0 + rng.gauss(0, 20.0)
             level = rng.randint(0, 10)
-            ok = ca.add(prog, level=level, fitness=fitness, cycle=rng.randint(1, 10),
-                        generation=rng.randint(0, 50))
+            ok = ca.add(prog, level=level, fitness=fitness, cycle=rng.randint(1, 10), generation=rng.randint(0, 50))
             if ok:
                 added += 1
         assert added >= 40  # some dedup expected
@@ -494,8 +509,7 @@ class TestEndToEndIntegration:
         rng = random.Random(42)
         for i in range(20):
             prog = generate_seed_program(length=rng.randint(3, 6), rng=rng)
-            ca.add(prog, level=rng.randint(0, 5), fitness=float(50 + i),
-                   cycle=rng.randint(1, 10))
+            ca.add(prog, level=rng.randint(0, 5), fitness=float(50 + i), cycle=rng.randint(1, 10))
         assert ca.size <= 10
 
     def test_champion_archive_stats(self, tmp_path):
@@ -548,6 +562,7 @@ class TestEndToEndIntegration:
 # 3. TestFinalStats
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestFinalStats:
     """Verify total test count > 2000, wave files exist, 26 methods exist,
     pipeline wiring in place."""
@@ -563,37 +578,50 @@ class TestFinalStats:
         """All 26 new methods exist on their respective classes/modules."""
         for target, name, is_static in _METHOD_SPECS:
             attr = getattr(target, name, None)
-            assert attr is not None, (
-                f"{getattr(target, '__name__', target)} missing method '{name}'"
-            )
-            assert callable(attr), (
-                f"{getattr(target, '__name__', target)}.{name} not callable"
-            )
+            assert attr is not None, f"{getattr(target, '__name__', target)} missing method '{name}'"
+            assert callable(attr), f"{getattr(target, '__name__', target)}.{name} not callable"
 
     def test_26_unique_method_names(self):
         """Exactly 26 unique method names in the spec."""
         names = {name for _, name, _ in _METHOD_SPECS}
         assert len(names) == 26, f"Expected 26 unique names, got {len(names)}: {names}"
 
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
     def test_pipeline_wiring_in_engine(self):
-        """All pipeline methods are referenced in evolution_engine.py."""
+        """All pipeline methods are referenced in their expected source files."""
         engine_path = os.path.join(_ROOT, "evolution_engine.py")
         with open(engine_path, "r", encoding="utf-8") as f:
             engine_source = f.read()
-        missing = [m for m in _PIPELINE_METHODS if m not in engine_source]
-        assert not missing, f"Missing from evolution_engine.py pipeline: {missing}"
+        # Cache submodule sources to avoid re-reading
+        _src_cache: dict[str, str] = {}
+        missing = []
+        for m in _PIPELINE_METHODS:
+            target_file = _PIPELINE_METHOD_FILES.get(m)
+            if target_file:
+                if target_file not in _src_cache:
+                    fpath = os.path.join(_ROOT, target_file)
+                    with open(fpath, "r", encoding="utf-8") as fh:
+                        _src_cache[target_file] = fh.read()
+                if m not in _src_cache[target_file]:
+                    missing.append(f"{m} (expected in {target_file})")
+            else:
+                if m not in engine_source:
+                    missing.append(f"{m} (expected in evolution_engine.py)")
+        assert not missing, f"Pipeline methods missing from expected files: {missing}"
 
     @pytest.mark.parametrize("method_name", _PIPELINE_METHODS)
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
     def test_single_pipeline_method_in_engine(self, method_name):
-        """Each pipeline method is referenced in evolution_engine.py."""
-        engine_path = os.path.join(_ROOT, "evolution_engine.py")
-        with open(engine_path, "r", encoding="utf-8") as f:
-            source = f.read()
-        assert method_name in source, (
-            f"'{method_name}' not found in evolution_engine.py — not wired"
-        )
+        """Each pipeline method is referenced in its expected source file."""
+        target_file = _PIPELINE_METHOD_FILES.get(method_name)
+        if target_file:
+            fpath = os.path.join(_ROOT, target_file)
+            with open(fpath, "r", encoding="utf-8") as f:
+                source = f.read()
+            assert method_name in source, f"'{method_name}' not found in {target_file} — not wired"
+        else:
+            engine_path = os.path.join(_ROOT, "evolution_engine.py")
+            with open(engine_path, "r", encoding="utf-8") as f:
+                source = f.read()
+            assert method_name in source, f"'{method_name}' not found in evolution_engine.py — not wired"
 
     def test_total_test_count_above_2000(self):
         """Total test count across all test files > 2000."""
@@ -608,13 +636,12 @@ class TestFinalStats:
                     content = f.read()
                 # Count test functions/methods
                 import re
+
                 test_funcs = re.findall(r"def (test_\w+)", content)
                 total_tests += len(test_funcs)
             except Exception:
                 pass
-        assert total_tests > 2000, (
-            f"Total test count {total_tests} is not above 2000"
-        )
+        assert total_tests > 2000, f"Total test count {total_tests} is not above 2000"
 
     def test_conftest_fixtures_exist(self):
         """conftest.py provides key fixtures."""
@@ -637,10 +664,5 @@ class TestFinalStats:
     def test_all_expected_wave_files_count(self):
         """We expect at least 18 wave test files."""
         tests_dir = os.path.join(_ROOT, "tests")
-        wave_files = [
-            f for f in os.listdir(tests_dir)
-            if f.startswith("test_wave") and f.endswith(".py")
-        ]
-        assert len(wave_files) >= 18, (
-            f"Expected >= 18 wave test files, found {len(wave_files)}: {wave_files}"
-        )
+        wave_files = [f for f in os.listdir(tests_dir) if f.startswith("test_wave") and f.endswith(".py")]
+        assert len(wave_files) >= 18, f"Expected >= 18 wave test files, found {len(wave_files)}: {wave_files}"

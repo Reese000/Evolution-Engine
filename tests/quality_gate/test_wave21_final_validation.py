@@ -14,8 +14,8 @@ Uses pytest parametrize for speed. No existing files are modified.
 
 from __future__ import annotations
 
-import inspect
 import importlib
+import inspect
 import os
 import sys
 
@@ -26,19 +26,19 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+import data_rotation
+from champion_archive import ChampionArchive
+
 # ── lazy imports (one-time, cached by Python) ─────────────────────────────────
 from config import EvolutionSection
 from meta_controller import MetaController
-from strategy_archive import StrategyArchive
-from champion_archive import ChampionArchive
-from novelty import SparseArchive
-from qd_archive import MAPElitesArchive
-from mutation_proposer import DirectedMutator
-from monitoring_alerts import AlertManager
 from metrics import MetricsCollector
+from monitoring_alerts import AlertManager
+from mutation_proposer import DirectedMutator
+from novelty import SparseArchive
 from progression_tracker import ProgressionTracker
-import data_rotation
-
+from qd_archive import MAPElitesArchive
+from strategy_archive import StrategyArchive
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestMethodCompleteness — all 26 new methods exist and are callable
@@ -100,12 +100,8 @@ class TestMethodCompleteness:
     def test_method_exists_and_is_callable(self, target, name, is_static):
         """Each method must be a callable attribute on its class/module."""
         attr = getattr(target, name, None)
-        assert attr is not None, (
-            f"{getattr(target, '__name__', target)} has no attribute '{name}'"
-        )
-        assert callable(attr), (
-            f"{getattr(target, '__name__', target)}.{name} is not callable"
-        )
+        assert attr is not None, f"{getattr(target, '__name__', target)} has no attribute '{name}'"
+        assert callable(attr), f"{getattr(target, '__name__', target)}.{name} is not callable"
 
     @pytest.mark.parametrize(
         "target,name,is_static",
@@ -120,9 +116,7 @@ class TestMethodCompleteness:
         try:
             sig = inspect.signature(attr)
         except (ValueError, TypeError):
-            pytest.fail(
-                f"{getattr(target, '__name__', target)}.{name} has no inspectable signature"
-            )
+            pytest.fail(f"{getattr(target, '__name__', target)}.{name} has no inspectable signature")
         # Signature should have at least self/cls (or nothing for module funcs)
         params = list(sig.parameters.keys())
         if is_static and isinstance(target, type):
@@ -133,9 +127,7 @@ class TestMethodCompleteness:
             pass
         else:
             # Instance method — should have 'self' as first param
-            assert len(params) >= 1, (
-                f"{target.__name__}.{name} signature has no params"
-            )
+            assert len(params) >= 1, f"{target.__name__}.{name} signature has no params"
 
     def test_total_method_count(self):
         """Verify we test exactly 26 distinct method names."""
@@ -163,6 +155,19 @@ _PIPELINE_METHODS: list[str] = [
     "get_plateau_analysis",
 ]
 
+# Maps pipeline methods that moved out of evolution_engine.py to their
+# current file locations (relative to _ROOT).  Methods NOT listed here
+# are still referenced in evolution_engine.py.
+_PIPELINE_METHOD_FILES: dict[str, str] = {
+    "get_cross_cycle_trends": "evolution/mutation_helpers.py",
+    "get_improvement_velocity": "qd_archive.py",
+    "get_illumination_diversity": "qd_archive.py",
+    "get_mutation_stats": "evolution/mutation_helpers.py",
+    "send_monoculture_alert": "monitoring_alerts.py",
+    "send_recovery_stuck_alert": "monitoring_alerts.py",
+    "get_plateau_analysis": "evolution/mutation_helpers.py",
+}
+
 
 class TestPipelineWiring:
     """Verify evolution_engine.py contains references to all new methods."""
@@ -175,17 +180,33 @@ class TestPipelineWiring:
             return f.read()
 
     @pytest.mark.parametrize("method_name", _PIPELINE_METHODS)
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
     def test_method_referenced_in_engine(self, method_name, engine_source):
-        """Each new method name must appear in evolution_engine.py."""
-        assert method_name in engine_source, (
-            f"'{method_name}' not found in evolution_engine.py — pipeline not wired"
-        )
+        """Each new method name must appear in its expected source file."""
+        target_file = _PIPELINE_METHOD_FILES.get(method_name)
+        if target_file:
+            fpath = os.path.join(_ROOT, target_file)
+            with open(fpath, "r", encoding="utf-8") as f:
+                source = f.read()
+            assert method_name in source, f"'{method_name}' not found in {target_file} — pipeline not wired"
+        else:
+            assert (
+                method_name in engine_source
+            ), f"'{method_name}' not found in evolution_engine.py — pipeline not wired"
 
-    @pytest.mark.xfail(reason="Stale meta-test: pipeline functions moved to evolution/ submodules", strict=False)
     def test_all_thirteen_methods_present(self, engine_source):
-        """Aggregate check: all 13 pipeline methods referenced."""
-        missing = [m for m in _PIPELINE_METHODS if m not in engine_source]
-        assert not missing, (
-            f"Missing from evolution_engine.py pipeline: {missing}"
-        )
+        """Aggregate check: all 13 pipeline methods referenced in expected files."""
+        _src_cache: dict[str, str] = {}
+        missing = []
+        for m in _PIPELINE_METHODS:
+            target_file = _PIPELINE_METHOD_FILES.get(m)
+            if target_file:
+                if target_file not in _src_cache:
+                    fpath = os.path.join(_ROOT, target_file)
+                    with open(fpath, "r", encoding="utf-8") as fh:
+                        _src_cache[target_file] = fh.read()
+                if m not in _src_cache[target_file]:
+                    missing.append(f"{m} (expected in {target_file})")
+            else:
+                if m not in engine_source:
+                    missing.append(f"{m} (expected in evolution_engine.py)")
+        assert not missing, f"Pipeline methods missing from expected files: {missing}"
