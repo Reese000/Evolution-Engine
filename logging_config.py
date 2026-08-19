@@ -21,16 +21,31 @@ import os
 import sys
 from pathlib import Path
 
-# ── Color codes for console output ────────────────────────────────────
+# ── Theme-driven color codes for console output ──────────────────────────────
+# Uses the Design System token palette via theme.layer instead of hardcoded
+# ANSI codes. Falls back to standard ANSI if theme import fails.
 
-COLORS = {
-    "DEBUG": "\033[36m",      # Cyan
-    "INFO": "\033[32m",       # Green
-    "WARNING": "\033[33m",    # Yellow
-    "ERROR": "\033[31m",      # Red
-    "CRITICAL": "\033[35m",   # Magenta
-    "RESET": "\033[0m",       # Reset
-}
+try:
+    from theme.manager import ThemeManager as _ThemeManager
+    _theme = _ThemeManager.instance()
+    COLORS = {
+        "DEBUG":    _theme.color_for_level("DEBUG"),
+        "INFO":     _theme.color_for_level("INFO"),
+        "WARNING":  _theme.color_for_level("WARNING"),
+        "ERROR":    _theme.color_for_level("ERROR"),
+        "CRITICAL": _theme.color_for_level("CRITICAL"),
+        "RESET":    "\033[0m",
+    }
+except ImportError:
+    # Fallback: standard ANSI if theme module unavailable
+    COLORS = {
+        "DEBUG":    "\033[36m",   # Cyan
+        "INFO":     "\033[32m",   # Green
+        "WARNING":  "\033[33m",   # Yellow
+        "ERROR":    "\033[31m",   # Red
+        "CRITICAL": "\033[35m",   # Magenta
+        "RESET":    "\033[0m",    # Reset
+    }
 
 
 class ColoredFormatter(logging.Formatter):
