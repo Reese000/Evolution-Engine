@@ -462,6 +462,30 @@ def merge_archive_to_recurrent(cycle: int) -> int:
     return added
 
 
+def _effective_max_epochs(requested_max_epochs: int | None, best_level: int) -> int | None:
+    """Compute the effective retrain epoch budget.
+
+    L5+ champions target a floor of 8 epochs so the model gets enough gradient
+    updates to learn higher-level instruction patterns. However, an explicit
+    cap (``--retrain-max-epochs`` / ``config.retrain_max_epochs``) is an UPPER
+    bound and must always win -- previously the L5+ branch hard-set 8 and
+    silently ignored a lower requested cap, so short/fast retrains were
+    impossible once the champion reached L5+.
+
+    Args:
+        requested_max_epochs: The requested cap (from CLI/config/MetaController),
+            or ``None`` when unspecified.
+        best_level: The champion's best curriculum level this cycle.
+
+    Returns:
+        The effective max-epochs value, or ``None`` when unspecified and not
+        boosted (caller then omits the flag and the trainer uses its default).
+    """
+    if best_level >= 5:
+        return 8 if requested_max_epochs is None else min(8, requested_max_epochs)
+    return requested_max_epochs
+
+
 def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_level: int = 0) -> dict[str, Any]:
     """Retrain the seed model on accumulated recurrent data.
 
@@ -655,18 +679,20 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     cmd.extend(["--batch-size", str(effective_bs)])
 
     # -- Max epochs --
-    me = getattr(config, "retrain_max_epochs", None) if config is not None else None
+    requested_me = getattr(config, "retrain_max_epochs", None) if config is not None else None
 
-    # -- Level-based epoch boost for L5+ champions --\n    # When champion reached L5+, increase max_epochs to ensure the model\n    # has enough gradient updates to learn higher-level instruction patterns.
-    # Overrides MetaController budget to ensure sufficient training for L5+ tasks.
-    # NOTE: Applied to BOTH cmd (CLI fallback) AND train_kwargs (actual path).
-    # v19: Capped at 55 total — prevents overfitting from excessive epochs.
+    # -- Level-based epoch setting for L5+ champions --
+    # L5+ tasks target a floor of 8 epochs for more gradient updates, but an
+    # explicit requested cap is an upper bound that always wins (see
+    # _effective_max_epochs). Applied to BOTH cmd (CLI fallback) AND
+    # train_kwargs (the actual in-process path further below, which reads `me`).
+    me = _effective_max_epochs(requested_me, best_level)
     if best_level >= 5:
-        boosted_epochs = 8  # Cap at 8 regardless of level
-        me = boosted_epochs
-        cmd.extend(["--max-epochs", str(boosted_epochs)])
-        log(f"  Cycle {cycle}: Level-based epoch boost: capped at {boosted_epochs} (best_level={best_level})")
-    elif me is not None:
+        log(
+            f"  Cycle {cycle}: Level-based epoch setting: {me} "
+            f"(best_level={best_level}, requested_cap={requested_me})"
+        )
+    if me is not None:
         cmd.extend(["--max-epochs", str(me)])
 
     # -- Validation split --
