@@ -187,17 +187,32 @@ class VMFarm:
             return result
         except Exception as e:
             return {"status": "error", "error": str(e), "instructions_count": 0}
+
     def evaluate_batch(self, programs, task, budget=None):
         """Evaluate a batch of programs using the VM farm."""
         if not programs:
             return []
         budget = budget or self.config.eval_budget
+        # R32: Try GPU farm first when available
+        if self.use_gpu and self._gpu_farm is not None and len(programs) > 1:
+            try:
+                gpu_results = self._gpu_farm.evaluate_multi(programs, task, budget=budget)
+                if gpu_results is not None:
+                    self._gpu_eval_count += 1
+                    return gpu_results
+            except Exception:
+                self._gpu_fallback_count += 1
+                self._gpu_farm = None
+                self.use_gpu = False
+                self._log("GPU batch failed — falling back to CPU")
         if self.num_workers <= 1:
             return [self._eval_single_worker(p, task, budget) for p in programs]
         from concurrent.futures import ThreadPoolExecutor
+
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             futures = [executor.submit(self._eval_single_worker, p, task, budget) for p in programs]
             return [f.result() for f in futures]
+
     @staticmethod
     def _dict_to_eval_result(d: dict) -> EvalResult:
         """Convert GPU result dict to EvalResult namedtuple."""
@@ -239,54 +254,48 @@ del _opcode_val, _cat_val
 # conversion (avoids Python enum __new__ overhead on every call to
 # _choose_mutation_strategy, which runs pop_size times per generation).
 _STRATEGY_ENUM_CACHE: dict[str, MutationStrategy] = {s.value: s for s in MutationStrategy}
-from tasks_rv32i import LEVELS, get_task_level, reference_solution
+from evolution.diversity_helpers import check_level_circuit_breaker as _check_level_circuit_breaker_fn
+from evolution.diversity_helpers import compute_population_diversity as _compute_population_diversity_fn
+from evolution.diversity_helpers import count_backward_branches as _count_backward_branches_fn
+from evolution.diversity_helpers import inject_diversity as _inject_diversity_fn
+from evolution.diversity_helpers import is_level_disabled as _is_level_disabled_fn
+from evolution.diversity_helpers import record_cycle_level_outcome as _record_cycle_level_outcome_fn
+from evolution.diversity_helpers import record_level_circuit_outcome as _record_level_circuit_outcome_fn
 
 # --- Extracted helper modules (P1-1 refactoring) ---
-from evolution.fitness_helpers import (
-    score_register_match as _score_register_match_fn,
-    compute_base_score as _compute_base_score_fn,
-    compute_time_credit as _compute_time_credit_fn,
-    compute_efficiency_score as _compute_efficiency_score_fn,
-    compute_smc_bonus as _compute_smc_bonus_fn,
-    compute_multi_task_score as _compute_multi_task_score_fn,
-    compute_structural_bonuses as _compute_structural_bonuses_fn,
-    log_bonus_diagnostics as _log_bonus_diagnostics_fn,
-    extract_trace_info as _extract_trace_info_fn,
-    apply_novelty_qd_blending as _apply_novelty_qd_blending_fn,
-    compute_fitness as _compute_fitness_fn,
-    compute_all_bonuses as _compute_all_bonuses_fn,
-    apply_bonuses_and_normalize as _apply_bonuses_and_normalize_fn,
-    finalize_with_blending as _finalize_with_blending_fn,
-    batch_classify_programs as _batch_classify_programs_fn,
-    batch_score_registers as _batch_score_registers_fn,
-    batch_compute_efficiency as _batch_compute_efficiency_fn,
-    batch_compute_structural_bonuses as _batch_compute_structural_bonuses_fn,
-    batch_apply_crash_penalties as _batch_apply_crash_penalties_fn,
-    batch_get_expected as _batch_get_expected_fn,
-    batch_compute_base as _batch_compute_base_fn,
-    batch_apply_bonuses as _batch_apply_bonuses_fn,
-    batch_blend_novelty_qd as _batch_blend_novelty_qd_fn,
-    batch_compute_fitness as batch_compute_fitness_fn,
-)
-from evolution.mutation_helpers import (
-    check_variance_override as _check_variance_override_fn,
-    check_priority_overrides as _check_priority_overrides_fn,
-    apply_cycle_phase_bias as _apply_cycle_phase_bias_fn,
-    apply_affinity_bias as _apply_affinity_bias_fn,
-    apply_level_aware_strategy_bias as _apply_level_aware_strategy_bias_fn,
-    get_model_guided_ratio as _get_model_guided_ratio_fn,
-    get_model_guided_prefix as _get_model_guided_prefix_fn,
-    compute_model_temperature as _compute_model_temperature_fn,
-)
-from evolution.diversity_helpers import (
-    count_backward_branches as _count_backward_branches_fn,
-    compute_population_diversity as _compute_population_diversity_fn,
-    inject_diversity as _inject_diversity_fn,
-    record_level_circuit_outcome as _record_level_circuit_outcome_fn,
-    check_level_circuit_breaker as _check_level_circuit_breaker_fn,
-    is_level_disabled as _is_level_disabled_fn,
-    record_cycle_level_outcome as _record_cycle_level_outcome_fn,
-)
+from evolution.fitness_helpers import apply_bonuses_and_normalize as _apply_bonuses_and_normalize_fn
+from evolution.fitness_helpers import apply_novelty_qd_blending as _apply_novelty_qd_blending_fn
+from evolution.fitness_helpers import batch_apply_bonuses as _batch_apply_bonuses_fn
+from evolution.fitness_helpers import batch_apply_crash_penalties as _batch_apply_crash_penalties_fn
+from evolution.fitness_helpers import batch_blend_novelty_qd as _batch_blend_novelty_qd_fn
+from evolution.fitness_helpers import batch_classify_programs as _batch_classify_programs_fn
+from evolution.fitness_helpers import batch_compute_base as _batch_compute_base_fn
+from evolution.fitness_helpers import batch_compute_efficiency as _batch_compute_efficiency_fn
+from evolution.fitness_helpers import batch_compute_fitness as batch_compute_fitness_fn
+from evolution.fitness_helpers import batch_compute_structural_bonuses as _batch_compute_structural_bonuses_fn
+from evolution.fitness_helpers import batch_get_expected as _batch_get_expected_fn
+from evolution.fitness_helpers import batch_score_registers as _batch_score_registers_fn
+from evolution.fitness_helpers import compute_all_bonuses as _compute_all_bonuses_fn
+from evolution.fitness_helpers import compute_base_score as _compute_base_score_fn
+from evolution.fitness_helpers import compute_efficiency_score as _compute_efficiency_score_fn
+from evolution.fitness_helpers import compute_fitness as _compute_fitness_fn
+from evolution.fitness_helpers import compute_multi_task_score as _compute_multi_task_score_fn
+from evolution.fitness_helpers import compute_smc_bonus as _compute_smc_bonus_fn
+from evolution.fitness_helpers import compute_structural_bonuses as _compute_structural_bonuses_fn
+from evolution.fitness_helpers import compute_time_credit as _compute_time_credit_fn
+from evolution.fitness_helpers import extract_trace_info as _extract_trace_info_fn
+from evolution.fitness_helpers import finalize_with_blending as _finalize_with_blending_fn
+from evolution.fitness_helpers import log_bonus_diagnostics as _log_bonus_diagnostics_fn
+from evolution.fitness_helpers import score_register_match as _score_register_match_fn
+from evolution.mutation_helpers import apply_affinity_bias as _apply_affinity_bias_fn
+from evolution.mutation_helpers import apply_cycle_phase_bias as _apply_cycle_phase_bias_fn
+from evolution.mutation_helpers import apply_level_aware_strategy_bias as _apply_level_aware_strategy_bias_fn
+from evolution.mutation_helpers import check_priority_overrides as _check_priority_overrides_fn
+from evolution.mutation_helpers import check_variance_override as _check_variance_override_fn
+from evolution.mutation_helpers import compute_model_temperature as _compute_model_temperature_fn
+from evolution.mutation_helpers import get_model_guided_prefix as _get_model_guided_prefix_fn
+from evolution.mutation_helpers import get_model_guided_ratio as _get_model_guided_ratio_fn
+from tasks_rv32i import LEVELS, get_task_level, reference_solution
 
 # Optional: curriculum integration from milestone1
 try:
@@ -450,7 +459,7 @@ class HallOfFame:
         return list(best[2])
 
     def get_random(self, rng=None, level=None):
-        """Return a random program from the Hall of Fame.
+        """Return a random program from the Hall of Fame, with recency bias.
 
         Args:
             rng: Random number generator (default: stdlib random.Random()).
@@ -460,22 +469,29 @@ class HallOfFame:
             A defensive copy of the program list, or None if empty.
         """
         import random
+
         if rng is None:
             rng = random.Random()
-        heap = getattr(self, '_heap', [])
+        heap = getattr(self, "_heap", [])
         if not heap:
             return None
         # Heap tuple: (fitness, generation, program, level)
         if level is not None:
             candidates = [(f, g, p, l) for f, g, p, l in heap if l == level]
-            if candidates:
-                entry = candidates[rng.randint(0, len(candidates) - 1)]
-            else:
-                # Fall through to unfiltered when no entries match level
-                entry = heap[rng.randint(0, len(heap) - 1)]
+            if not candidates:
+                candidates = heap
         else:
-            entry = heap[rng.randint(0, len(heap) - 1)]
-        return list(entry[2])  # entry[2] is the program
+            candidates = heap
+        # R28: Weight by generation (recency bias) — recent programs are
+        # more likely to be selected, giving them higher novelty pressure.
+        if len(candidates) > 1:
+            max_gen = max(g for _, g, _, _ in candidates)
+            weights = [1.0 + (g / max(max_gen, 1)) * 9.0 for _, g, _, _ in candidates]
+            chosen = rng.choices(candidates, weights=weights, k=1)[0]
+        else:
+            chosen = candidates[0]
+        return list(chosen[2])  # entry[2] is the program
+
     @property
     def size(self) -> int:
         return len(self._heap)
@@ -681,24 +697,49 @@ class EvolutionConfig:
     def _set_config_defaults(self):
         """Set default values for configuration fields."""
         defaults = {
-            "mutation_rate": 0.3, "crossover_rate": 0.7, "elite_ratio": 0.1,
-            "tournament_size": 3, "population_size": 50, "max_generations": 100,
-            "eval_budget": 500, "checkpoint_interval": 10, "curriculum_level": 0,
-            "auto_curriculum": True, "curriculum_stall_threshold": 20,
-            "use_gpu": False, "seed": 42, "log_dir": "logs",
-            "champion_dir": "", "use_novelty_archive": False, "novelty_weight": 0.1,
-            "novelty_threshold": 0.5, "use_qd_archive": False, "qd_bonus_weight": 0.1,
-            "qd_bins": [10, 10], "max_bonus_fraction": 1.0, "bonus_log_interval": 50,
-            "efficiency_score_weight": 1.0, "secondary_task_weight": 1.0,
-            "use_secondary_tasks": False, "use_mutation_scheduler": False,
-            "mutation_rate_start": 0.5, "mutation_rate_end": 0.1,
-            "mutation_schedule_generations": 50, "use_temperature_annealing": False,
-            "temperature_start": 2.0, "temperature_end": 0.5,
-            "temperature_schedule_generations": 50, "model_guided_ratio": None,
-            "model_guided_ratio_low": 0.1, "model_guided_ratio_mid": 0.2,
-            "model_guided_ratio_high": 0.3, "use_strategy_archive": True,
-            "strategy_archive_path": "", "recurrent_feedback_dir": "",
-            "max_level": 30, "max_consecutive_same_strategy": 30,
+            "mutation_rate": 0.3,
+            "crossover_rate": 0.7,
+            "elite_ratio": 0.1,
+            "tournament_size": 3,
+            "population_size": 50,
+            "max_generations": 100,
+            "eval_budget": 500,
+            "checkpoint_interval": 10,
+            "curriculum_level": 0,
+            "auto_curriculum": True,
+            "curriculum_stall_threshold": 20,
+            "use_gpu": False,
+            "seed": 42,
+            "log_dir": "logs",
+            "champion_dir": "",
+            "use_novelty_archive": False,
+            "novelty_weight": 0.1,
+            "novelty_threshold": 0.5,
+            "use_qd_archive": False,
+            "qd_bonus_weight": 0.1,
+            "qd_bins": [10, 10],
+            "max_bonus_fraction": 1.0,
+            "bonus_log_interval": 50,
+            "efficiency_score_weight": 1.0,
+            "secondary_task_weight": 1.0,
+            "use_secondary_tasks": False,
+            "use_mutation_scheduler": False,
+            "mutation_rate_start": 0.5,
+            "mutation_rate_end": 0.1,
+            "mutation_schedule_generations": 50,
+            "use_temperature_annealing": False,
+            "temperature_start": 2.0,
+            "temperature_end": 0.5,
+            "temperature_schedule_generations": 50,
+            "model_guided_ratio": None,
+            "model_guided_ratio_low": 0.1,
+            "model_guided_ratio_mid": 0.2,
+            "model_guided_ratio_high": 0.3,
+            "use_strategy_archive": True,
+            "strategy_archive_path": "",
+            "recurrent_feedback_dir": "",
+            "max_level": 30,
+            "max_consecutive_same_strategy": 30,
             "perturbation_capped_probability_unsolved": 0.4,
             "perturbation_capped_unsolved_levels": [9, 10, 11],
             "champion_crossover_prob": 0.3,
@@ -706,23 +747,86 @@ class EvolutionConfig:
         for key, val in defaults.items():
             if not hasattr(self, key) or getattr(self, key) is None:
                 setattr(self, key, val)
+
     def __post_init__(self):
-        """Apply defaults and validate configuration."""
+        """Apply defaults and validate configuration.
+
+        Raises ValueError for truly invalid configs that cannot be
+        sensibly clamped. Values within an acceptable range are clamped
+        (the Evolution Engine's design contract).
+        """
         self._set_config_defaults()
-        # Validate ranges
-        self.mutation_rate = max(0.0, min(1.0, self.mutation_rate))
-        self.crossover_rate = max(0.0, min(1.0, self.crossover_rate))
-        self.elite_ratio = max(0.0, min(1.0, self.elite_ratio))
-        self.tournament_size = max(2, self.tournament_size)
-        self.population_size = max(4, self.population_size)
-        self.max_generations = max(1, self.max_generations)
-        self.eval_budget = max(10, self.eval_budget)
-        if self.curriculum_level < 0:
-            self.curriculum_level = 0
+
+        # ── Hard rejections (ValueError) ────────────────────────────────
+        if self.population_size < 2:
+            raise ValueError(f"population_size must be >= 2 for tournament selection, got {self.population_size}")
+        if self.max_generations < 1:
+            raise ValueError(f"max_generations must be >= 1, got {self.max_generations}")
+        if not 0.0 <= self.mutation_rate <= 1.0:
+            raise ValueError(f"mutation_rate must be in [0,1], got {self.mutation_rate}")
+        if self.crossover_rate < 0.0 or self.crossover_rate > 1.0:
+            raise ValueError(f"crossover_rate must be in [0,1], got {self.crossover_rate}")
+        if self.elite_ratio > 0.5:
+            raise ValueError(f"elite_ratio must be <= 0.5, got {self.elite_ratio}")
+        if self.tournament_size < 2:
+            raise ValueError(f"tournament_size must be >= 2, got {self.tournament_size}")
+        if self.tournament_size > self.population_size:
+            raise ValueError(
+                f"tournament_size ({self.tournament_size}) must be <= population_size ({self.population_size})"
+            )
+        if self.instruction_budget < 100:
+            raise ValueError(f"instruction_budget must be >= 100, got {self.instruction_budget}")
+        if self.eval_budget < 51:
+            raise ValueError(f"eval_budget must be >= 51, got {self.eval_budget}")
+        if self.stall_threshold < 1:
+            raise ValueError(f"stall_threshold must be >= 1, got {self.stall_threshold}")
         if self.max_level < 1:
-            self.max_level = 1
+            raise ValueError(f"max_level must be >= 1, got {self.max_level}")
+        if self.curriculum_stall_threshold < 1:
+            raise ValueError(f"curriculum_stall_threshold must be >= 1, got {self.curriculum_stall_threshold}")
+        if self.max_consecutive_same_strategy < 5:
+            raise ValueError(f"max_consecutive_same_strategy must be >= 5, got {self.max_consecutive_same_strategy}")
+        if self.circuit_breaker_stall_limit < 5:
+            raise ValueError(f"circuit_breaker_stall_limit must be >= 5, got {self.circuit_breaker_stall_limit}")
+        if self.novelty_weight < 0.0:
+            raise ValueError(f"novelty_weight must be >= 0, got {self.novelty_weight}")
+        if self.qd_bonus_weight < 0.0:
+            raise ValueError(f"qd_bonus_weight must be >= 0, got {self.qd_bonus_weight}")
+        if self.meta_weight_improvement < 0.0:
+            raise ValueError(f"meta_weight_improvement must be >= 0, got {self.meta_weight_improvement}")
+
+        # Retrain validations
+        if self.retrain_lr <= 0:
+            raise ValueError(f"retrain_lr must be > 0, got {self.retrain_lr}")
+        if self.retrain_batch_size < 1:
+            raise ValueError(f"retrain_batch_size must be >= 1, got {self.retrain_batch_size}")
+        if self.retrain_max_epochs < 1:
+            raise ValueError(f"retrain_max_epochs must be >= 1, got {self.retrain_max_epochs}")
+        if self.retrain_freeze_layers < 0:
+            raise ValueError(f"retrain_freeze_layers must be >= 0, got {self.retrain_freeze_layers}")
+        if self.retrain_patience < 1:
+            raise ValueError(f"retrain_patience must be >= 1, got {self.retrain_patience}")
+        if self.retrain_timeout < 60:
+            raise ValueError(f"retrain_timeout must be >= 60, got {self.retrain_timeout}")
+        if self.retrain_weight_decay >= 1.0:
+            raise ValueError(f"retrain_weight_decay must be < 1.0, got {self.retrain_weight_decay}")
+        if not 0.0 <= self.retrain_val_split <= 1.0:
+            raise ValueError(f"retrain_val_split must be in [0,1], got {self.retrain_val_split}")
+
+        # Diversity / crossover range checks
+        if not 0.0 <= self.diversity_threshold <= 1.0:
+            raise ValueError(f"diversity_threshold must be in [0,1], got {self.diversity_threshold}")
+        if not 0.0 <= self.diversity_inject_ratio <= 1.0:
+            raise ValueError(f"diversity_inject_ratio must be in [0,1], got {self.diversity_inject_ratio}")
+        if not 0.0 <= self.champion_crossover_prob <= 1.0:
+            raise ValueError(f"champion_crossover_prob must be in [0,1], got {self.champion_crossover_prob}")
+
+        # ── Soft clamping (acceptable range) ─────────────────────────────
+        self.curriculum_level = max(self.curriculum_level, 0)
         if self.curriculum_level >= self.max_level:
             self.curriculum_level = self.max_level - 1
+
+
 class EvolutionEngine:
     """Main evolutionary loop for RV32I program synthesis.
 
@@ -734,6 +838,7 @@ class EvolutionEngine:
     def _init_archives(self) -> None:
         """Initialize strategy archive, QD archive, novelty archive, and champion archive."""
         from strategy_archive import StrategyArchive
+
         self.strategy_archive = StrategyArchive()
         if self.config.strategy_archive_path:
             self.strategy_archive.load(self.config.strategy_archive_path)
@@ -741,6 +846,7 @@ class EvolutionEngine:
         if _HAS_NOVELTY and self.config.use_novelty_archive:
             try:
                 from novelty import SparseArchive
+
                 self.novelty_archive = SparseArchive(novelty_threshold=self.config.novelty_threshold)
             except (ImportError, Exception):
                 pass
@@ -748,10 +854,12 @@ class EvolutionEngine:
         if _HAS_QD and self.config.use_qd_archive:
             try:
                 from qd_archive import MAPElitesArchive
+
                 self.qd_archive = MAPElitesArchive(bins=self.config.qd_bins)
             except (ImportError, Exception):
                 pass
         from champion_archive import ChampionArchive
+
         archive_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "champions", "archive.jsonl")
         self.champion_archive = ChampionArchive(path=archive_path, max_size=500)
 
@@ -801,6 +909,7 @@ class EvolutionEngine:
         # Level circuit breaker state
         self._level_circuit_stats: dict[int, dict] = {}  # {level: {"cycles": N, "successes": M}}
         self._disabled_levels: set[int] = set()
+
     def __init__(self, config=None, rng=None, vm_farm=None, champion_anchor=None):
         self.config = config or EvolutionConfig()
         self.rng = rng or random.Random(self.config.seed)
@@ -809,7 +918,10 @@ class EvolutionEngine:
         self.champion_anchor = champion_anchor or ChampionAnchor()
         self._init_archives()
         if _HAS_CURRICULUM and self.config.auto_curriculum:
-            self.curriculum = CurriculumGenerator(CurriculumConfig(max_levels=len(LEVELS), stall_generations=self.config.curriculum_stall_threshold), seed=self.config.seed)
+            self.curriculum = CurriculumGenerator(
+                CurriculumConfig(max_levels=len(LEVELS), stall_generations=self.config.curriculum_stall_threshold),
+                seed=self.config.seed,
+            )
         else:
             self.curriculum = None
         self._init_state()
@@ -820,23 +932,30 @@ class EvolutionEngine:
         self._compute_qd_axes_fn = None
         if _HAS_QD:
             try:
-                from qd_archive import compute_qd_axes
+                # compute_qd_axes is defined in this module (line 348)
                 self._compute_qd_axes_fn = compute_qd_axes
-            except (ImportError, Exception): pass
+            except Exception:
+                pass
         self._extract_behavioral_descriptor = None
         if _HAS_NOVELTY:
             try:
                 from novelty import extract_behavioral_descriptor
+
                 self._extract_behavioral_descriptor = extract_behavioral_descriptor
-            except (ImportError, Exception): pass
+            except (ImportError, Exception):
+                pass
         self._champion_qd_valid, self._cached_champion_qd_desc = False, None
         self._oscillation_window_size = 10
-        self._champion_oscillation_window = __import__('collections').deque(maxlen=self._oscillation_window_size)
+        self._champion_oscillation_window = __import__("collections").deque(maxlen=self._oscillation_window_size)
         self._oscillation_positive_count, self._oscillation_threshold, self._hysteresis_min_delta = 0, 3, 0.5
+        self._base_hysteresis_min_delta = 0.5
         self.meta_controller, self.progression_tracker = None, None
         self._log_file = None
         self._log_path_cache = None
-        if self.config.log_dir: os.makedirs(self.config.log_dir, exist_ok=True)
+        self._cached_checkpoint_dir = None
+        if self.config.log_dir:
+            os.makedirs(self.config.log_dir, exist_ok=True)
+
     def apply_external_params(self, params: dict[str, Any]) -> None:
         """Apply externally-tuned evolution params (from BarrierTuner/MetaController).
         Call BEFORE run() to inject per-cycle tuning.
@@ -975,14 +1094,14 @@ class EvolutionEngine:
     def get_generation_stats(self) -> dict:
         """Return per-generation statistics for the current run."""
         return {
-            'current_generation': self.current_generation,
-            'generations_stalled': self.generations_stalled,
-            'champion_fitness': self.champion_fitness,
-            'champion_level': self.champion_level,
-            'mutation_rate': self.config.mutation_rate,
-            'population_size': self.config.population_size,
-            'novelty_weight': self.config.novelty_weight,
-            'fitness_velocity': getattr(self, '_fitness_velocity', 0.0),
+            "current_generation": self.current_generation,
+            "generations_stalled": self.generations_stalled,
+            "champion_fitness": self.champion_fitness,
+            "champion_level": self.champion_level,
+            "mutation_rate": self.config.mutation_rate,
+            "population_size": self.config.population_size,
+            "novelty_weight": self.config.novelty_weight,
+            "fitness_velocity": getattr(self, "_fitness_velocity", 0.0),
         }
 
     # ------------------------------------------------------------------
@@ -991,23 +1110,29 @@ class EvolutionEngine:
 
     def _get_bonus_config(self, lvl: int, champion_raw: float) -> dict:
         """Compute bonus configuration diagnostics."""
-        mbf = getattr(self.config, 'max_bonus_fraction', 1.0)
+        mbf = getattr(self.config, "max_bonus_fraction", 1.0)
         norm_active = mbf < 1.0
         _sim_base = max(champion_raw, 100.0)
         sim_cap = mbf * _sim_base
         max_possible = {
-            'loop': 5.0, 'mem': 3.0, 'div': 2.0, 'level': 25.0 * lvl,
-            'efficiency': 30.0, 'multi_task': 15.0, 'time_credit': 20.0,
-            'smc': 25.0, 'graduated': 50.0,
+            "loop": 5.0,
+            "mem": 3.0,
+            "div": 2.0,
+            "level": 25.0 * lvl,
+            "efficiency": 30.0,
+            "multi_task": 15.0,
+            "time_credit": 20.0,
+            "smc": 25.0,
+            "graduated": 50.0,
         }
         return {
-            'normalization_active': norm_active,
-            'max_bonus_fraction': mbf,
-            'cap_at_simulated_base': sim_cap,
-            'simulated_base': _sim_base,
-            'bonus_log_interval': getattr(self.config, 'bonus_log_interval', 50),
-            'max_possible_contributions': max_possible,
-            'total_max_bonus': sum(max_possible.values()),
+            "normalization_active": norm_active,
+            "max_bonus_fraction": mbf,
+            "cap_at_simulated_base": sim_cap,
+            "simulated_base": _sim_base,
+            "bonus_log_interval": getattr(self.config, "bonus_log_interval", 50),
+            "max_possible_contributions": max_possible,
+            "total_max_bonus": sum(max_possible.values()),
         }
 
     def _get_bonus_thresholds(self, lvl: int, n_levels: int) -> dict:
@@ -1019,12 +1144,12 @@ class EvolutionEngine:
             current_threshold = max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1)))
         graduated_headroom = max(0.0, 1.0 - current_threshold)
         return {
-            'current_level': lvl,
-            'graduated_bonus_threshold': current_threshold,
-            'graduated_headroom': graduated_headroom,
-            'max_graduated_bonus': 50.0 * graduated_headroom,
-            'level_advancement_bonus': lvl * 25.0,
-            'max_level_bonus': (n_levels - 1) * 25.0,
+            "current_level": lvl,
+            "graduated_bonus_threshold": current_threshold,
+            "graduated_headroom": graduated_headroom,
+            "max_graduated_bonus": 50.0 * graduated_headroom,
+            "level_advancement_bonus": lvl * 25.0,
+            "max_level_bonus": (n_levels - 1) * 25.0,
         }
 
     def _get_structural_scaling(self, lvl: int) -> dict:
@@ -1032,14 +1157,20 @@ class EvolutionEngine:
         try:
             _scales = self._get_structural_bonus_scale()
         except Exception:
-            _scales = {'scale_factor': 1.0, 'loop_pressure': 0.33, 'mem_pressure': 0.33, 'div_pressure': 0.34}
+            _scales = {"scale_factor": 1.0, "loop_pressure": 0.33, "mem_pressure": 0.33, "div_pressure": 0.34}
         return {
-            'scale_factor': _scales.get('scale_factor', 1.0),
-            'loop_pressure': _scales.get('loop_pressure', 0.33),
-            'mem_pressure': _scales.get('mem_pressure', 0.33),
-            'div_pressure': _scales.get('div_pressure', 0.34),
-            'applies_to': ['loop', 'mem', 'div'] if lvl >= 5 else [],
-            'level_gating': {'loop_bonus': 'L5+', 'mem_bonus': 'L7+', 'div_bonus': 'L5+', 'smc_bonus': 'L12+', 'efficiency_high_diversity': 'L8+'},
+            "scale_factor": _scales.get("scale_factor", 1.0),
+            "loop_pressure": _scales.get("loop_pressure", 0.33),
+            "mem_pressure": _scales.get("mem_pressure", 0.33),
+            "div_pressure": _scales.get("div_pressure", 0.34),
+            "applies_to": ["loop", "mem", "div"] if lvl >= 5 else [],
+            "level_gating": {
+                "loop_bonus": "L5+",
+                "mem_bonus": "L7+",
+                "div_bonus": "L5+",
+                "smc_bonus": "L12+",
+                "efficiency_high_diversity": "L8+",
+            },
         }
 
     def _get_fitness_history_stats(self) -> dict:
@@ -1069,46 +1200,68 @@ class EvolutionEngine:
             improvement_rate = 0.0
             recent_var = 0.0
         return {
-            'total_generations_with_data': hist_len,
-            'overall_min': round(overall_min, 4), 'overall_max': round(overall_max, 4),
-            'overall_mean': round(overall_mean, 4), 'overall_range': round(overall_max - overall_min, 4),
-            'recent_window': min(hist_len, 20), 'recent_min': round(recent_min, 4),
-            'recent_max': round(recent_max, 4), 'recent_mean': round(recent_mean, 4),
-            'recent_trend_per_gen': round(recent_trend, 4), 'improvement_count': improvements,
-            'improvement_rate': round(improvement_rate, 4), 'recent_variance': round(recent_var, 4),
+            "total_generations_with_data": hist_len,
+            "overall_min": round(overall_min, 4),
+            "overall_max": round(overall_max, 4),
+            "overall_mean": round(overall_mean, 4),
+            "overall_range": round(overall_max - overall_min, 4),
+            "recent_window": min(hist_len, 20),
+            "recent_min": round(recent_min, 4),
+            "recent_max": round(recent_max, 4),
+            "recent_mean": round(recent_mean, 4),
+            "recent_trend_per_gen": round(recent_trend, 4),
+            "improvement_count": improvements,
+            "improvement_rate": round(improvement_rate, 4),
+            "recent_variance": round(recent_var, 4),
         }
 
     def _get_population_dynamics(self) -> dict:
         """Compute population dynamics diagnostics."""
-        vel = getattr(self, '_fitness_velocity', 0.0)
+        vel = getattr(self, "_fitness_velocity", 0.0)
         stall = self.generations_stalled
-        div = getattr(self, '_current_diversity', 0.5)
-        qd_cov = getattr(self, '_qd_coverage', 0.0)
+        div = getattr(self, "_current_diversity", 0.5)
+        qd_cov = getattr(self, "_qd_coverage", 0.0)
         osc_window = list(self._champion_oscillation_window)
-        osc_count = getattr(self, '_oscillation_positive_count', 0)
-        osc_threshold = getattr(self, '_oscillation_threshold', 3)
-        rep_count = getattr(self, '_champion_replacement_count', 0)
+        osc_count = getattr(self, "_oscillation_positive_count", 0)
+        osc_threshold = getattr(self, "_oscillation_threshold", 3)
+        rep_count = getattr(self, "_champion_replacement_count", 0)
         hysteresis_active = osc_count >= osc_threshold
         return {
-            'fitness_velocity': round(vel, 4),
-            'fitness_velocity_regime': 'fast_improvement' if vel > 5.0 else 'moderate_improvement' if vel > 1.0 else 'plateau' if vel > -1.0 else 'mild_regression' if vel > -5.0 else 'strong_regression',
-            'generations_stalled': stall,
-            'stall_depth_category': 'none' if stall < 5 else 'shallow' if stall < 15 else 'moderate' if stall < 30 else 'deep' if stall < 50 else 'critical',
-            'diversity': round(div, 4),
-            'diversity_category': 'critical' if div < 0.1 else 'low' if div < 0.2 else 'moderate' if div < 0.4 else 'high',
-            'qd_niche_coverage': round(qd_cov, 4),
-            'qd_coverage_category': 'sparse' if qd_cov < 0.1 else 'low' if qd_cov < 0.3 else 'moderate' if qd_cov < 0.6 else 'well_covered',
-            'champion_replacements_total': rep_count,
-            'oscillation_window': [round(d, 4) for d in osc_window],
-            'oscillation_positive_count': osc_count,
-            'oscillation_threshold': osc_threshold,
-            'hysteresis_active': hysteresis_active,
+            "fitness_velocity": round(vel, 4),
+            "fitness_velocity_regime": (
+                "fast_improvement"
+                if vel > 5.0
+                else (
+                    "moderate_improvement"
+                    if vel > 1.0
+                    else "plateau" if vel > -1.0 else "mild_regression" if vel > -5.0 else "strong_regression"
+                )
+            ),
+            "generations_stalled": stall,
+            "stall_depth_category": (
+                "none"
+                if stall < 5
+                else "shallow" if stall < 15 else "moderate" if stall < 30 else "deep" if stall < 50 else "critical"
+            ),
+            "diversity": round(div, 4),
+            "diversity_category": (
+                "critical" if div < 0.1 else "low" if div < 0.2 else "moderate" if div < 0.4 else "high"
+            ),
+            "qd_niche_coverage": round(qd_cov, 4),
+            "qd_coverage_category": (
+                "sparse" if qd_cov < 0.1 else "low" if qd_cov < 0.3 else "moderate" if qd_cov < 0.6 else "well_covered"
+            ),
+            "champion_replacements_total": rep_count,
+            "oscillation_window": [round(d, 4) for d in osc_window],
+            "oscillation_positive_count": osc_count,
+            "oscillation_threshold": osc_threshold,
+            "hysteresis_active": hysteresis_active,
         }
 
     def _get_hof_stats(self) -> dict:
         """Compute Hall of Fame diagnostics."""
         hof = self._hall_of_fame
-        hof_heap = getattr(hof, '_heap', [])
+        hof_heap = getattr(hof, "_heap", [])
         hof_size = len(hof_heap)
         if hof_size > 0:
             hof_fitnesses = [entry[0] for entry in hof_heap]
@@ -1117,93 +1270,155 @@ class EvolutionEngine:
         else:
             hof_best = hof_worst = hof_mean = 0.0
         return {
-            'capacity': hof.capacity, 'size': hof_size,
-            'best_fitness': round(hof_best, 4), 'worst_fitness': round(hof_worst, 4),
-            'mean_fitness': round(hof_mean, 4), 'fitness_spread': round(hof_best - hof_worst, 4),
+            "capacity": hof.capacity,
+            "size": hof_size,
+            "best_fitness": round(hof_best, 4),
+            "worst_fitness": round(hof_worst, 4),
+            "mean_fitness": round(hof_mean, 4),
+            "fitness_spread": round(hof_best - hof_worst, 4),
         }
 
-    def _get_recommendations(self, lvl: int, mbf: float, norm_active: bool, stall: int, div: float,
-                             vel: float, qd_cov: float, qd_w: float, champion_raw: float,
-                             hist_len: int, recent_trend: float, improvement_rate: float,
-                             graduated_headroom: float, current_threshold: float,
-                             hof_size: int, hof_spread: float, hysteresis_active: bool,
-                             osc_count: int, population_dynamics: dict, fitness_history: dict) -> list[str]:
+    def _get_recommendations(
+        self,
+        lvl: int,
+        mbf: float,
+        norm_active: bool,
+        stall: int,
+        div: float,
+        vel: float,
+        qd_cov: float,
+        qd_w: float,
+        champion_raw: float,
+        hist_len: int,
+        recent_trend: float,
+        improvement_rate: float,
+        graduated_headroom: float,
+        current_threshold: float,
+        hof_size: int,
+        hof_spread: float,
+        hysteresis_active: bool,
+        osc_count: int,
+        population_dynamics: dict,
+        fitness_history: dict,
+    ) -> list[str]:
         """Generate actionable recommendations from diagnostic data."""
         recommendations = []
         if stall >= 50:
-            recommendations.append(f"CRITICAL STALL ({stall} gens): Consider enabling bonus normalization (max_bonus_fraction=0.30) or increasing novelty_weight to break out.")
+            recommendations.append(
+                f"CRITICAL STALL ({stall} gens): Consider enabling bonus normalization (max_bonus_fraction=0.30) or increasing novelty_weight to break out."
+            )
         elif stall >= 20:
-            recommendations.append(f"Deep stall ({stall} gens): Bonus normalization could help redistribute selection pressure. Current max_bonus_fraction={mbf:.2f}.")
+            recommendations.append(
+                f"Deep stall ({stall} gens): Bonus normalization could help redistribute selection pressure. Current max_bonus_fraction={mbf:.2f}."
+            )
         if div < 0.1:
-            recommendations.append("CRITICAL LOW DIVERSITY (<0.1): Population nearly converged. Boost novelty_weight, increase mutation rate, or inject Hall of Fame entries.")
+            recommendations.append(
+                "CRITICAL LOW DIVERSITY (<0.1): Population nearly converged. Boost novelty_weight, increase mutation rate, or inject Hall of Fame entries."
+            )
         elif div < 0.2:
-            recommendations.append(f"Low diversity ({div:.3f}): Novelty weight will be adaptively boosted. Consider diversity_inject_ratio > {self.config.diversity_inject_ratio}.")
+            recommendations.append(
+                f"Low diversity ({div:.3f}): Novelty weight will be adaptively boosted. Consider diversity_inject_ratio > {self.config.diversity_inject_ratio}."
+            )
         if not norm_active:
             lvl_bon = lvl * 25.0
             if champion_raw > 0 and lvl_bon > champion_raw * 0.5:
-                recommendations.append(f"Level bonus ({lvl_bon:.0f}) dominates base score ({champion_raw:.0f}). Enable max_bonus_fraction to prevent level_bonus from overshadowing task-solving fitness at L{lvl}.")
+                recommendations.append(
+                    f"Level bonus ({lvl_bon:.0f}) dominates base score ({champion_raw:.0f}). Enable max_bonus_fraction to prevent level_bonus from overshadowing task-solving fitness at L{lvl}."
+                )
         if graduated_headroom < 0.10:
-            recommendations.append(f"Graduated bonus threshold ({current_threshold:.3f}) leaves only {graduated_headroom:.3f} headroom. Near-perfect register match is required for any graduated bonus.")
+            recommendations.append(
+                f"Graduated bonus threshold ({current_threshold:.3f}) leaves only {graduated_headroom:.3f} headroom. Near-perfect register match is required for any graduated bonus."
+            )
         if qd_cov < 0.1 and qd_w > 0:
-            recommendations.append(f"QD niche coverage is sparse ({qd_cov:.3f}). The stall-scaled QD boost should help, but verify novelty_archive is populated.")
+            recommendations.append(
+                f"QD niche coverage is sparse ({qd_cov:.3f}). The stall-scaled QD boost should help, but verify novelty_archive is populated."
+            )
         if hysteresis_active:
-            recommendations.append(f"Oscillation detected: {osc_count} replacements in last {self._oscillation_window_size} gens (threshold={getattr(self, '_oscillation_threshold', 3)}).")
-        vel_regime = population_dynamics.get('fitness_velocity_regime', '')
-        if vel_regime == 'strong_regression':
-            recommendations.append(f"Strong fitness regression (velocity={vel:.2f}). Mutation rate will be maximized automatically.")
-        elif vel_regime == 'fast_improvement' and stall > 5:
+            recommendations.append(
+                f"Oscillation detected: {osc_count} replacements in last {self._oscillation_window_size} gens (threshold={getattr(self, '_oscillation_threshold', 3)})."
+            )
+        vel_regime = population_dynamics.get("fitness_velocity_regime", "")
+        if vel_regime == "strong_regression":
+            recommendations.append(
+                f"Strong fitness regression (velocity={vel:.2f}). Mutation rate will be maximized automatically."
+            )
+        elif vel_regime == "fast_improvement" and stall > 5:
             recommendations.append(f"Positive velocity ({vel:.2f}) but still stalled ({stall} gens).")
         if hist_len > 10 and improvement_rate < 0.05:
             recommendations.append(f"Very low improvement rate ({improvement_rate:.1%}) over {hist_len} generations.")
         if hof_size >= 2 and hof_spread < 1.0:
             recommendations.append(f"Hall of Fame fitness spread is narrow ({hof_spread:.2f}).")
         if not norm_active and hist_len > 20 and recent_trend <= 0:
-            recommendations.append("Normalization is off and fitness is flat/declining. Enable bonus normalization (max_bonus_fraction=0.30).")
+            recommendations.append(
+                "Normalization is off and fitness is flat/declining. Enable bonus normalization (max_bonus_fraction=0.30)."
+            )
         if not recommendations:
             recommendations.append("No issues detected. Fitness landscape appears healthy.")
         return recommendations
+
     def get_fitness_diagnostic_summary(self) -> dict[str, Any]:
         """Return a comprehensive diagnostic of the current fitness landscape."""
         lvl = self.champion_level
         n_levels = len(LEVELS)
-        raw_task = getattr(self, '_raw_task_score', 0.0)
-        champion_raw = getattr(self, '_champion_raw_task_score', raw_task)
+        raw_task = getattr(self, "_raw_task_score", 0.0)
+        champion_raw = getattr(self, "_champion_raw_task_score", raw_task)
         bonus_config = self._get_bonus_config(lvl, champion_raw)
         bonus_thresholds = self._get_bonus_thresholds(lvl, n_levels)
         structural_scaling = self._get_structural_scaling(lvl)
         fitness_history = self._get_fitness_history_stats()
         population_dynamics = self._get_population_dynamics()
         hall_of_fame = self._get_hof_stats()
-        nw = getattr(self, '_novelty_weight_cache', self.config.novelty_weight)
-        div = getattr(self, '_current_diversity', 0.5)
+        nw = getattr(self, "_novelty_weight_cache", self.config.novelty_weight)
+        div = getattr(self, "_current_diversity", 0.5)
         qd_w = self.config.qd_bonus_weight
         novelty_qd = {
-            'novelty_weight': nw,
-            'novelty_weight_effective': round(min(nw * (1.0 + (1.0 - div / 0.2)), 0.8) if div < 0.2 and nw > 0 else nw, 4),
-            'qd_bonus_weight': qd_w,
-            'novelty_archive_size': len(self.novelty_archive) if self.novelty_archive is not None else 0,
-            'qd_archive_occupied': getattr(self.qd_archive, '_occupied_count', 0) if self.qd_archive is not None else 0,
+            "novelty_weight": nw,
+            "novelty_weight_effective": round(
+                min(nw * (1.0 + (1.0 - div / 0.2)), 0.8) if div < 0.2 and nw > 0 else nw, 4
+            ),
+            "qd_bonus_weight": qd_w,
+            "novelty_archive_size": len(self.novelty_archive) if self.novelty_archive is not None else 0,
+            "qd_archive_occupied": getattr(self.qd_archive, "_occupied_count", 0) if self.qd_archive is not None else 0,
         }
         recommendations = self._get_recommendations(
-            lvl, bonus_config['max_bonus_fraction'], bonus_config['normalization_active'],
-            self.generations_stalled, div, getattr(self, '_fitness_velocity', 0.0),
-            getattr(self, '_qd_coverage', 0.0), qd_w, champion_raw,
+            lvl,
+            bonus_config["max_bonus_fraction"],
+            bonus_config["normalization_active"],
+            self.generations_stalled,
+            div,
+            getattr(self, "_fitness_velocity", 0.0),
+            getattr(self, "_qd_coverage", 0.0),
+            qd_w,
+            champion_raw,
             len(self.best_fitness_history),
-            fitness_history.get('recent_trend_per_gen', 0.0),
-            fitness_history.get('improvement_rate', 0.0),
-            bonus_thresholds['graduated_headroom'], bonus_thresholds['graduated_bonus_threshold'],
-            hall_of_fame['size'], hall_of_fame['fitness_spread'],
-            population_dynamics['hysteresis_active'], population_dynamics['oscillation_positive_count'],
-            population_dynamics, fitness_history,
+            fitness_history.get("recent_trend_per_gen", 0.0),
+            fitness_history.get("improvement_rate", 0.0),
+            bonus_thresholds["graduated_headroom"],
+            bonus_thresholds["graduated_bonus_threshold"],
+            hall_of_fame["size"],
+            hall_of_fame["fitness_spread"],
+            population_dynamics["hysteresis_active"],
+            population_dynamics["oscillation_positive_count"],
+            population_dynamics,
+            fitness_history,
         )
         return {
-            'generation': self.current_generation,
-            'champion': {'fitness': round(self.champion_fitness, 4), 'level': lvl, 'raw_task_score': round(champion_raw, 4)},
-            'bonus_config': bonus_config, 'bonus_thresholds': bonus_thresholds,
-            'structural_scaling': structural_scaling, 'fitness_history': fitness_history,
-            'population_dynamics': population_dynamics, 'hall_of_fame': hall_of_fame,
-            'novelty_qd': novelty_qd, 'recommendations': recommendations,
+            "generation": self.current_generation,
+            "champion": {
+                "fitness": round(self.champion_fitness, 4),
+                "level": lvl,
+                "raw_task_score": round(champion_raw, 4),
+            },
+            "bonus_config": bonus_config,
+            "bonus_thresholds": bonus_thresholds,
+            "structural_scaling": structural_scaling,
+            "fitness_history": fitness_history,
+            "population_dynamics": population_dynamics,
+            "hall_of_fame": hall_of_fame,
+            "novelty_qd": novelty_qd,
+            "recommendations": recommendations,
         }
+
     def _should_replace_champion(self, candidate_fitness: float) -> bool:
         """Decide whether a candidate should replace the champion.
 
@@ -1242,8 +1457,7 @@ class EvolutionEngine:
             if oldest > 0:
                 self._oscillation_positive_count -= 1
                 # R35: Clamp to prevent underflow from counting drift
-                if self._oscillation_positive_count < 0:
-                    self._oscillation_positive_count = 0
+                self._oscillation_positive_count = max(self._oscillation_positive_count, 0)
         window.append(delta)
 
         # Update running count for the new delta
@@ -1256,8 +1470,7 @@ class EvolutionEngine:
             # the count to exceed the actual number of positive entries
             # in the window. Clamping ensures the oscillation threshold
             # check is always accurate.
-            if self._oscillation_positive_count > self._oscillation_window_size:
-                self._oscillation_positive_count = self._oscillation_window_size
+            self._oscillation_positive_count = min(self._oscillation_positive_count, self._oscillation_window_size)
 
         # Check if oscillation is detected: many replacements in window
         if self._oscillation_positive_count >= self._oscillation_threshold:
@@ -1286,9 +1499,8 @@ class EvolutionEngine:
         """
         self._champion_replacement_count += 1
         # R35: Cap replacement count for long-run memory safety
-        if self._champion_replacement_count > 10000:
-            self._champion_replacement_count = 10000
-        history = getattr(self, '_champion_replacement_history', None)
+        self._champion_replacement_count = min(self._champion_replacement_count, 10000)
+        history = getattr(self, "_champion_replacement_history", None)
         if history is not None:
             history.append((delta_fitness, self.current_generation))
         # Oscillation window is already maintained by _should_replace_champion
@@ -1298,13 +1510,10 @@ class EvolutionEngine:
 
         Each entry is a dict with 'fitness' (delta_fitness) and 'cycle' (generation).
         """
-        history = getattr(self, '_champion_replacement_history', None)
+        history = getattr(self, "_champion_replacement_history", None)
         if history is None:
             return []
-        return [
-            {'fitness': f, 'cycle': c}
-            for f, c in history
-        ]
+        return [{"fitness": f, "cycle": c} for f, c in history]
 
     def enable_bonus_normalization(self, fraction: float = 0.30) -> None:
         """Enable bonus normalization with adaptive fitness landscape control.
@@ -1330,19 +1539,11 @@ class EvolutionEngine:
             ValueError: If fraction is not in (0, 1].
         """
         if not 0.0 < fraction <= 1.0:
-            raise ValueError(
-                f"fraction must be in (0, 1], got {fraction!r}"
-            )
+            raise ValueError(f"fraction must be in (0, 1], got {fraction!r}")
         old = self.config.max_bonus_fraction
         self.config.max_bonus_fraction = fraction
-        _logger.info(
-            f"Bonus normalization enabled: fraction={fraction:.2f} "
-            f"(was {old:.2f})"
-        )
-        self._log(
-            f"[BonusNorm] enabled fraction={fraction:.2f} "
-            f"(was {old:.2f})"
-        )
+        _logger.info(f"Bonus normalization enabled: fraction={fraction:.2f} " f"(was {old:.2f})")
+        self._log(f"[BonusNorm] enabled fraction={fraction:.2f} " f"(was {old:.2f})")
 
     # ------------------------------------------------------------------
     # Core loop
@@ -1371,10 +1572,13 @@ class EvolutionEngine:
             self._champion_verified = verified
             self._champion_verify_score = verify_score
         return {
-            "generations_completed": 0, "final_fitness": self.champion_fitness,
+            "generations_completed": 0,
+            "final_fitness": self.champion_fitness,
             "final_level": self.champion_level,
             "champion_words": len(self.champion) if self.champion else 0,
             "elapsed_seconds": 0.0,
+            "generations_stalled": self.generations_stalled,
+            "total_champion_improvements": 0,
         }
 
     def _run_generation_init(self, gen: int, n_levels: int) -> None:
@@ -1386,7 +1590,10 @@ class EvolutionEngine:
         self._bonus_threshold_cache = (lvl, max(0.85, 0.95 - 0.10 * (lvl / max(1, n_levels - 1))))
         if self.config.use_mutation_scheduler:
             sched_progress = min(1.0, gen / max(1, self.config.mutation_schedule_generations))
-            scheduled_base = self.config.mutation_rate_start + (self.config.mutation_rate_end - self.config.mutation_rate_start) * sched_progress
+            scheduled_base = (
+                self.config.mutation_rate_start
+                + (self.config.mutation_rate_end - self.config.mutation_rate_start) * sched_progress
+            )
             self._original_mutation_rate = scheduled_base
             self.config.mutation_rate = self._compute_adaptive_mutation_rate() if gen > 5 else scheduled_base
         elif gen > 5:
@@ -1403,12 +1610,20 @@ class EvolutionEngine:
         detailed_results = self._evaluate_batch_detailed(elite)
         return challengers, results, elite, elite_fitnesses, detailed_results
 
-    def _run_generation_update(self, gen: int, elite, detailed_results, elite_fitnesses,
-                               improved_before: bool, checkpoint_interval: int, auto_curriculum: bool) -> bool:
+    def _run_generation_update(
+        self,
+        gen: int,
+        elite,
+        detailed_results,
+        elite_fitnesses,
+        improved_before: bool,
+        checkpoint_interval: int,
+        auto_curriculum: bool,
+    ) -> bool:
         """Update champion, archives, and curriculum. Returns improved flag."""
         prev_fitness = self.champion_fitness
         improved = self._update_champion(elite, detailed_results, stage1_fitnesses=elite_fitnesses)
-        if improved and hasattr(self, 'champion_archive') and self.champion_archive is not None:
+        if improved and hasattr(self, "champion_archive") and self.champion_archive is not None:
             try:
                 _pruned = self.champion_archive.quality_weighted_prune()
                 if _pruned > 0:
@@ -1421,17 +1636,27 @@ class EvolutionEngine:
             self._record_champion_replacement(delta)
         try:
             from mutation_proposer import DirectedMutator as _DM
+
             for _res in self._last_results:
-                _desc = _res.get('description', '') if isinstance(_res, dict) else ''
+                _desc = _res.get("description", "") if isinstance(_res, dict) else ""
                 if _desc:
-                    _DM.record_mutation_outcome(_desc, _res.get('fitness_delta', 0.0) if isinstance(_res, dict) else 0.0)
+                    _DM.record_mutation_outcome(
+                        _desc, _res.get("fitness_delta", 0.0) if isinstance(_res, dict) else 0.0
+                    )
         except Exception:
             pass
         return improved
 
-    def _run_generation_maintenance(self, gen: int, improved: bool, task_refresh_interval: int,
-                                    cuda_cleanup_interval: int, _cuda_cleanup, checkpoint_interval: int,
-                                    auto_curriculum: bool) -> None:
+    def _run_generation_maintenance(
+        self,
+        gen: int,
+        improved: bool,
+        task_refresh_interval: int,
+        cuda_cleanup_interval: int,
+        _cuda_cleanup,
+        checkpoint_interval: int,
+        auto_curriculum: bool,
+    ) -> None:
         """Run post-generation maintenance tasks."""
         if gen > 0 and gen % task_refresh_interval == 0:
             self._refresh_task_instance()
@@ -1465,32 +1690,51 @@ class EvolutionEngine:
 
     def _run_generation_meta_monitoring(self, gen: int) -> None:
         """Run meta-controller monitoring and diagnostics."""
-        if gen > 0 and gen % 25 == 0 and hasattr(self, 'meta_controller') and self.meta_controller is not None:
+        if gen > 0 and gen % 25 == 0 and hasattr(self, "meta_controller") and self.meta_controller is not None:
             try:
                 _rc = self.meta_controller.get_recovery_confidence()
-                if _rc['is_recovering']:
+                if _rc["is_recovering"]:
                     self._log(f"[Recovery] confidence={_rc['confidence']:.2f} exit={_rc['should_exit_recovery']}")
-                    if _rc['should_exit_recovery']:
+                    if _rc["should_exit_recovery"]:
                         self.meta_controller.recovery_mode = False
             except Exception:
                 pass
         if self.config.use_strategy_archive and self.strategy_archive is not None:
             try:
                 _dom = self.strategy_archive.get_dominance_report()
-                if _dom.get('is_monoculture') and gen > 0 and gen % 10 == 0:
+                if _dom.get("is_monoculture") and gen > 0 and gen % 10 == 0:
                     self._log(f"[Strategy] Monoculture: {_dom['dominant_strategy']} at {_dom['dominance_ratio']:.0%}")
             except Exception:
                 pass
-    def _run_one_generation(self, gen: int, checkpoint_interval: int, auto_curriculum: bool,
-                            task_refresh_interval: int, cuda_cleanup_interval: int,
-                            _cuda_cleanup, n_levels: int) -> None:
+
+    def _run_one_generation(
+        self,
+        gen: int,
+        checkpoint_interval: int,
+        auto_curriculum: bool,
+        task_refresh_interval: int,
+        cuda_cleanup_interval: int,
+        _cuda_cleanup,
+        n_levels: int,
+    ) -> None:
         """Execute a single generation of the evolution loop."""
         gen_start = time.time()
         self._run_generation_init(gen, n_levels)
         _, _, elite, elite_fitnesses, detailed_results = self._run_generation_evaluate()
-        improved = self._run_generation_update(gen, elite, detailed_results, elite_fitnesses, False, checkpoint_interval, auto_curriculum)
+        improved = self._run_generation_update(
+            gen, elite, detailed_results, elite_fitnesses, False, checkpoint_interval, auto_curriculum
+        )
         self._log_generation(gen, gen_start)
-        self._run_generation_maintenance(gen, improved, task_refresh_interval, cuda_cleanup_interval, _cuda_cleanup, checkpoint_interval, auto_curriculum)
+        self._run_generation_maintenance(
+            gen,
+            improved,
+            task_refresh_interval,
+            cuda_cleanup_interval,
+            _cuda_cleanup,
+            checkpoint_interval,
+            auto_curriculum,
+        )
+
     def run(self, num_generations: int | None = None) -> dict[str, Any]:
         """Run the evolution loop for num_generations (default: config)."""
         ng = num_generations if num_generations is not None else self.config.max_generations
@@ -1504,11 +1748,15 @@ class EvolutionEngine:
         if self.use_gpu if hasattr(self, "use_gpu") else self.config.use_gpu:
             try:
                 import gc as _gc
+
                 import torch as _torch
+
                 if _torch.cuda.is_available():
+
                     def _cuda_cleanup():
                         _gc.collect()
                         _torch.cuda.empty_cache()
+
             except ImportError:
                 pass
         summary = self._initialize_run(ng)
@@ -1518,15 +1766,32 @@ class EvolutionEngine:
                 self._champion_raw_task_score = self._raw_task_score
             vm_farm = self.vm_farm
             for gen in range(ng):
-                self._run_one_generation(gen, checkpoint_interval, auto_curriculum, task_refresh_interval, cuda_cleanup_interval, _cuda_cleanup, n_levels)
+                self._run_one_generation(
+                    gen,
+                    checkpoint_interval,
+                    auto_curriculum,
+                    task_refresh_interval,
+                    cuda_cleanup_interval,
+                    _cuda_cleanup,
+                    n_levels,
+                )
+        except Exception:
+            pass  # Return partial summary on exception
         finally:
             self._close_log_handle()
+        # Final checkpoint after all generations complete
+        if checkpoint_interval:
+            try:
+                self._checkpoint()
+            except Exception as e:
+                self._log(f"[Checkpoint] Failed at final: {e}")
         summary["generations_completed"] = ng
         summary["final_fitness"] = self.champion_fitness
         summary["final_level"] = self.champion_level
         summary["champion_words"] = len(self.champion) if self.champion else 0
         summary["elapsed_seconds"] = time.time() - start_time
         return summary
+
     def _refresh_task_instance(self) -> None:
         """Generate a new task instance for the current curriculum level."""
         level_cls = get_task_level(self.champion_level)
@@ -1804,78 +2069,124 @@ class EvolutionEngine:
     def _score_register_match(self, expected_regs: dict, expected_total: int, final_regs: dict) -> float:
         """Score per-register match with distance-weighted partial credit."""
         return _score_register_match_fn(expected_regs, expected_total, final_regs)
-    def _compute_structural_bonuses(self, status: str, instr_count: int, program: list[int], bonus_scale: float) -> tuple[float, float, float]:
+
+    def _compute_structural_bonuses(
+        self, status: str, instr_count: int, program: list[int], bonus_scale: float
+    ) -> tuple[float, float, float]:
         """Compute loop, memory, and instruction diversity bonuses."""
         return _compute_structural_bonuses_fn(self, status, instr_count, program, bonus_scale, _OPCODE_CAT_ARRAY)
+
     def _compute_efficiency_score(self, program: list[int], instr_count: int, status: str) -> float:
         """Compute efficiency scoring (+15 points max)."""
         eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
         return _compute_efficiency_score_fn(program, instr_count, status, self.champion_level, eff_weight)
+
     def _compute_multi_task_score(self) -> float:
         """Compute multi-task scoring (+15 points max)."""
         mt_weight = getattr(self.config, "secondary_task_weight", 1.0)
         secondary_results = getattr(self, "_secondary_task_results", None)
         return _compute_multi_task_score_fn(secondary_results, mt_weight)
+
     def _compute_time_credit(self, status: str, reg_match: float, instr_count: int) -> float:
         """Compute time-to-solution credit (+20 points max)."""
         return _compute_time_credit_fn(status, reg_match, instr_count)
+
     def _compute_smc_bonus(self, status: str, program: list[int], instr_count: int) -> float:
         """Compute SMC pattern bonus (+25 points max) for L12+."""
         return _compute_smc_bonus_fn(status, program, instr_count, self.champion_level)
+
     def _log_bonus_diagnostics(self, base_score: float, bonuses: dict, max_single: float, norm_active: bool) -> None:
         """Log per-dimension bonus breakdown periodically."""
         _log_bonus_diagnostics_fn(self, base_score, bonuses, max_single, norm_active)
+
     def _apply_novelty_qd_blending(self, fitness, program, trace, base_score, _qd_fn, _prog_qd_desc):
         """Apply novelty-weighted fitness and QD archive bonus/penalty."""
         return _apply_novelty_qd_blending_fn(self, fitness, program, trace, base_score, _qd_fn, _prog_qd_desc)
-    def _compute_fitness(self, program: list[int], trace: dict[str, Any], eval_budget: int | None = None, raw_only: bool = False) -> float:
+
+    def _compute_fitness(
+        self, program: list[int], trace: dict[str, Any], eval_budget: int | None = None, raw_only: bool = False
+    ) -> float:
         """Compute crash-penalized fitness."""
         return _compute_fitness_fn(self, program, trace, eval_budget, raw_only)
+
     def _extract_trace_info(self, trace: dict) -> tuple:
         """Extract and cache trace information for fitness computation."""
         return _extract_trace_info_fn(self, trace)
+
     def _compute_base_score(self, reg_match: float, instr_count: int, status: str, budget: int) -> float:
         """Compute base fitness score from register match and execution metrics."""
         return _compute_base_score_fn(reg_match, instr_count, status, budget)
-    def _compute_all_bonuses(self, status: str, instr_count: int, program: list[int], reg_match: float, base_score: float) -> dict:
+
+    def _compute_all_bonuses(
+        self, status: str, instr_count: int, program: list[int], reg_match: float, base_score: float
+    ) -> dict:
         """Compute all bonus components."""
         return _compute_all_bonuses_fn(self, status, instr_count, program, reg_match, base_score, _OPCODE_CAT_ARRAY)
+
     def _apply_bonuses_and_normalize(self, base_score: float, bonuses: dict) -> float:
         """Apply bonuses with normalization and store raw score."""
         return _apply_bonuses_and_normalize_fn(self, base_score, bonuses)
+
     def _finalize_with_blending(self, base_score: float, program: list[int], trace: dict) -> float:
         """Apply novelty/QD blending and partial verify scaling."""
         return _finalize_with_blending_fn(self, base_score, program, trace)
+
     def _batch_classify_programs(self, traces: list, n: int, budget: int):
         """Classify programs by status (crash/timeout/ok) for batch fitness."""
         return _batch_classify_programs_fn(traces, n, budget)
+
     def _batch_score_registers(self, ok_traces: list, expected_keys: list, expected_vals, n_ok: int):
         """Vectorized register scoring for batch fitness."""
         return _batch_score_registers_fn(ok_traces, expected_keys, expected_vals, n_ok)
+
     def _batch_compute_efficiency(self, ok_programs: list, n_ok: int, ok_instr, max_prog_len: int):
         """Vectorized efficiency scoring for batch fitness."""
         return _batch_compute_efficiency_fn(self, ok_programs, n_ok, ok_instr, max_prog_len)
-    def _batch_compute_structural_bonuses(self, ok_programs: list, ok_indices, traces: list, n_ok: int, ok_instr, _bonus_scale: float, _max_single):
+
+    def _batch_compute_structural_bonuses(
+        self, ok_programs: list, ok_indices, traces: list, n_ok: int, ok_instr, _bonus_scale: float, _max_single
+    ):
         """Vectorized structural bonuses (loop, mem, div, smc, graduated, level)."""
-        return _batch_compute_structural_bonuses_fn(self, ok_programs, ok_indices, traces, n_ok, ok_instr, _bonus_scale, _max_single, _OPCODE_CAT_ARRAY)
+        return _batch_compute_structural_bonuses_fn(
+            self, ok_programs, ok_indices, traces, n_ok, ok_instr, _bonus_scale, _max_single, _OPCODE_CAT_ARRAY
+        )
+
     def _batch_blend_novelty_qd(self, fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw):
         """Apply novelty/QD blending to batch fitness values."""
         _batch_blend_novelty_qd_fn(self, fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw)
-    def batch_compute_fitness(self, programs: list[list[int]], traces: list[dict[str, Any]], eval_budget: int | None = None, raw_only: bool = False) -> tuple[list[float], list[float]]:
+
+    def batch_compute_fitness(
+        self,
+        programs: list[list[int]],
+        traces: list[dict[str, Any]],
+        eval_budget: int | None = None,
+        raw_only: bool = False,
+    ) -> tuple[list[float], list[float]]:
         """Vectorized batch fitness computation using numpy arrays."""
         return batch_compute_fitness_fn(self, programs, traces, eval_budget, raw_only)
+
     def _batch_get_expected(self):
         """Extract expected output arrays for batch computation."""
         return _batch_get_expected_fn(self)
+
     def _batch_apply_crash_penalties(self, n, crash_mask, illegal_mask, timeout_mask):
         """Apply crash/timeout penalties to fitness array."""
         return _batch_apply_crash_penalties_fn(n, crash_mask, illegal_mask, timeout_mask)
-    def _batch_compute_base(self, programs, traces, ok_indices, ok_instr, n_ok, expected_keys, expected_vals, budget, expected_regs):
+
+    def _batch_compute_base(
+        self, programs, traces, ok_indices, ok_instr, n_ok, expected_keys, expected_vals, budget, expected_regs
+    ):
         """Compute base fitness scores for batch."""
-        return _batch_compute_base_fn(self, programs, traces, ok_indices, ok_instr, n_ok, expected_keys, expected_vals, budget, expected_regs)
+        return _batch_compute_base_fn(
+            self, programs, traces, ok_indices, ok_instr, n_ok, expected_keys, expected_vals, budget, expected_regs
+        )
+
     def _batch_apply_bonuses(self, base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr):
         """Apply efficiency, structural, and graduated bonuses."""
-        return _batch_apply_bonuses_fn(self, base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr, _OPCODE_CAT_ARRAY)
+        return _batch_apply_bonuses_fn(
+            self, base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr, _OPCODE_CAT_ARRAY
+        )
+
     def _generate_initial_champion(self) -> list[int]:
         """Generate or load the initial champion."""
         # Try loading from champion dir
@@ -1937,6 +2248,7 @@ class EvolutionEngine:
             return
         n_model = max(1, int(len(challengers) * self.config.model_guided_ratio))
         replaced = self._replace_with_model_guided(challengers, model_ratio=n_model / len(challengers))
+
     def _apply_mutation(self, strategy) -> list[int]:
         """Apply a mutation strategy to the champion and return the mutated program."""
         task_inst = self.task_instance or {}
@@ -1973,30 +2285,55 @@ class EvolutionEngine:
             if prog and prog[-1] != 0x0010_0073:
                 challengers[i] = prog + [0x0010_0073]
         return challengers
+
     @staticmethod
     def _compute_population_diversity(challengers: list[list[int]]) -> float:
         """Compute opcode diversity of the challenger population."""
         return _compute_population_diversity_fn(challengers, _OPCODE_CAT_ARRAY, NUM_OPCODE_CATEGORIES)
+
     def _inject_diversity(self, challengers: list[list[int]], n_inject: int) -> None:
         """Replace the least-diverse challengers with fresh random programs."""
-        _inject_diversity_fn(challengers, n_inject, self.rng, self._last_challenger_strategies, _OPCODE_CAT_ARRAY, NUM_OPCODE_CATEGORIES, generate_seed_program)
+        _inject_diversity_fn(
+            challengers,
+            n_inject,
+            self.rng,
+            self._last_challenger_strategies,
+            _OPCODE_CAT_ARRAY,
+            NUM_OPCODE_CATEGORIES,
+            generate_seed_program,
+        )
+
     def _check_variance_override(self):
         """Check variance-aware strategy override (priority 1)."""
         return _check_variance_override_fn(self)
-    def _check_priority_overrides(self, current_priority: int) -> tuple[int, 'MutationStrategy | None', str]:
+
+    def _check_priority_overrides(self, current_priority: int) -> tuple[int, MutationStrategy | None, str]:
         """Check cross-cycle, mutation stats, and plateau overrides (priorities 2-4)."""
         return _check_priority_overrides_fn(self, current_priority)
-    def _apply_cycle_phase_bias(self, chosen: 'MutationStrategy', override_priority: int) -> 'MutationStrategy':
+
+    def _apply_cycle_phase_bias(self, chosen: MutationStrategy, override_priority: int) -> MutationStrategy:
         """Apply cycle-phase exploration-exploitation balance."""
         return _apply_cycle_phase_bias_fn(self, chosen, override_priority)
+
     def _choose_mutation_strategy(self, idx: int) -> MutationStrategy:
         """Choose a mutation strategy for challenger idx."""
-        effective_cap = max(self.config.max_consecutive_same_strategy // 2, 10) if self.champion_level >= 5 else self.config.max_consecutive_same_strategy
+        effective_cap = (
+            max(self.config.max_consecutive_same_strategy // 2, 10)
+            if self.champion_level >= 5
+            else self.config.max_consecutive_same_strategy
+        )
         skip_strat = None
-        if self._consecutive_same_strategy >= effective_cap and self._last_strategy_used not in ("GROW", "MODEL_GUIDED"):
+        if self._consecutive_same_strategy >= effective_cap and self._last_strategy_used not in (
+            "GROW",
+            "MODEL_GUIDED",
+        ):
             skip_strat = self._last_strategy_used
             self._consecutive_same_strategy = 0
-        if self.config.use_strategy_archive and self.strategy_archive is not None and self.strategy_archive.total_records() > 10:
+        if (
+            self.config.use_strategy_archive
+            and self.strategy_archive is not None
+            and self.strategy_archive.total_records() > 10
+        ):
             rec = self.strategy_archive.recommend_strategy(self.champion_level, skip_strategy=skip_strat)
             chosen = _STRATEGY_ENUM_CACHE.get(rec, MutationStrategy.HYBRID)
         else:
@@ -2005,9 +2342,13 @@ class EvolutionEngine:
             try:
                 _bonus = self.strategy_archive.adaptive_exploration_bonus(rec, self.champion_level)
                 if _bonus > 0.15 and self.rng.random() < _bonus:
-                    _alt = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
-                    if _alt: chosen = self.rng.choice(_alt)
-            except Exception: pass
+                    _alt = [
+                        s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)
+                    ]
+                    if _alt:
+                        chosen = self.rng.choice(_alt)
+            except Exception:
+                pass
         chosen = self._apply_affinity_bias(chosen)
         op, os, ol = self._check_variance_override()
         op, os, ol = self._check_priority_overrides(op)
@@ -2030,9 +2371,11 @@ class EvolutionEngine:
     def _apply_affinity_bias(self, chosen):
         """Apply per-program mutation affinity bias."""
         return _apply_affinity_bias_fn(self, chosen)
+
     def _apply_level_aware_strategy_bias(self, chosen: MutationStrategy) -> MutationStrategy:
         """Apply level-aware strategy weighting to bias selection by task difficulty."""
         return _apply_level_aware_strategy_bias_fn(self, chosen)
+
     # --------------------------------------------------------------
     # Model-guided generation (v12.5)
     # --------------------------------------------------------------
@@ -2040,44 +2383,69 @@ class EvolutionEngine:
     def _get_model_guided_ratio(self) -> float:
         """Determine model-guided replacement ratio based on level and stall."""
         return _get_model_guided_ratio_fn(self.config, self.champion_level)
-    def _get_model_guided_prefix(self, champion_hex: list[str], ref_prefix_hex: list[str] | None) -> tuple[list[str], str]:
+
+    def _get_model_guided_prefix(
+        self, champion_hex: list[str], ref_prefix_hex: list[str] | None
+    ) -> tuple[list[str], str]:
         """Select prefix source using Adaptive Prefix Scheduler (APS)."""
         return _get_model_guided_prefix_fn(champion_hex, ref_prefix_hex, self.champion_level, self.generations_stalled)
+
     def _compute_model_temperature(self) -> float:
         """Compute model temperature with optional annealing."""
         return _compute_model_temperature_fn(self.config, getattr(self, "current_generation", 0))
+
     def _run_model_inference(self, prefix_source, model_temp, num_replace, prefix_counts):
         """Run model inference loop and return replaced indices."""
         ri, reps = [], 0
         try:
             import torch
-            if torch.cuda.is_available(): torch.cuda.synchronize()
-        except Exception: pass
+
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        except Exception:
+            pass
         for pc in prefix_counts:
-            if reps >= num_replace: break
+            if reps >= num_replace:
+                break
             try:
                 comp = None
                 for att in range(1, 3):
                     try:
-                        comp = self._prefix_generator.complete(prefix_source, prefix_count=pc, num_samples=min(3, max(1, num_replace // len(prefix_counts))), temperature=model_temp, top_k=40, top_p=0.9, repetition_penalty=1.1)
+                        comp = self._prefix_generator.complete(
+                            prefix_source,
+                            prefix_count=pc,
+                            num_samples=min(3, max(1, num_replace // len(prefix_counts))),
+                            temperature=model_temp,
+                            top_k=40,
+                            top_p=0.9,
+                            repetition_penalty=1.1,
+                        )
                         break
                     except RuntimeError:
                         try:
                             import torch
-                            if torch.cuda.is_available(): torch.cuda.synchronize(), torch.cuda.empty_cache()
-                        except Exception: pass
-                        if att == 2: comp = None
-                if not comp: continue
+
+                            if torch.cuda.is_available():
+                                torch.cuda.synchronize(), torch.cuda.empty_cache()
+                        except Exception:
+                            pass
+                        if att == 2:
+                            comp = None
+                if not comp:
+                    continue
                 for ph in comp:
-                    if reps >= num_replace: break
+                    if reps >= num_replace:
+                        break
                     pi = [int(w, 16) for w in ph]
                     if len(pi) >= 2:
                         idx = self.rng.randint(0, len(self._last_challengers) - 1)
                         self._last_challengers[idx] = pi
                         ri.append(idx)
                         reps += 1
-            except Exception: continue
+            except Exception:
+                continue
         return ri
+
     def _replace_with_model_guided(self, challengers: list[list[int]], model_ratio: float = 0.2) -> list[int]:
         """Replace a fraction of challengers with model-guided completions."""
         replaced_indices = []
@@ -2090,7 +2458,7 @@ class EvolutionEngine:
             ref = reference_solution(self.champion_level)
             if ref and len(ref) > 0:
                 encoded = [w for inst in ref if (w := _encode_inst(inst)) is not None]
-                ref_prefix = encoded[:min(4, len(encoded))]
+                ref_prefix = encoded[: min(4, len(encoded))]
                 if len(ref_prefix) >= 1:
                     ref_prefix_hex = [f"0x{w:08x}" for w in ref_prefix]
         except Exception:
@@ -2100,6 +2468,7 @@ class EvolutionEngine:
         if self._prefix_generator is None:
             try:
                 from prefix_generator import PrefixGenerator
+
                 ckpt = self._seed_model_path or ""
                 if not ckpt or not os.path.isfile(ckpt):
                     base = os.path.dirname(os.path.abspath(__file__))
@@ -2121,8 +2490,11 @@ class EvolutionEngine:
             prefix_counts = [6] if stalled >= 50 else [4] if stalled >= 20 else [2]
         replaced_indices = self._run_model_inference(prefix_source, model_temp, num_replace, prefix_counts)
         if replaced_indices:
-            self._log(f"[ModelGuided] Replaced {len(replaced_indices)}/{num_replace} (prefix: {source_name}, L={champion_level}, temp={model_temp:.1f})")
+            self._log(
+                f"[ModelGuided] Replaced {len(replaced_indices)}/{num_replace} (prefix: {source_name}, L={champion_level}, temp={model_temp:.1f})"
+            )
         return replaced_indices
+
     def _try_qd_crossover(self) -> list[int] | None:
         """Attempt to breed a hybrid program from the QD archive.
 
@@ -2403,7 +2775,9 @@ class EvolutionEngine:
         else:
             self._secondary_task_results_per_program = None
         try:
-            batch_fitnesses, _ = self.batch_compute_fitness(challengers, results, eval_budget=stage1_budget, raw_only=raw_only)
+            batch_fitnesses, _ = self.batch_compute_fitness(
+                challengers, results, eval_budget=stage1_budget, raw_only=raw_only
+            )
             for idx in range(n_challengers):
                 scored[idx] = (batch_fitnesses[idx], idx, challengers[idx], results[idx])
                 fitness_cache[idx] = batch_fitnesses[idx]
@@ -2431,6 +2805,7 @@ class EvolutionEngine:
     def _tournament_select(self, scored, elite_size, n_scored):
         """Fill remaining elite slots via adaptive tournament selection."""
         import heapq
+
         rng = self.rng
         base_tourney = self.config.tournament_size
         div = self._current_diversity
@@ -2454,9 +2829,11 @@ class EvolutionEngine:
                     best_f = cf
                     best_i = ci
             yield _scored_get(best_i), best_i
+
     def _select_elite(self, challengers, results):
         """Select elite challengers for detailed evaluation."""
         import heapq
+
         stage1_budget = self.config.eval_budget // 2
         n_challengers = len(challengers)
         raw_only = self.champion_level >= self.config.max_level - 1
@@ -2471,7 +2848,11 @@ class EvolutionEngine:
         seen_indices = set(elite_indices)
         n_scored = len(scored)
         for (_, _, win_prog, _), best_i in self._tournament_select(scored, elite_size, n_scored):
-            fp = (len(win_prog) << 32) ^ (win_prog[0] if win_prog else 0) ^ ((win_prog[-1] << 16) if len(win_prog) > 1 else 0)
+            fp = (
+                (len(win_prog) << 32)
+                ^ (win_prog[0] if win_prog else 0)
+                ^ ((win_prog[-1] << 16) if len(win_prog) > 1 else 0)
+            )
             if fp not in seen_fps and best_i not in seen_indices:
                 seen_fps.add(fp)
                 seen_indices.add(best_i)
@@ -2479,6 +2860,7 @@ class EvolutionEngine:
                 elite_fits.append(scored[best_i][0])
                 elite_indices.append(best_i)
         return elites, elite_fits, elite_indices
+
     def _find_best_challenger(self, elite, detailed_results, stage1_fitnesses):
         """Find the best challenger that beats the champion. Returns (best_fitness, best_program, best_trace, best_raw_score, improved)."""
         best_fitness = self.champion_fitness
@@ -2489,9 +2871,8 @@ class EvolutionEngine:
         _compute = self._compute_fitness
         _use_sec = self.config.use_secondary_tasks
         for idx, (prog, trace) in enumerate(zip(elite, detailed_results, strict=False)):
-            if stage1_fitnesses and idx < len(stage1_fitnesses):
-                if stage1_fitnesses[idx] < best_fitness:
-                    continue
+            if stage1_fitnesses and idx < len(stage1_fitnesses) and stage1_fitnesses[idx] < best_fitness:
+                continue
             if _use_sec:
                 self._secondary_task_results = self._evaluate_secondary_tasks(prog)
             else:
@@ -2522,11 +2903,22 @@ class EvolutionEngine:
                 self._champion_partial_verify = 0.0
                 return False
         qd = getattr(self, "qd_archive", None)
-        if qd is not None and _HAS_QD and self.champion is not None and self.champion_trace is not None and not self._champion_changed_since_last_qd:
+        if (
+            qd is not None
+            and _HAS_QD
+            and self.champion is not None
+            and self.champion_trace is not None
+            and not self._champion_changed_since_last_qd
+        ):
             try:
                 old_desc = compute_qd_axes(self.champion, self.champion_trace)
                 if old_desc is not None:
-                    qd.add_solution(descriptor=old_desc, fitness=self.champion_fitness, program=self.champion, trace=self.champion_trace)
+                    qd.add_solution(
+                        descriptor=old_desc,
+                        fitness=self.champion_fitness,
+                        program=self.champion,
+                        trace=self.champion_trace,
+                    )
             except (TypeError, ValueError, RuntimeError):
                 pass
         self.champion = trim_dead_code(list(best_program))
@@ -2566,9 +2958,12 @@ class EvolutionEngine:
         for idx, prog in enumerate(elite):
             if idx < n_f and stage1_fitnesses[idx] >= quality_threshold:
                 hof.add(prog, stage1_fitnesses[idx], level, generation=gen)
+
     def _update_champion(self, elite, detailed_results, stage1_fitnesses=None):
         """Update champion if any elite challenger has higher fitness."""
-        best_fitness, best_program, best_trace, best_raw_score, improved = self._find_best_challenger(elite, detailed_results, stage1_fitnesses)
+        best_fitness, best_program, best_trace, best_raw_score, improved = self._find_best_challenger(
+            elite, detailed_results, stage1_fitnesses
+        )
         if improved and best_program is not None:
             self._verify_and_replace_champion(best_program, best_trace, best_raw_score, best_fitness)
             improved = self.champion_fitness == best_fitness
@@ -2578,6 +2973,7 @@ class EvolutionEngine:
         if len(self.best_fitness_history) > max_hist:
             self.best_fitness_history = self.best_fitness_history[-max_hist:]
         return improved
+
     def _analyze_trace(self) -> TraceAnalysis | None:
         """Analyze the current champion trace against expected output."""
         if self.champion_trace is None or self.task_instance is None:
@@ -2756,21 +3152,28 @@ class EvolutionEngine:
         if not self.config.level_circuit_breaker_enabled:
             return
         _record_level_circuit_outcome_fn(self._level_circuit_stats, level, had_success)
+
     def _check_level_circuit_breaker(self, level: int) -> bool:
         """Check if a level should be disabled by the circuit breaker."""
         if not self.config.level_circuit_breaker_enabled:
             return False
         return _check_level_circuit_breaker_fn(
-            self._level_circuit_stats, self._disabled_levels, level,
+            self._level_circuit_stats,
+            self._disabled_levels,
+            level,
             self.config.level_circuit_breaker_threshold,
-            self.config.level_circuit_breaker_enabled, self._log,
+            self.config.level_circuit_breaker_enabled,
+            self._log,
         )
+
     def _is_level_disabled(self, level: int) -> bool:
         """Check if a level has been auto-disabled by the circuit breaker."""
         return _is_level_disabled_fn(self._disabled_levels, level)
+
     def _record_cycle_level_outcome(self) -> None:
         """Record the current cycle's outcome for the circuit breaker."""
         _record_cycle_level_outcome_fn(self)
+
     def get_disabled_levels(self) -> frozenset[int]:
         """Return the set of levels disabled by the circuit breaker."""
         return frozenset(self._disabled_levels)
@@ -2805,11 +3208,11 @@ class EvolutionEngine:
                 continue
             if len(prog) < 3:
                 continue
-            _trace_instr_count = trace.get('instructions_count', 0)
+            _trace_instr_count = trace.get("instructions_count", 0)
             if _trace_instr_count <= 0:
                 rejected_count += 1
                 continue
-            if _trace_instr_count > 0 and hasattr(self, '_saved_size_counts'):
+            if _trace_instr_count > 0 and hasattr(self, "_saved_size_counts"):
                 _size_bucket = (_trace_instr_count // 5) * 5
                 _total_saved = sum(self._saved_size_counts.values()) if self._saved_size_counts else 0
                 if _total_saved > 20:
@@ -2856,7 +3259,9 @@ class EvolutionEngine:
                 _max_logit = max(_logits)
                 _exp_logits = [math.exp(l - _max_logit) for l in _logits]
                 _sum_exp = sum(_exp_logits)
-                _fitness_weights = [e / _sum_exp for e in _exp_logits] if _sum_exp > 0 else [1.0 / len(_logits)] * len(_logits)
+                _fitness_weights = (
+                    [e / _sum_exp for e in _exp_logits] if _sum_exp > 0 else [1.0 / len(_logits)] * len(_logits)
+                )
             else:
                 _fitness_weights = [1.0 / len(_fits)] * len(_fits)
             _level_counter = {}
@@ -2873,10 +3278,14 @@ class EvolutionEngine:
 
     def _apply_novelty_weights(self, candidates, weights, jsonl_path):
         """Phase 6: Apply novelty weighting to training examples."""
-        if not candidates: return weights, False
-        if not hasattr(self, '_novelty_anchors'): self._novelty_anchors, self._novelty_anchors_file_size = [], 0
-        try: cfs = os.path.getsize(jsonl_path) if os.path.isfile(jsonl_path) else 0
-        except OSError: cfs = 0
+        if not candidates:
+            return weights, False
+        if not hasattr(self, "_novelty_anchors"):
+            self._novelty_anchors, self._novelty_anchors_file_size = [], 0
+        try:
+            cfs = os.path.getsize(jsonl_path) if os.path.isfile(jsonl_path) else 0
+        except OSError:
+            cfs = 0
         if cfs > self._novelty_anchors_file_size or not self._novelty_anchors:
             na = []
             try:
@@ -2888,27 +3297,35 @@ class EvolutionEngine:
                                 ph = e.get("champion_program", [])
                                 if ph:
                                     pw = [int(h, 16) for h in ph]
-                                    if len(pw) >= 3: na.append(pw)
-                                    if len(na) >= 200: break
-                            except (json.JSONDecodeError, ValueError): continue
-            except Exception: pass
+                                    if len(pw) >= 3:
+                                        na.append(pw)
+                                    if len(na) >= 200:
+                                        break
+                            except (json.JSONDecodeError, ValueError):
+                                continue
+            except Exception:
+                pass
             self._novelty_anchors, self._novelty_anchors_file_size = na, cfs
-        if not self._novelty_anchors: return weights, False
+        if not self._novelty_anchors:
+            return weights, False
         ns = []
         for prog, *_ in candidates:
-            md = float('inf')
+            md = float("inf")
             for a in self._novelty_anchors:
-                xb = sum(bin(prog[j] ^ a[j]).count('1') for j in range(min(len(prog), len(a))))
+                xb = sum((prog[j] ^ a[j]).bit_count() for j in range(min(len(prog), len(a))))
                 tb = (xb + abs(len(prog) - len(a)) * 8) / max(1, len(prog) + len(a))
-                if tb < md: md = tb
-            ns.append(md if md != float('inf') else 0.5)
+                md = min(md, tb)
+            ns.append(md if md != float("inf") else 0.5)
         mx = max(ns) if ns else 1.0
         nw = [max(0.1, math.sqrt(s / mx)) if mx > 1e-6 else 1.0 for s in ns]
         if weights is not None:
-            for i in range(len(weights)): weights[i] *= nw[i]
+            for i in range(len(weights)):
+                weights[i] *= nw[i]
             ws = sum(weights)
-            if ws > 0: weights = [w / ws for w in weights]
+            if ws > 0:
+                weights = [w / ws for w in weights]
         return weights, True
+
     def _write_recurrent_examples(self, candidates, weights, level_data, jsonl_path):
         """Phase 2: Write training examples with fitness+diversity+novelty weights."""
         saved_any = False
@@ -2916,12 +3333,18 @@ class EvolutionEngine:
             solved_level = level_data[i][0] if level_data else self.champion_level
             task_score = level_data[i][1] if level_data else 0.0
             example = {
-                "level": solved_level, "generation": self.current_generation,
-                "fitness": challenger_fitness, "champion_sha256": sha256,
-                "champion_words": len(prog), "champion_program": [hex(w) for w in prog],
-                "trace_status": trace.get("status", ""), "trace_instr_count": trace.get("instructions_count", 0),
-                "stalled_count": self.generations_stalled, "task_score": task_score,
-                "timestamp": time.time(), "trace_quality_score": min(1.0, max(0.0, challenger_fitness / 100.0)),
+                "level": solved_level,
+                "generation": self.current_generation,
+                "fitness": challenger_fitness,
+                "champion_sha256": sha256,
+                "champion_words": len(prog),
+                "champion_program": [hex(w) for w in prog],
+                "trace_status": trace.get("status", ""),
+                "trace_instr_count": trace.get("instructions_count", 0),
+                "stalled_count": self.generations_stalled,
+                "task_score": task_score,
+                "timestamp": time.time(),
+                "trace_quality_score": min(1.0, max(0.0, challenger_fitness / 100.0)),
                 "training_weight": weights[i] if weights else 1.0,
             }
             self._saved_sha256s[sha256] = None
@@ -2933,6 +3356,7 @@ class EvolutionEngine:
             self.recurrent_examples_count += 1
             saved_any = True
         return saved_any
+
     def _try_recurrent_feedback(self) -> bool:
         """Save model-generated programs that execute successfully to training data."""
         if not self._last_challengers:
@@ -2955,20 +3379,27 @@ class EvolutionEngine:
                                 self._saved_sha256s[_e["champion_sha256"]] = None
                 except Exception:
                     pass
-        if not hasattr(self, '_saved_size_counts'):
+        if not hasattr(self, "_saved_size_counts"):
             self._saved_size_counts = {}
         fitnesses = self._last_challenger_fitnesses
         n_fitnesses = len(fitnesses)
-        _candidates, rejected_count, _levels, _verify_levels_sorted = self._collect_recurrent_candidates(fitnesses, n_fitnesses)
-        _level_data, _weights, _n_levels_found = self._compute_level_weights(_candidates, _levels, _verify_levels_sorted)
+        _candidates, rejected_count, _levels, _verify_levels_sorted = self._collect_recurrent_candidates(
+            fitnesses, n_fitnesses
+        )
+        _level_data, _weights, _n_levels_found = self._compute_level_weights(
+            _candidates, _levels, _verify_levels_sorted
+        )
         _weights, _novelty_weight_applied = self._apply_novelty_weights(_candidates, _weights, jsonl_path)
         saved_any = self._write_recurrent_examples(_candidates, _weights, _level_data, jsonl_path)
         if saved_any:
-            self._log(f"Recurrent feedback saved ({self.recurrent_examples_count} total, {len(self._saved_sha256s)} unique, novelty={_novelty_weight_applied}, levels={_n_levels_found})")
+            self._log(
+                f"Recurrent feedback saved ({self.recurrent_examples_count} total, {len(self._saved_sha256s)} unique, novelty={_novelty_weight_applied}, levels={_n_levels_found})"
+            )
         if rejected_count > 0:
             self._log(f"Rejected {rejected_count} low-quality traces")
         self._evict_recurrent_buffer(jsonl_path)
         return self.recurrent_examples_count >= 50
+
     def _evict_recurrent_buffer(self, jsonl_path: str) -> None:
         """Evict lowest-fitness traces when recurrent buffer exceeds MAX_RECURRENT_ENTRIES.
 
@@ -3204,10 +3635,11 @@ class EvolutionEngine:
     def _count_backward_branches(program: list[int]) -> int:
         """Count backward branches (loop structures) in RV32I bytecode."""
         return _count_backward_branches_fn(program)
+
     def get_champion_program_analysis(self) -> dict:
         """Analyze the current champion program structure."""
         if self.champion is None:
-            return {'exists': False}
+            return {"exists": False}
         program = self.champion
         backward_branches = self._count_backward_branches(program)
         n_ops = len(program)
@@ -3217,12 +3649,12 @@ class EvolutionEngine:
             if isinstance(word, int):
                 opcodes.add(word & 0x7F)
         return {
-            'exists': True,
-            'word_count': n_ops,
-            'unique_opcodes': len(opcodes),
-            'backward_branches': backward_branches,
-            'has_ebreak': any(isinstance(w, int) and w == 0x00100073 for w in program),
-            'estimated_complexity': 'simple' if n_ops <= 5 else 'moderate' if n_ops <= 15 else 'complex',
+            "exists": True,
+            "word_count": n_ops,
+            "unique_opcodes": len(opcodes),
+            "backward_branches": backward_branches,
+            "has_ebreak": any(isinstance(w, int) and w == 0x00100073 for w in program),
+            "estimated_complexity": "simple" if n_ops <= 5 else "moderate" if n_ops <= 15 else "complex",
         }
 
     def get_champion_summary(self) -> str:
@@ -3269,44 +3701,44 @@ class EvolutionEngine:
 
         return {
             # Champion state
-            'champion_level': self.champion_level,
-            'champion_fitness': self.champion_fitness,
-            'champion_words': len(self.champion) if self.champion else 0,
-            'champion_verified': getattr(self, '_champion_verified', False),
-            'generations_stalled': self.generations_stalled,
-            'current_generation': self.current_generation,
+            "champion_level": self.champion_level,
+            "champion_fitness": self.champion_fitness,
+            "champion_words": len(self.champion) if self.champion else 0,
+            "champion_verified": getattr(self, "_champion_verified", False),
+            "generations_stalled": self.generations_stalled,
+            "current_generation": self.current_generation,
             # Archive sizes
-            'novelty_archive_size': novelty_size,
-            'qd_archive_size': qd_size,
-            'strategy_archive_records': strategy_records,
-            'hall_of_fame_size': len(self._hall_of_fame._heap),
+            "novelty_archive_size": novelty_size,
+            "qd_archive_size": qd_size,
+            "strategy_archive_records": strategy_records,
+            "hall_of_fame_size": len(self._hall_of_fame._heap),
             # Strategy diversity
-            'strategy_diversity': strategy_div,
+            "strategy_diversity": strategy_div,
             # Training data
-            'recurrent_examples': self.recurrent_examples_count,
+            "recurrent_examples": self.recurrent_examples_count,
             # Fitness velocity
-            'fitness_velocity': getattr(self, '_fitness_velocity', 0.0),
-            'fitness_momentum': getattr(self, '_fitness_momentum', 0.0),
+            "fitness_velocity": getattr(self, "_fitness_velocity", 0.0),
+            "fitness_momentum": getattr(self, "_fitness_momentum", 0.0),
             # Mutation stats
-            'mutation_rate': self.config.mutation_rate,
-            'population_size': self.config.population_size,
-            'elite_ratio': self.config.elite_ratio,
+            "mutation_rate": self.config.mutation_rate,
+            "population_size": self.config.population_size,
+            "elite_ratio": self.config.elite_ratio,
         }
 
     def get_performance_metrics(self) -> dict:
         """Return performance metrics for the current run."""
         return {
-            'current_generation': self.current_generation,
-            'population_size': self.config.population_size,
-            'elite_ratio': self.config.elite_ratio,
-            'eval_budget': self.config.eval_budget,
-            'model_guided_ratio': self._get_model_guided_ratio(),
-            'mutation_rate': self.config.mutation_rate,
-            'champion_words': len(self.champion) if self.champion else 0,
-            'novelty_weight': self.config.novelty_weight,
-            'qd_bonus_weight': self.config.qd_bonus_weight,
-            'total_recurrent_examples': self.recurrent_examples_count,
-            'hof_size': len(self._hall_of_fame._heap),
+            "current_generation": self.current_generation,
+            "population_size": self.config.population_size,
+            "elite_ratio": self.config.elite_ratio,
+            "eval_budget": self.config.eval_budget,
+            "model_guided_ratio": self._get_model_guided_ratio(),
+            "mutation_rate": self.config.mutation_rate,
+            "champion_words": len(self.champion) if self.champion else 0,
+            "novelty_weight": self.config.novelty_weight,
+            "qd_bonus_weight": self.config.qd_bonus_weight,
+            "total_recurrent_examples": self.recurrent_examples_count,
+            "hof_size": len(self._hall_of_fame._heap),
         }
 
     def get_archive_summary(self) -> dict:
@@ -3315,80 +3747,82 @@ class EvolutionEngine:
         qd = self.qd_archive
         sa = self.strategy_archive
         return {
-            'novelty': {
-                'size': novelty.size if novelty else 0,
-                'threshold': novelty.novelty_threshold if novelty else 0,
-                'diversity': novelty.get_diversity_score() if novelty else 0.0,
+            "novelty": {
+                "size": novelty.size if novelty else 0,
+                "threshold": novelty.novelty_threshold if novelty else 0,
+                "diversity": novelty.get_diversity_score() if novelty else 0.0,
             },
-            'qd': {
-                'coverage': qd.coverage() if qd else 0.0,
-                'size': qd.size if qd else 0,
-                'cells': qd.num_bins * qd.num_bins if qd else 0,
-                'fitness_dist': qd.get_fitness_distribution() if qd else {},
+            "qd": {
+                "coverage": qd.coverage() if qd else 0.0,
+                "size": qd.size if qd else 0,
+                "cells": qd.num_bins * qd.num_bins if qd else 0,
+                "fitness_dist": qd.get_fitness_distribution() if qd else {},
             },
-            'strategy': {
-                'total_records': sa.total_records() if sa else 0,
-                'diversity': sa.get_strategy_diversity(self.champion_level) if sa else 0.0,
+            "strategy": {
+                "total_records": sa.total_records() if sa else 0,
+                "diversity": sa.get_strategy_diversity(self.champion_level) if sa else 0.0,
             },
-            'hall_of_fame': len(self._hall_of_fame._heap),
+            "hall_of_fame": len(self._hall_of_fame._heap),
         }
 
     def get_training_summary(self) -> dict:
         """Return training-relevant metrics for the retrain pipeline."""
         return {
-            'recurrent_examples': self.recurrent_examples_count,
-            'champion_fitness': self.champion_fitness,
-            'champion_level': self.champion_level,
-            'generations_stalled': self.generations_stalled,
-            'fitness_velocity': getattr(self, '_fitness_velocity', 0.0),
-            'champion_verified': getattr(self, '_champion_verified', False),
-            'champion_verify_score': getattr(self, '_champion_verify_score', 0.0),
-            'strategy_diversity': self.strategy_archive.get_strategy_diversity(self.champion_level) if self.strategy_archive else 0.0,
-            'novelty_diversity': self.novelty_archive.get_diversity_score() if self.novelty_archive else 0.0,
-            'qd_coverage': self.qd_archive.coverage() if self.qd_archive else 0.0,
+            "recurrent_examples": self.recurrent_examples_count,
+            "champion_fitness": self.champion_fitness,
+            "champion_level": self.champion_level,
+            "generations_stalled": self.generations_stalled,
+            "fitness_velocity": getattr(self, "_fitness_velocity", 0.0),
+            "champion_verified": getattr(self, "_champion_verified", False),
+            "champion_verify_score": getattr(self, "_champion_verify_score", 0.0),
+            "strategy_diversity": (
+                self.strategy_archive.get_strategy_diversity(self.champion_level) if self.strategy_archive else 0.0
+            ),
+            "novelty_diversity": self.novelty_archive.get_diversity_score() if self.novelty_archive else 0.0,
+            "qd_coverage": self.qd_archive.coverage() if self.qd_archive else 0.0,
         }
 
     def get_run_summary(self) -> dict:
         """Single consolidated summary of the entire run state."""
         return {
-            'diagnostics': self.get_run_diagnostics(),
-            'performance': self.get_performance_metrics(),
-            'training': self.get_training_summary(),
-            'archives': self.get_archive_summary(),
-            'champion_summary': self.get_champion_summary(),
+            "diagnostics": self.get_run_diagnostics(),
+            "performance": self.get_performance_metrics(),
+            "training": self.get_training_summary(),
+            "archives": self.get_archive_summary(),
+            "champion_summary": self.get_champion_summary(),
         }
 
     def get_evolution_state(self) -> dict:
         """Full evolution state for serialization/debugging."""
         return {
-            'champion': self.get_champion_program_analysis(),
-            'run_summary': self.get_run_summary(),
-            'state': {
-                'current_generation': self.current_generation,
-                'champion_level': self.champion_level,
-                'champion_fitness': self.champion_fitness,
-                'generations_stalled': self.generations_stalled,
+            "champion": self.get_champion_program_analysis(),
+            "run_summary": self.get_run_summary(),
+            "state": {
+                "current_generation": self.current_generation,
+                "champion_level": self.champion_level,
+                "champion_fitness": self.champion_fitness,
+                "generations_stalled": self.generations_stalled,
             },
-            'config': {
-                'max_generations': self.config.max_generations,
-                'population_size': self.config.population_size,
-                'elite_ratio': self.config.elite_ratio,
-                'mutation_rate': self.config.mutation_rate,
-                'auto_curriculum': self.config.auto_curriculum,
-                'use_gpu': self.config.use_gpu,
+            "config": {
+                "max_generations": self.config.max_generations,
+                "population_size": self.config.population_size,
+                "elite_ratio": self.config.elite_ratio,
+                "mutation_rate": self.config.mutation_rate,
+                "auto_curriculum": self.config.auto_curriculum,
+                "use_gpu": self.config.use_gpu,
             },
         }
 
     def get_comprehensive_state(self) -> dict:
         """All-in-one state snapshot for dashboards, export, and debugging."""
         return {
-            'evolution': self.get_evolution_state(),
-            'champion_program': self.get_champion_program_analysis(),
-            'run_diagnostics': self.get_run_diagnostics(),
-            'performance': self.get_performance_metrics(),
-            'training': self.get_training_summary(),
-            'archives': self.get_archive_summary(),
-            'champion_summary': self.get_champion_summary(),
+            "evolution": self.get_evolution_state(),
+            "champion_program": self.get_champion_program_analysis(),
+            "run_diagnostics": self.get_run_diagnostics(),
+            "performance": self.get_performance_metrics(),
+            "training": self.get_training_summary(),
+            "archives": self.get_archive_summary(),
+            "champion_summary": self.get_champion_summary(),
         }
 
     def log_comprehensive_diagnostics(self) -> None:
@@ -3396,32 +3830,36 @@ class EvolutionEngine:
         state = self.get_comprehensive_state()
         evo = state.get("evolution", {})
         evo_state = evo.get("state", {})
-        self._log('=== Comprehensive Diagnostics ===')
-        self._log(f'  Champion: {self.get_champion_summary()}')
+        self._log("=== Comprehensive Diagnostics ===")
+        self._log(f"  Champion: {self.get_champion_summary()}")
         self._log(f'  Generation: {evo_state.get("current_generation", 0)}')
         self._log(f'  Fitness velocity: {evo_state.get("fitness_velocity", 0):.4f}')
         archives = state.get("archives", {})
         novelty = archives.get("novelty", {})
         qd = archives.get("qd", {})
         strategy = archives.get("strategy", {})
-        self._log(f'  Archives: novelty={novelty.get("size", 0)}, '
-                  f'qd_coverage={qd.get("coverage", 0.0):.2%}')
+        self._log(f'  Archives: novelty={novelty.get("size", 0)}, ' f'qd_coverage={qd.get("coverage", 0.0):.2%}')
         self._log(f'  Strategy diversity: {strategy.get("diversity", 0.0):.3f}')
         perf = state.get("performance", {})
-        self._log(f'  Performance: mut_rate={perf.get("mutation_rate", 0.0):.2f}, '
-                  f'pop={perf.get("population_size", 0)}')
-        self._log('=== End Diagnostics ===')
+        self._log(
+            f'  Performance: mut_rate={perf.get("mutation_rate", 0.0):.2f}, ' f'pop={perf.get("population_size", 0)}'
+        )
+        self._log("=== End Diagnostics ===")
 
     def log_diagnostics(self) -> None:
         """Log run diagnostics in a readable format."""
         diag = self.get_run_diagnostics()
         lines = [
             "=== Run Diagnostics ===",
-            f"  Champion: L{diag['champion_level']} fitness={diag['champion_fitness']:.2f} "
-            f"words={diag['champion_words']} verified={diag['champion_verified']}",
+            (
+                f"  Champion: L{diag['champion_level']} fitness={diag['champion_fitness']:.2f} "
+                f"words={diag['champion_words']} verified={diag['champion_verified']}"
+            ),
             f"  Generation: {diag['current_generation']} stalled={diag['generations_stalled']}",
-            f"  Archives: novelty={diag['novelty_archive_size']} qd={diag['qd_archive_size']} "
-            f"strategy={diag['strategy_archive_records']} hof={diag['hall_of_fame_size']}",
+            (
+                f"  Archives: novelty={diag['novelty_archive_size']} qd={diag['qd_archive_size']} "
+                f"strategy={diag['strategy_archive_records']} hof={diag['hall_of_fame_size']}"
+            ),
             f"  Strategy diversity: {diag['strategy_diversity']:.3f}",
             f"  Recurrent examples: {diag['recurrent_examples']}",
             f"  Fitness velocity: {diag['fitness_velocity']:.4f} momentum={diag['fitness_momentum']:.4f}",
@@ -3436,32 +3874,32 @@ class EvolutionEngine:
         and configuration for use in Jupyter notebooks or dashboards.
         """
         state = {
-            'timestamp': __import__('time').time(),
-            'generation': self.current_generation,
-            'champion': {
-                'level': self.champion_level,
-                'fitness': self.champion_fitness,
-                'words': len(self.champion) if self.champion else 0,
-                'program_hex': [hex(w) for w in (self.champion or [])],
-                'verified': getattr(self, '_champion_verified', False),
+            "timestamp": __import__("time").time(),
+            "generation": self.current_generation,
+            "champion": {
+                "level": self.champion_level,
+                "fitness": self.champion_fitness,
+                "words": len(self.champion) if self.champion else 0,
+                "program_hex": [hex(w) for w in (self.champion or [])],
+                "verified": getattr(self, "_champion_verified", False),
             },
-            'config': {
-                'population_size': self.config.population_size,
-                'elite_ratio': self.config.elite_ratio,
-                'mutation_rate': self.config.mutation_rate,
-                'novelty_weight': self.config.novelty_weight,
+            "config": {
+                "population_size": self.config.population_size,
+                "elite_ratio": self.config.elite_ratio,
+                "mutation_rate": self.config.mutation_rate,
+                "novelty_weight": self.config.novelty_weight,
             },
-            'archives': {
-                'novelty_size': self.novelty_archive.size if self.novelty_archive else 0,
-                'qd_occupied': self.qd_archive.size if self.qd_archive else 0,
-                'qd_coverage': self.qd_archive.coverage() if self.qd_archive else 0.0,
-                'hof_size': len(self._hall_of_fame._heap),
+            "archives": {
+                "novelty_size": self.novelty_archive.size if self.novelty_archive else 0,
+                "qd_occupied": self.qd_archive.size if self.qd_archive else 0,
+                "qd_coverage": self.qd_archive.coverage() if self.qd_archive else 0.0,
+                "hof_size": len(self._hall_of_fame._heap),
             },
-            'stall': {
-                'generations_stalled': self.generations_stalled,
-                'fitness_velocity': getattr(self, '_fitness_velocity', 0.0),
+            "stall": {
+                "generations_stalled": self.generations_stalled,
+                "fitness_velocity": getattr(self, "_fitness_velocity", 0.0),
             },
-            'diagnostics': self.get_run_diagnostics(),
+            "diagnostics": self.get_run_diagnostics(),
         }
         return state
 
@@ -3470,7 +3908,8 @@ class EvolutionEngine:
         try:
             state = self.get_comprehensive_state()
             import json
-            with open(path, 'w') as f:
+
+            with open(path, "w") as f:
                 json.dump(state, f, indent=2, default=str)
             return True
         except Exception as e:
