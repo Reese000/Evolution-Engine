@@ -76,3 +76,22 @@ the two deterministic unit-test failures found during environment setup.
   --retrain-max-epochs 1`, CPU): cycle 1 recorded `retrained: true`,
   `val_loss=3.3071` (first non-null val_loss in the project's history).
   Full 3-cycle results recorded in multi_cycle_results.jsonl.
+
+### Follow-up: retrain epoch cap now bounds the L5+ boost
+- **run_multi_cycle.py**: `retrain_model()` hard-set `max_epochs=8` for L5+
+  champions, silently overriding a lower `--retrain-max-epochs`/config cap.
+  Once the champion reached L5+, every CPU retrain ran 8 epochs regardless,
+  making short retrains impossible (cycle 2 above stalled at ~8x cost).
+  Extracted `_effective_max_epochs(requested, best_level)`: L5+ still targets a
+  floor of 8 when unspecified, but an explicit requested cap is now an upper
+  bound that wins. Added `tests/test_retrain_epoch_cap.py` (7 tests; first
+  regression coverage for run_multi_cycle logic).
+- **Verification**: full suite 1408 passed / 0 failed. A clean full 3-cycle run
+  (`--cycles 3 --gens 20 --retrain-max-epochs 1`, CPU, fresh bootstrap
+  checkpoint) completed in ~9 min (exit 0) with the cap binding even at L10.
+  val_loss decreased every cycle -- compounding self-improvement:
+    - C1: L6  F=387.6  val=4.3185  Gate ACCEPT (best=inf)
+    - C2: L10 F=407.5  val=4.1193  Gate ACCEPT (best=4.3185, threshold=4.5344)
+    - C3: L10 F=412.2  val=3.8390  Gate ACCEPT (best=4.1193, threshold=4.3253)
+  The finite-threshold gate decisions (threshold = best * 1.05) confirm the
+  checkpoint_acceptance_tolerance fix operating in a live run.
