@@ -1298,33 +1298,42 @@ class EvolutionEngine:
             except ImportError:
                 pass
 
-        # Initialise task for current level
-        self._refresh_task_instance()
+        # Champion initialisation lazily opens the log handle via self._log().
+        # If any step here raises, close the handle before the exception
+        # propagates -- these errors are intentionally NOT converted into a
+        # partial summary (unlike errors inside the generation loop below),
+        # but the log handle must still be released to avoid fd leaks.
+        try:
+            # Initialise task for current level
+            self._refresh_task_instance()
 
-        # Generate initial champion
-        if self.champion is None:
-            self.champion = self._generate_initial_champion()
-            # R45: Validate champion before expensive evaluation
-            is_valid, reason = self.validate_program(self.champion)
-            if not is_valid:
-                self._log(f"  Initial champion invalid ({reason}), generating replacement")
-                for _retry in range(5):
-                    self.champion = self._generate_initial_champion()
-                    is_valid, reason = self.validate_program(self.champion)
-                    if is_valid:
-                        break
+            # Generate initial champion
+            if self.champion is None:
+                self.champion = self._generate_initial_champion()
+                # R45: Validate champion before expensive evaluation
+                is_valid, reason = self.validate_program(self.champion)
                 if not is_valid:
-                    self._log("  WARNING: Could not generate valid champion after 5 retries")
-            self.champion_trace = self._evaluate(self.champion)
-            if self.config.use_secondary_tasks:
-                self._secondary_task_results = self._evaluate_secondary_tasks(self.champion)
-            else:
-                self._secondary_task_results = None
-            self.champion_fitness = self._compute_fitness(self.champion, self.champion_trace)
-            # R50: Run verify() on initial champion (uses initial task instance)
-            verified, verify_score = self._verify_champion()
-            self._champion_verified = verified
-            self._champion_verify_score = verify_score
+                    self._log(f"  Initial champion invalid ({reason}), generating replacement")
+                    for _retry in range(5):
+                        self.champion = self._generate_initial_champion()
+                        is_valid, reason = self.validate_program(self.champion)
+                        if is_valid:
+                            break
+                    if not is_valid:
+                        self._log("  WARNING: Could not generate valid champion after 5 retries")
+                self.champion_trace = self._evaluate(self.champion)
+                if self.config.use_secondary_tasks:
+                    self._secondary_task_results = self._evaluate_secondary_tasks(self.champion)
+                else:
+                    self._secondary_task_results = None
+                self.champion_fitness = self._compute_fitness(self.champion, self.champion_trace)
+                # R50: Run verify() on initial champion (uses initial task instance)
+                verified, verify_score = self._verify_champion()
+                self._champion_verified = verified
+                self._champion_verify_score = verify_score
+        except Exception:
+            self._close_log_handle()
+            raise
 
         summary = {
             "generations_completed": 0,
