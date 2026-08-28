@@ -1981,6 +1981,24 @@ def main() -> None:
                 retrain_result = retrain_model(
                     cycle, checkpoint, config=merged_retrain_config, best_level=current_level
                 )
+                # Capture the effective retrain budget for decision-log telemetry.
+                # The requested cap (from CLI/config/MetaController) can differ from
+                # what actually runs once the L5+ floor/cap is applied, so record both.
+                _requested_epochs = (
+                    getattr(merged_retrain_config, "retrain_max_epochs", None)
+                    if merged_retrain_config is not None
+                    else None
+                )
+                retrain_result["requested_max_epochs"] = _requested_epochs
+                retrain_result["effective_max_epochs"] = _effective_max_epochs(_requested_epochs, current_level)
+                retrain_result["retrain_lr"] = (
+                    getattr(merged_retrain_config, "retrain_lr", None) if merged_retrain_config is not None else None
+                )
+                retrain_result["retrain_freeze_layers"] = (
+                    getattr(merged_retrain_config, "retrain_freeze_layers", None)
+                    if merged_retrain_config is not None
+                    else None
+                )
                 # Reset force-retrain timer on any retrain attempt
                 cycles_since_last_retrain = 0
                 # Track mtime for --skip-retrain-if-no-new-data
@@ -2009,6 +2027,8 @@ def main() -> None:
                         accepted = meta_controller.accept_checkpoint(val_loss, new_ck)
                         # v13: Persist val_loss in results for cross-cycle analysis
                         retrain_result["val_loss"] = val_loss
+                        # Record the gate outcome for the retrain-decision log.
+                        retrain_result["gate_accepted"] = accepted
                         if accepted:
                             log(f"  Cycle {cycle}: Checkpoint ACCEPTED (val_loss={val_loss:.4f})")
                             # v24 Pivot 5: Reset consecutive rejection counter on acceptance
@@ -2497,6 +2517,14 @@ def main() -> None:
                 "words": current_words,
                 "cycles_since_last_retrain": cycles_since_last_retrain,
                 "champion_traces": evo_result.get("champion_traces", 0),
+                # Effective vs requested retrain budget + gate outcome so the
+                # decision log reflects what actually ran (see _effective_max_epochs).
+                "requested_max_epochs": retrain_result.get("requested_max_epochs"),
+                "effective_max_epochs": retrain_result.get("effective_max_epochs"),
+                "retrain_lr": retrain_result.get("retrain_lr"),
+                "retrain_freeze_layers": retrain_result.get("retrain_freeze_layers"),
+                "val_loss": retrain_result.get("val_loss"),
+                "gate_accepted": retrain_result.get("gate_accepted"),
                 "timestamp": __import__("datetime").datetime.now().isoformat(),
             }
             _retrain_log_path = os.path.join(PROJECT_ROOT, "retrain_decisions.jsonl")

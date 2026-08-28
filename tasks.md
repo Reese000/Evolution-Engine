@@ -95,3 +95,22 @@ the two deterministic unit-test failures found during environment setup.
     - C3: L10 F=412.2  val=3.8390  Gate ACCEPT (best=4.1193, threshold=4.3253)
   The finite-threshold gate decisions (threshold = best * 1.05) confirm the
   checkpoint_acceptance_tolerance fix operating in a live run.
+
+### Follow-up: retrain-decision telemetry reflects the effective budget
+- **run_multi_cycle.py**: the existing `retrain_decisions.jsonl` record (audit
+  v2) logged the decision/reason but NOT the budget that actually ran or the
+  gate outcome, so it could not be used to audit the epoch-cap behaviour above.
+  Enriched each record with `requested_max_epochs`, `effective_max_epochs`
+  (via `_effective_max_epochs`), `retrain_lr`, `retrain_freeze_layers`,
+  `val_loss`, and `gate_accepted`. Values are captured on `retrain_result` at
+  the retrain call site / gating step so the record reflects what actually ran.
+- Inspection during this change also confirmed the L5+ auto-freeze skip
+  (retrain_model, best_level>=5) is intentional/documented behaviour, not a
+  bug, and the MetaController epoch line is necessarily a pre-evolution ceiling
+  suggestion (level is unknown at tune time); the effective value is logged at
+  retrain time and now recorded in the decision log.
+- **Verification**: full suite 1408 passed / 0 failed. A live 1-cycle retrain
+  produced a decision record with the new fields populated, e.g.:
+  `{cycle:1, retrained:true, requested_max_epochs:1, effective_max_epochs:1,
+  retrain_lr:0.0003, retrain_freeze_layers:0, val_loss:4.3517,
+  gate_accepted:true}`.
