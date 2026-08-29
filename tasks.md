@@ -266,3 +266,21 @@ longer horizon.
   Verified: stdout now parses cleanly (count=430), "[Train]" lines go to stderr.
 - Added `tests/test_augmentation_subprocess.py` (mirrors loop.py's json.loads
   contract). Full suite: 1487 passed / 0 failed.
+
+### Additional coverage + audit-item reconciliation
+- `tests/test_cron_run_10.py` (7 tests): find_latest_state resume selection
+  (highest cycle with archive_state; ignores malformed lines) + win_to_wsl.
+- Import-checked and compile-checked all top-level modules (no import/syntax
+  bugs); import-checked legacy v9_* scripts (clean).
+- Audit reconciliation from this session:
+  - MED-2 ("O(N^2) diversity computation"): already addressed --
+    `_compute_population_diversity` is O(N*M) with R37 early-termination +
+    bitset/array lookup; `_current_diversity` uses it. Not a live issue.
+  - MED-1 (~400 lines "dead" analysis utils): intentionally NOT deleted
+    (meaningful research code); covered where testable + documented the
+    forgetting-curve interface mismatch instead.
+  - HIGH-4 (untested modules): broadly addressed (barrier_tuner, cycle_state,
+    monitoring_alerts, metrics_export, dashboard, gpu sign-extend, cron_run_10,
+    decision-log helper, analysis utils, augmentation subprocess).
+  - HIGH-5 (benchmark constructor): already fixed; locked with tests.
+- Full suite: 1494 passed / 0 failed.
