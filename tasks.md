@@ -134,3 +134,43 @@ the two deterministic unit-test failures found during environment setup.
     C4 L10 val=3.7475 | C5 L10 val=3.6909 | C6 L10 val=3.6397
   Fitness saturates at L10/412.2 by C3 while the model keeps refining
   (val_loss keeps dropping); every checkpoint accepted at threshold=best*1.05.
+
+---
+
+## 2026-08-29 — Autonomous session: test-integrity coverage + long validation
+
+Focus: broaden regression coverage of previously-untested modules (audit
+HIGH-4) and validate that the retrain loop's improvement is sustained over a
+longer horizon.
+
+### New regression tests (8 files, +40 tests; suite 1420 -> 1460, 0 failing)
+- `tests/test_fitness_benchmark.py` -- verified audit HIGH-5 (benchmark
+  "wrong constructor call") is already fixed; locks the constructor + a full
+  tiny run so it can't silently regress.
+- `tests/test_val_loss_parser.py` -- edge cases for the gate's val_loss parser
+  (legacy `Val Loss:` format, min-across-formats, integer-no-match, malformed).
+- `tests/test_init_checkpoint.py` -- bootstrap structure + state_dict round-trip.
+- `tests/test_gpu_vm_sign_extend.py` -- `_sign_extend`/`_sign_extend32` (RV32I
+  immediate decoding / signed compares): precomputed + general-path widths,
+  masking, 32-bit boundaries.
+- `tests/test_dashboard_helpers.py` -- v11_dashboard pure helpers (fmt_time,
+  compute_metrics_trend, format_val_loss_trajectory, JSON readers).
+- `tests/test_cycle_state.py` -- checksummed resume-state persistence:
+  roundtrip, tamper-rejection -> defaults, missing/corrupt/old-version.
+- `tests/test_monitoring_alerts.py` -- alert trigger logic + rate limiting
+  (network-free).
+- (earlier this branch: `tests/test_retrain_epoch_cap.py`.)
+
+### Documentation
+- README: rewrote the "val_loss is null across all cycles" caveat (now
+  resolved + verified) and refreshed the verification table.
+
+### Long-horizon validation
+- 10-cycle CPU run (`--cycles 10 --gens 20 --retrain-max-epochs 1`) completed
+  cleanly with val_loss decreasing EVERY cycle -- no plateau/divergence:
+    4.4297 -> 4.0586 -> 3.8336 -> 3.7615 -> 3.7015 -> 3.647 -> 3.5959 ->
+    3.5706 -> 3.5342 -> 3.4699
+  Fitness saturates at L10 (~412.2) by C2 while the model keeps refining.
+  (An earlier 15-cycle attempt was stopped: running the pytest suite
+  concurrently starved the in-process retrain of CPU; long validations should
+  run without a concurrent full-suite run.)
