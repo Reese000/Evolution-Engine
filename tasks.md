@@ -174,3 +174,17 @@ longer horizon.
   (An earlier 15-cycle attempt was stopped: running the pytest suite
   concurrently starved the in-process retrain of CPU; long validations should
   run without a concurrent full-suite run.)
+
+### Bug fix: checkpoint dir escaped the repo when log_dir was unset
+- Found by running `benchmarks/verify_v13_features.py` (not in the pytest
+  suite): it was 4/5, not the README's 5/5 -- "Full Evolution Cycle" crashed
+  with `PermissionError: '/milestone1/checkpoints'`.
+- Root cause: `EvolutionEngine._checkpoint()` defaulted `cp_dir` to
+  `os.path.join(SCRIPT_DIR, "..", "milestone1", "checkpoints")`, a stale path
+  from when the module lived under `milestone2/`. With the module now at the
+  repo root, `".."` escaped to `<repo-parent>/milestone1` (e.g. `/milestone1`),
+  crashing any engine run without an explicit `log_dir`.
+- Fix: use the canonical `MILESTONE1_DIR`. `verify_v13_features.py` is now 5/5;
+  `verify_improvements.py` also passes. Added
+  `tests/test_checkpoint_dir_default.py`. Swept the codebase for other
+  `".."`+milestone path escapes -- none remain.
