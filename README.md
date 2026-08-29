@@ -160,7 +160,10 @@ python run_multi_cycle.py --resume           # Resume from last completed cycle
 python v11_dashboard.py --log engine_run.log # Launch live dashboard
 
 # Training
-python milestone1/train_model.py             # Train model on accumulated traces
+# Retrain normally runs in-process via the runners above. For standalone
+# training use train_model_engine.py; milestone1/train_model.py is an
+# import-only facade (no CLI) and does nothing if run directly.
+python milestone1/train_model_engine.py      # Standalone training CLI (see --help)
 python milestone1/build_recurrent_dataset.py # Build dataset from champion traces
 
 # Testing

@@ -300,3 +300,11 @@ longer horizon.
   Fixed by calling setup_logging() at the start of main(); verified
   `--cycles 0` now prints "FATAL: --cycles must be >= 1" and exits 1. Added
   `tests/test_run_multi_cycle_cli.py`. Full suite: 1497 passed / 0 failed.
+
+### Doc accuracy: training entry point
+- README + milestone1/CLAUDE.md documented `python milestone1/train_model.py`
+  as "Run training pipeline", but that file is an import-only facade (no CLI) --
+  running it does nothing. The real standalone trainer is
+  `milestone1/train_model_engine.py` (argparse; verified --help). Updated both
+  docs to point to it and clarify train_model.py is a library facade (retrain
+  normally runs in-process via the runners).
