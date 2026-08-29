@@ -238,3 +238,15 @@ longer horizon.
   the orchestrator's auto-termination works correctly. My epoch/gate enrichment
   now also appears in multi_cycle_results.jsonl (effective_max_epochs,
   gate_accepted). Full suite: 1473 passed / 0 failed.
+
+### More coverage for operational modules (previously zero tests)
+- `tests/test_barrier_tuner.py` (12 tests): BarrierTuner.should_terminate (the
+  auto-termination that ended the 20-cycle run), barrier detection (level
+  stall / fitness plateau / diversity collapse / val_loss regression), and
+  state save/load. This governs when unattended runs stop.
+- `tests/test_metrics_export.py` (1 integration test): starts the Prometheus
+  metrics HTTP server on an ephemeral port and verifies /metrics, /health,
+  /status, and 404 handling. Also smoke-verified the module runs end-to-end.
+- Documented a latent interface mismatch in unwired `compute_forgetting_curve`
+  (expects vm_farm.evaluate(...)->obj; real VMFarm has evaluate_single->dict).
+- Full suite: 1486 passed / 0 failed.
