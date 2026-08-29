@@ -319,3 +319,18 @@ longer horizon.
   process_running/pid/health). Added `tests/test_status_sh.py`.
 - Syntax-checked all shell scripts (bash -n): all OK.
 - Full suite: 1498 passed / 0 failed.
+
+### Documented-command / entry-point sweep (functional correctness)
+- Ran every documented command / lifecycle script to surface real breakage.
+  Verified working now: autonomous_runner --dry-run/--status, run_multi_cycle
+  (validation), status.sh --json/--alerts/--logs, monitor.sh --json,
+  deploy.sh --dry-run, start_autonomous.sh --dry-run, stop.sh,
+  meta_controller.py demo, v11_dashboard.py --oneshot, metrics_export server,
+  benchmarks/verify_v13_features.py (5/5) + verify_improvements.py,
+  train_model_engine.py --help, init_checkpoint.py.
+- deploy.sh / start_autonomous.sh --dry-run now also show the full config dump
+  (ripple benefit of the autonomous_runner setup_logging() fix).
+- Net: 7 real bugs fixed this window (checkpoint-gate tolerance, log-handle
+  leak, checkpoint-dir crash, augmentation stdout contract, autonomous_runner
+  silent output, run_multi_cycle silent output, status.sh --json), plus the
+  epoch-cap fix and doc corrections.
