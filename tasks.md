@@ -214,3 +214,16 @@ longer horizon.
 - Verified end-to-end: a 1-cycle autonomous_runner produced a fully-populated
   decision record (requested/effective_max_epochs, retrain_lr,
   retrain_freeze_layers, val_loss, gate_accepted).
+
+### Coverage for unwired retrain-analysis utilities
+- `run_multi_cycle.py` contains ~400 lines of deliberate, unwired analysis
+  utilities (compute_weight_delta, compute_forgetting_curve,
+  compute_memorization_generalization). NOT deleted -- they are meaningful
+  research code (retrain memorization/forgetting analysis), and removing them
+  would be an unrequested capability change. Instead added coverage where
+  cleanly testable (unwired code is where latent bugs hide, cf. the
+  fitness_benchmark constructor bug):
+  - `tests/test_compute_weight_delta.py` (5 tests): per-param L2 weight-delta
+    contract; confirmed correct, no latent bug.
+  - `tests/test_forgetting_curve.py` (4 tests): per-level re-scoring branches
+    (perfect/partial/crash) via a mock VM + patched task.
