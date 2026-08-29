@@ -188,3 +188,15 @@ longer horizon.
   `verify_improvements.py` also passes. Added
   `tests/test_checkpoint_dir_default.py`. Swept the codebase for other
   `".."`+milestone path escapes -- none remain.
+
+### Production-path validation: autonomous_runner.py end-to-end
+- `autonomous_runner.py` (the README's recommended entry point) previously
+  aborted with no seed checkpoint; with `init_checkpoint.py` it now runs.
+- 2-cycle CPU smoke (`--max-cycles 2`, gens=10, epochs=1): completed cleanly
+  (exit 0, 0 errors) and retrained both cycles with real, decreasing val_loss
+  (metrics/cycles.jsonl): C1 val=6.3827, C2 val=5.7041 (retrained=True).
+- Note: the enriched `retrain_decisions.jsonl` is written by
+  run_multi_cycle's main loop; autonomous_runner calls retrain_model directly
+  and instead records val_loss/retrained in metrics/cycles.jsonl +
+  progress_report.json. (Wiring the decision log into autonomous_runner is a
+  possible follow-up for observability parity.)
