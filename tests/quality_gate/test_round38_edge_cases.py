@@ -25,7 +25,6 @@ import sys
 import pytest
 
 # -- Path setup --
-
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, compute_qd_axes
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from meta_genome import _COPY_FIELDS, MetaGenome
@@ -167,7 +166,7 @@ class TestReorderBlockShortPrograms:
             EBREAK,
         ]
         rng = random.Random(42)
-        result, desc = DirectedMutator._reorder_block(prog, rng)
+        result, _desc = DirectedMutator._reorder_block(prog, rng)
         # Should either reorder or return no_change (depending on EBREAK position)
         assert len(result) >= 3
         assert has_ebreak(result)
@@ -697,7 +696,7 @@ class TestReorderBlockBoundary:
         rng = random.Random(42)
         for _ in range(10):
             prog_copy = list(prog)
-            result, desc = DirectedMutator._reorder_block(prog_copy, rng)
+            result, _desc = DirectedMutator._reorder_block(prog_copy, rng)
             # Should not crash
             assert has_ebreak(result)
 
@@ -708,7 +707,7 @@ class TestReorderBlockBoundary:
         rng = random.Random(42)
         for _ in range(10):
             prog_copy = list(prog)
-            result, desc = DirectedMutator._reorder_block(prog_copy, rng)
+            result, _desc = DirectedMutator._reorder_block(prog_copy, rng)
             assert has_ebreak(result)
             assert len(result) == 13
 
@@ -874,6 +873,6 @@ class TestValidateMutation:
 
     def test_bad_second_instruction(self):
         prog = [make_rv32i("ADDI", rd=5, rs1=0, imm=10), 0xDEADBEEF, EBREAK]
-        ok, err = validate_mutation(prog)
+        ok, _err = validate_mutation(prog)
         # 0xDEADBEEF may or may not decode as valid depending on encoder
         assert isinstance(ok, bool)

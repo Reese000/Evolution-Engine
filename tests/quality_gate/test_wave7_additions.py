@@ -13,15 +13,14 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Path setup
-
-from monitoring_alerts import AlertManager
 from metrics import MetricsCollector
 
+# Path setup
+from monitoring_alerts import AlertManager
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. TestMonocultureAlert

@@ -26,26 +26,30 @@ Key differences from simulation (16-bit TinyVM) to real RV32I:
 Spec reference: RISC-V Unprivileged Spec v20191213
 """
 
-from typing import Dict, List, Optional, Tuple
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor, nn
 
 # Import RV32I encoding table for building instruction mapping
 try:
-    from rv32i_mask import get_valid_combinations, is_valid, encode as rv_encode, decode as rv_decode
+    from rv32i_mask import decode as rv_decode
+    from rv32i_mask import encode as rv_encode
+    from rv32i_mask import get_valid_combinations, is_valid
 except ImportError:
     # Local fallback: define stubs so the module can be imported standalone
     def get_valid_combinations():
         return []
+
     def is_valid(word):
         return False
+
     def rv_encode(inst):
         return 0
+
     def rv_decode(word):
         return None
+
     encode = rv_encode
     decode = rv_decode
 
@@ -53,6 +57,7 @@ except ImportError:
 # =====================================================================
 #  VOCABULARY CONSTANTS
 # =====================================================================
+
 
 class RV32IVocab:
     """Token ID constants for the RV32I field-level vocabulary.
@@ -72,6 +77,7 @@ class RV32IVocab:
         NO_REG       = 267
         Reserved     = 268..2047  (1780 for future expansion)
     """
+
     # Special tokens
     PAD = 0
     SEP = 1
@@ -79,24 +85,24 @@ class RV32IVocab:
     MASK = 3
 
     # Token ranges
-    INST_START = 4       # 4..50   (47 instruction types)
+    INST_START = 4  # 4..50   (47 instruction types)
     INST_COUNT = 47
-    REG_START = 51       # 51..82  (32 registers x0-x31)
+    REG_START = 51  # 51..82  (32 registers x0-x31)
     REG_COUNT = 32
-    FUNCT3_START = 83    # 83..90  (8 funct3 values)
+    FUNCT3_START = 83  # 83..90  (8 funct3 values)
     FUNCT3_COUNT = 8
-    FUNCT7_START = 91    # 91..218 (128 funct7 values)
+    FUNCT7_START = 91  # 91..218 (128 funct7 values)
     FUNCT7_COUNT = 128
 
     # Structured Immediate Nibble Encoding
     # A 12-bit signed immediate [-2048..2047] is decomposed into 3 nibbles
     # (4 bits each). Each nibble position gets its own vocab range so the
     # model can learn position-specific nibble distributions.
-    IMM_NIBBLE_START = 219    # First nibble token (pos 0 = high nibble)
-    IMM_NIBBLE_COUNT = 48     # 16 values x 3 positions = 48 total nibble tokens
-    IMM_POS0_START = 219      # High nibble:   tokens 219..234
-    IMM_POS1_START = 235      # Mid nibble:    tokens 235..250
-    IMM_POS2_START = 251      # Low nibble:    tokens 251..266
+    IMM_NIBBLE_START = 219  # First nibble token (pos 0 = high nibble)
+    IMM_NIBBLE_COUNT = 48  # 16 values x 3 positions = 48 total nibble tokens
+    IMM_POS0_START = 219  # High nibble:   tokens 219..234
+    IMM_POS1_START = 235  # Mid nibble:    tokens 235..250
+    IMM_POS2_START = 251  # Low nibble:    tokens 251..266
 
     # Backward-compat aliases (IMM_START/IMM_COUNT now point at nibble tokens)
     IMM_START = IMM_NIBBLE_START  # 219
@@ -110,21 +116,21 @@ class RV32IVocab:
     TOKENS_PER_INST = 9
 
     # Format constants
-    R_FORMAT = 'R'
-    I_FORMAT = 'I'
-    S_FORMAT = 'S'
-    B_FORMAT = 'B'
-    U_FORMAT = 'U'
-    J_FORMAT = 'J'
+    R_FORMAT = "R"
+    I_FORMAT = "I"
+    S_FORMAT = "S"
+    B_FORMAT = "B"
+    U_FORMAT = "U"
+    J_FORMAT = "J"
 
     # Instruction mapping cache (lazily built from rv32i_mask)
-    _INSTRUCTION_NAMES: List[str] = []          # token_index -> name
-    _NAME_TO_TOKEN: Dict[str, int] = {}         # name -> token_id
-    _NAME_TO_FORMAT: Dict[str, str] = {}        # name -> format
-    _NAME_TO_FUNCT3: Dict[str, int] = {}        # name -> funct3 value
-    _NAME_TO_FUNCT7: Dict[str, int] = {}        # name -> funct7 value
-    _NAME_TO_OPCODE: Dict[str, int] = {}        # name -> opcode
-    _TOKEN_TO_NAME: Dict[int, str] = {}         # token_id -> name
+    _INSTRUCTION_NAMES: list[str] = []  # token_index -> name
+    _NAME_TO_TOKEN: dict[str, int] = {}  # name -> token_id
+    _NAME_TO_FORMAT: dict[str, str] = {}  # name -> format
+    _NAME_TO_FUNCT3: dict[str, int] = {}  # name -> funct3 value
+    _NAME_TO_FUNCT7: dict[str, int] = {}  # name -> funct7 value
+    _NAME_TO_OPCODE: dict[str, int] = {}  # name -> opcode
+    _TOKEN_TO_NAME: dict[int, str] = {}  # token_id -> name
     _BUILT = False
 
     @classmethod
@@ -142,15 +148,15 @@ class RV32IVocab:
             cls._INSTRUCTION_NAMES.append(name)
             cls._NAME_TO_TOKEN[name] = token_id
             cls._NAME_TO_FORMAT[name] = fmt
-            cls._NAME_TO_FUNCT3[name] = funct3 if funct3 >= 0 else 0
-            cls._NAME_TO_FUNCT7[name] = funct7 if funct7 >= 0 else 0
+            cls._NAME_TO_FUNCT3[name] = max(funct3, 0)
+            cls._NAME_TO_FUNCT7[name] = max(funct7, 0)
             cls._NAME_TO_OPCODE[name] = opcode
             cls._TOKEN_TO_NAME[token_id] = name
 
         cls._BUILT = True
 
     @classmethod
-    def get_instruction_names(cls) -> List[str]:
+    def get_instruction_names(cls) -> list[str]:
         cls._build_instruction_map()
         return list(cls._INSTRUCTION_NAMES)
 
@@ -165,7 +171,7 @@ class RV32IVocab:
         return cls._TOKEN_TO_NAME.get(token_id, "UNKNOWN")
 
     @classmethod
-    def get_format(cls, name_or_token: "Union[str, int]") -> str:
+    def get_format(cls, name_or_token: str | int) -> str:
         cls._build_instruction_map()
         if isinstance(name_or_token, int):
             name = cls._TOKEN_TO_NAME.get(name_or_token, "UNKNOWN")
@@ -174,7 +180,7 @@ class RV32IVocab:
         return cls._NAME_TO_FORMAT.get(name, cls.R_FORMAT)
 
     @classmethod
-    def get_funct3(cls, name_or_token: "Union[str, int]") -> int:
+    def get_funct3(cls, name_or_token: str | int) -> int:
         cls._build_instruction_map()
         if isinstance(name_or_token, int):
             name = cls._TOKEN_TO_NAME.get(name_or_token, "UNKNOWN")
@@ -183,7 +189,7 @@ class RV32IVocab:
         return cls._NAME_TO_FUNCT3.get(name, 0)
 
     @classmethod
-    def get_opcode(cls, name_or_token: "Union[str, int]") -> int:
+    def get_opcode(cls, name_or_token: str | int) -> int:
         cls._build_instruction_map()
         if isinstance(name_or_token, int):
             name = cls._TOKEN_TO_NAME.get(name_or_token, "UNKNOWN")
@@ -218,7 +224,7 @@ class RV32IVocab:
         return cls.is_imm(token)
 
     @classmethod
-    def imm_to_nibble_tokens(cls, imm: int) -> List[int]:
+    def imm_to_nibble_tokens(cls, imm: int) -> list[int]:
         """Encode a signed immediate as 3 nibble tokens.
 
         Args:
@@ -235,9 +241,9 @@ class RV32IVocab:
         # Convert to unsigned 12-bit representation
         unsigned = imm & 0xFFF
         # Extract 3 nibbles (4 bits each): high, mid, low
-        nibble_high = (unsigned >> 8) & 0xF   # bits [11:8]
-        nibble_mid = (unsigned >> 4) & 0xF    # bits [7:4]
-        nibble_low = unsigned & 0xF            # bits [3:0]
+        nibble_high = (unsigned >> 8) & 0xF  # bits [11:8]
+        nibble_mid = (unsigned >> 4) & 0xF  # bits [7:4]
+        nibble_low = unsigned & 0xF  # bits [3:0]
         return [
             cls.IMM_POS0_START + nibble_high,
             cls.IMM_POS1_START + nibble_mid,
@@ -245,7 +251,7 @@ class RV32IVocab:
         ]
 
     @classmethod
-    def nibble_tokens_to_imm(cls, tokens: List[int]) -> int:
+    def nibble_tokens_to_imm(cls, tokens: list[int]) -> int:
         """Decode 3 nibble tokens back to a signed immediate value.
 
         Args:
@@ -284,10 +290,10 @@ class RV32IVocab:
         return cls.FUNCT7_START + max(0, min(f7, cls.FUNCT7_COUNT - 1))
 
 
-
 # =====================================================================
 #  FIELD TOKENIZER
 # =====================================================================
+
 
 class RV32IFieldTokenizer:
     """Field-level tokenizer for RV32I instructions.
@@ -309,7 +315,7 @@ class RV32IFieldTokenizer:
         # Ensure instruction map is built
         self.vocab._build_instruction_map()
 
-    def encode_instruction(self, inst: Dict) -> List[int]:
+    def encode_instruction(self, inst: dict) -> list[int]:
         """Encode a single instruction dict to token IDs.
 
         Args:
@@ -320,7 +326,7 @@ class RV32IFieldTokenizer:
         Returns:
             List of 9 token IDs.
         """
-        name = inst['name']
+        name = inst["name"]
         fmt = self.vocab.get_format(name)
         tokens = []
 
@@ -338,21 +344,21 @@ class RV32IFieldTokenizer:
         if fmt in (self.vocab.S_FORMAT, self.vocab.B_FORMAT):
             tokens.append(self.vocab.NO_REG)
         else:
-            rd = inst.get('rd', 0)
+            rd = inst.get("rd", 0)
             tokens.append(self.vocab.register_token(rd))
 
         # Position 3: rs1 (or NO_REG for U/J)
         if fmt in (self.vocab.U_FORMAT, self.vocab.J_FORMAT):
             tokens.append(self.vocab.NO_REG)
         else:
-            rs1 = inst.get('rs1', 0)
+            rs1 = inst.get("rs1", 0)
             tokens.append(self.vocab.register_token(rs1))
 
         # Position 4: rs2 (or NO_REG for I/U/J)
         if fmt in (self.vocab.I_FORMAT, self.vocab.U_FORMAT, self.vocab.J_FORMAT):
             tokens.append(self.vocab.NO_REG)
         else:
-            rs2 = inst.get('rs2', 0)
+            rs2 = inst.get("rs2", 0)
             tokens.append(self.vocab.register_token(rs2))
 
         # Positions 5,6,7: imm as 3 nibble tokens (or 3x NO_REG for R)
@@ -361,7 +367,7 @@ class RV32IFieldTokenizer:
             tokens.append(self.vocab.NO_REG)
             tokens.append(self.vocab.NO_REG)
         else:
-            imm = inst.get('imm', 0)
+            imm = inst.get("imm", 0)
             tokens.extend(self.vocab.imm_to_nibble_tokens(imm))
 
         # Position 8: SEP
@@ -369,7 +375,7 @@ class RV32IFieldTokenizer:
 
         return tokens
 
-    def encode_trace(self, trace: List[Dict]) -> List[int]:
+    def encode_trace(self, trace: list[dict]) -> list[int]:
         """Encode a list of instruction dicts to a flat token sequence.
 
         Args:
@@ -383,7 +389,7 @@ class RV32IFieldTokenizer:
             tokens.extend(self.encode_instruction(inst))
         return tokens
 
-    def decode_tokens(self, tokens: List[int]) -> Optional[Dict]:
+    def decode_tokens(self, tokens: list[int]) -> dict | None:
         """Decode a flat token sequence back to at most one instruction dict.
 
         Takes the first full instruction (9 tokens ending in SEP) from the
@@ -397,14 +403,13 @@ class RV32IFieldTokenizer:
             or None if decoding fails.
         """
         # Strip leading special tokens
-        clean = [t for t in tokens
-                 if t not in (self.vocab.PAD, self.vocab.CLS, self.vocab.MASK)]
+        clean = [t for t in tokens if t not in (self.vocab.PAD, self.vocab.CLS, self.vocab.MASK)]
 
         # Need at least 9 tokens for one instruction
         if len(clean) < self.vocab.TOKENS_PER_INST:
             return None
 
-        inst_toks = clean[:self.vocab.TOKENS_PER_INST]
+        inst_toks = clean[: self.vocab.TOKENS_PER_INST]
 
         # Check final token is SEP
         if inst_toks[-1] != self.vocab.SEP:
@@ -418,63 +423,57 @@ class RV32IFieldTokenizer:
         fmt = self.vocab.get_format(name)
 
         result = {
-            'name': name,
-            'format': fmt,
+            "name": name,
+            "format": fmt,
         }
 
         # Position 1: funct3 (token or NO_REG)
         f3_tok = inst_toks[1]
         if f3_tok == self.vocab.NO_REG:
-            result['funct3'] = None
+            result["funct3"] = None
         elif self.vocab.is_funct3(f3_tok):
-            result['funct3'] = f3_tok - self.vocab.FUNCT3_START
+            result["funct3"] = f3_tok - self.vocab.FUNCT3_START
         else:
-            result['funct3'] = None
+            result["funct3"] = None
 
         # Position 2: rd
         rd_tok = inst_toks[2]
         if rd_tok == self.vocab.NO_REG:
-            result['rd'] = None
+            result["rd"] = None
         elif self.vocab.is_register(rd_tok):
-            result['rd'] = rd_tok - self.vocab.REG_START
+            result["rd"] = rd_tok - self.vocab.REG_START
         else:
-            result['rd'] = None
+            result["rd"] = None
 
         # Position 3: rs1
         rs1_tok = inst_toks[3]
         if rs1_tok == self.vocab.NO_REG:
-            result['rs1'] = None
+            result["rs1"] = None
         elif self.vocab.is_register(rs1_tok):
-            result['rs1'] = rs1_tok - self.vocab.REG_START
+            result["rs1"] = rs1_tok - self.vocab.REG_START
         else:
-            result['rs1'] = None
+            result["rs1"] = None
 
         # Position 4: rs2
         rs2_tok = inst_toks[4]
         if rs2_tok == self.vocab.NO_REG:
-            result['rs2'] = None
+            result["rs2"] = None
         elif self.vocab.is_register(rs2_tok):
-            result['rs2'] = rs2_tok - self.vocab.REG_START
+            result["rs2"] = rs2_tok - self.vocab.REG_START
         else:
-            result['rs2'] = None
+            result["rs2"] = None
 
         # Positions 5,6,7: imm as 3 nibble tokens
         imm_high_tok = inst_toks[5]
         imm_mid_tok = inst_toks[6]
         imm_low_tok = inst_toks[7]
 
-        if (imm_high_tok == self.vocab.NO_REG
-                and imm_mid_tok == self.vocab.NO_REG
-                and imm_low_tok == self.vocab.NO_REG):
-            result['imm'] = None
-        elif (self.vocab.is_imm(imm_high_tok)
-              and self.vocab.is_imm(imm_mid_tok)
-              and self.vocab.is_imm(imm_low_tok)):
-            result['imm'] = self.vocab.nibble_tokens_to_imm(
-                [imm_high_tok, imm_mid_tok, imm_low_tok]
-            )
+        if imm_high_tok == self.vocab.NO_REG and imm_mid_tok == self.vocab.NO_REG and imm_low_tok == self.vocab.NO_REG:
+            result["imm"] = None
+        elif self.vocab.is_imm(imm_high_tok) and self.vocab.is_imm(imm_mid_tok) and self.vocab.is_imm(imm_low_tok):
+            result["imm"] = self.vocab.nibble_tokens_to_imm([imm_high_tok, imm_mid_tok, imm_low_tok])
         else:
-            result['imm'] = None
+            result["imm"] = None
 
         return result
 
@@ -482,6 +481,7 @@ class RV32IFieldTokenizer:
 # =====================================================================
 #  ROTARY POSITION EMBEDDINGS (RoPE)
 # =====================================================================
+
 
 class RotaryEmbedding(nn.Module):
     """Rotary Position Embeddings (RoPE) for relative positional encoding.
@@ -545,18 +545,20 @@ def _apply_rope(q: Tensor, k: Tensor, cos: Tensor, sin: Tensor) -> tuple[Tensor,
 #  CAUSAL SELF-ATTENTION
 # =====================================================================
 
+
 class CausalSelfAttention(nn.Module):
     """Multi-head causal self-attention with RoPE and pre-computed causal mask."""
 
-    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1,
-                 max_seq_len: int = 2048, use_rope: bool = True):
+    def __init__(
+        self, d_model: int, n_heads: int, dropout: float = 0.1, max_seq_len: int = 2048, use_rope: bool = True
+    ):
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
 
         self.d_model = d_model
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.use_rope = use_rope
 
         self.qkv = nn.Linear(d_model, 3 * d_model, bias=False)
@@ -574,10 +576,7 @@ class CausalSelfAttention(nn.Module):
     def _build_causal_mask(self, seq_len: int, device: torch.device) -> Tensor:
         """Build or retrieve the causal attention mask."""
         if self.causal_mask is None or self.causal_mask.shape[-1] < seq_len:
-            mask = torch.triu(
-                torch.full((seq_len, seq_len), float('-inf'), device=device),
-                diagonal=1
-            )
+            mask = torch.triu(torch.full((seq_len, seq_len), float("-inf"), device=device), diagonal=1)
             self.register_buffer("causal_mask", mask, persistent=False)
         return self.causal_mask[:seq_len, :seq_len]
 
@@ -611,8 +610,8 @@ class CausalSelfAttention(nn.Module):
                 cache_len = kv_cache[0].shape[2]
                 cos_full, sin_full = self.rotary(cache_len + T, device)
                 # q and k_new use the NEW positions only
-                cos_new = cos_full[cache_len:cache_len + T].unsqueeze(0).unsqueeze(0)
-                sin_new = sin_full[cache_len:cache_len + T].unsqueeze(0).unsqueeze(0)
+                cos_new = cos_full[cache_len : cache_len + T].unsqueeze(0).unsqueeze(0)
+                sin_new = sin_full[cache_len : cache_len + T].unsqueeze(0).unsqueeze(0)
                 q = q * cos_new + _rotate_half(q) * sin_new
                 # Apply RoPE to new k BEFORE concatenating with cached k
                 k = k * cos_new + _rotate_half(k) * sin_new
@@ -639,7 +638,9 @@ class CausalSelfAttention(nn.Module):
         # token position, so all prior positions are valid context.
         use_causal = kv_cache is None
         y = F.scaled_dot_product_attention(
-            q, k, v,
+            q,
+            k,
+            v,
             is_causal=use_causal,
             dropout_p=self.attn_dropout.p if self.training else 0.0,
         )
@@ -654,6 +655,7 @@ class CausalSelfAttention(nn.Module):
 # =====================================================================
 #  TRANSFORMER BLOCK (Pre-Norm, SwiGLU)
 # =====================================================================
+
 
 class SwiGLUFFN(nn.Module):
     """SwiGLU Feed-Forward Network (LLaMA/Mistral-style).
@@ -676,6 +678,7 @@ class SwiGLUFFN(nn.Module):
 
 class RMSNorm(nn.Module):
     """Root Mean Square Layer Normalization (LLaMA/Mistral-style)."""
+
     def __init__(self, d_model: int, eps: float = 1e-6):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(d_model))
@@ -694,12 +697,18 @@ class TransformerBlock(nn.Module):
         x = x + SwiGLU_FFN(RMSNorm(x))
     """
 
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1,
-                 max_seq_len: int = 2048, use_rope: bool = True):
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        d_ff: int,
+        dropout: float = 0.1,
+        max_seq_len: int = 2048,
+        use_rope: bool = True,
+    ):
         super().__init__()
         self.ln1 = RMSNorm(d_model)
-        self.attn = CausalSelfAttention(d_model, n_heads, dropout,
-                                        max_seq_len=max_seq_len, use_rope=use_rope)
+        self.attn = CausalSelfAttention(d_model, n_heads, dropout, max_seq_len=max_seq_len, use_rope=use_rope)
         self.ln2 = RMSNorm(d_model)
         self.ffn = SwiGLUFFN(d_model, d_ff, dropout)
 
@@ -713,6 +722,7 @@ class TransformerBlock(nn.Module):
 # =====================================================================
 #  RV32I TRANSFORMER — Full Decoder-Only Model
 # =====================================================================
+
 
 class RV32ITransformer(nn.Module):
     """Decoder-only transformer for RV32I instruction prediction.
@@ -766,23 +776,24 @@ class RV32ITransformer(nn.Module):
         self.token_embedding = nn.Embedding(vocab_size, d_model, padding_idx=RV32IVocab.PAD)
 
         # Transformer blocks
-        self.blocks = nn.ModuleList([
-            TransformerBlock(d_model, n_heads, d_ff, dropout,
-                             max_seq_len=max_seq_len, use_rope=use_rope)
-            for _ in range(n_layers)
-        ])
+        self.blocks = nn.ModuleList(
+            [
+                TransformerBlock(d_model, n_heads, d_ff, dropout, max_seq_len=max_seq_len, use_rope=use_rope)
+                for _ in range(n_layers)
+            ]
+        )
 
         # Final layer norm (RMSNorm for ~10% speedup)
         self.lm_head_norm = RMSNorm(d_model)
 
         # Token type embeddings: instruction, register, funct3, funct7, immediate, special
         self.token_type_embedding = nn.Embedding(6, d_model)
-        self._type_id_special = 0   # PAD, SEP, CLS, MASK
-        self._type_id_inst = 1      # instruction tokens
-        self._type_id_reg = 2       # register tokens
-        self._type_id_funct3 = 3    # funct3 tokens
-        self._type_id_funct7 = 4    # funct7 tokens
-        self._type_id_imm = 5       # immediate tokens
+        self._type_id_special = 0  # PAD, SEP, CLS, MASK
+        self._type_id_inst = 1  # instruction tokens
+        self._type_id_reg = 2  # register tokens
+        self._type_id_funct3 = 3  # funct3 tokens
+        self._type_id_funct7 = 4  # funct7 tokens
+        self._type_id_imm = 5  # immediate tokens
 
         # Output head (LM head for next-token prediction)
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
@@ -838,8 +849,8 @@ class RV32ITransformer(nn.Module):
                 logits: (batch, 1, vocab_size) — logits for next token
                 updated_caches: list of (k, v) tuples, one per layer
         """
-        B, T = input_ids.shape
-        device = input_ids.device
+        _B, T = input_ids.shape
+        _device = input_ids.device
 
         if kv_caches is not None:
             # ── Incremental decoding path ──────────────────────────────
@@ -868,13 +879,11 @@ class RV32ITransformer(nn.Module):
         When kv_caches is None, caches are built from scratch.
         When kv_caches is provided, caches are updated incrementally.
         """
-        B, T = input_ids.shape
-        device = input_ids.device
+        _B, T = input_ids.shape
+        _device = input_ids.device
 
         if T > self.max_seq_len:
-            raise ValueError(
-                f"Sequence length {T} exceeds max_seq_len {self.max_seq_len}"
-            )
+            raise ValueError(f"Sequence length {T} exceeds max_seq_len {self.max_seq_len}")
 
         x = self.token_embedding(input_ids)
 
@@ -901,11 +910,11 @@ class RV32ITransformer(nn.Module):
         for i, block in enumerate(self.blocks):
             cache_i = kv_caches[i] if kv_caches is not None else None
             if self.use_checkpointing and self.training:
+
                 def _block_fn(x_in, c=cache_i):
                     return block(x_in, kv_cache=c)
-                x, new_cache = torch.utils.checkpoint.checkpoint(
-                    _block_fn, x, use_reentrant=False
-                )
+
+                x, new_cache = torch.utils.checkpoint.checkpoint(_block_fn, x, use_reentrant=False)
             else:
                 x, new_cache = block(x, kv_cache=cache_i)
             updated_caches.append(new_cache)
@@ -920,13 +929,11 @@ class RV32ITransformer(nn.Module):
         noise_std: float = 0.0,
     ) -> tuple[Tensor, list[tuple[Tensor, Tensor]]]:
         """Full forward pass returning (logits, caches) for cache building."""
-        B, T = input_ids.shape
-        device = input_ids.device
+        _B, T = input_ids.shape
+        _device = input_ids.device
 
         if T > self.max_seq_len:
-            raise ValueError(
-                f"Sequence length {T} exceeds max_seq_len {self.max_seq_len}"
-            )
+            raise ValueError(f"Sequence length {T} exceeds max_seq_len {self.max_seq_len}")
 
         x = self.token_embedding(input_ids)
 
@@ -951,11 +958,11 @@ class RV32ITransformer(nn.Module):
         updated_caches = []
         if self.use_checkpointing and self.training:
             for block in self.blocks:
+
                 def _block_fn(x_in, _block=block):
                     return _block(x_in)
-                x, new_cache = torch.utils.checkpoint.checkpoint(
-                    _block_fn, x, use_reentrant=False
-                )
+
+                x, new_cache = torch.utils.checkpoint.checkpoint(_block_fn, x, use_reentrant=False)
                 updated_caches.append(new_cache)
         else:
             for block in self.blocks:
@@ -1003,7 +1010,7 @@ class RV32ITransformer(nn.Module):
         Returns:
             mask: (batch, vocab_size) — True for allowed tokens
         """
-        B, T = input_ids.shape
+        B, _T = input_ids.shape
         device = input_ids.device
         vocab = RV32IVocab
 
@@ -1018,7 +1025,7 @@ class RV32ITransformer(nn.Module):
             if len(non_pad) == 0:
                 # Empty sequence → start with instruction token
                 allowed = torch.zeros(vocab.VOCAB_SIZE, dtype=torch.bool, device=device)
-                allowed[vocab.INST_START:vocab.INST_START + vocab.INST_COUNT] = True
+                allowed[vocab.INST_START : vocab.INST_START + vocab.INST_COUNT] = True
                 mask[b] = allowed
                 continue
 
@@ -1026,9 +1033,9 @@ class RV32ITransformer(nn.Module):
             last_token = seq[last_idx].item()
 
             # Count tokens since last SEP or CLS to determine position
-            boundary_positions = (
-                (seq[:last_idx + 1] == vocab.SEP) | (seq[:last_idx + 1] == vocab.CLS)
-            ).nonzero(as_tuple=True)[0]
+            boundary_positions = ((seq[: last_idx + 1] == vocab.SEP) | (seq[: last_idx + 1] == vocab.CLS)).nonzero(
+                as_tuple=True
+            )[0]
 
             if len(boundary_positions) == 0:
                 inst_start = 0
@@ -1041,12 +1048,12 @@ class RV32ITransformer(nn.Module):
 
             # After SEP or CLS → start new instruction
             if last_token in (vocab.SEP, vocab.CLS):
-                allowed[vocab.INST_START:vocab.INST_START + vocab.INST_COUNT] = True
+                allowed[vocab.INST_START : vocab.INST_START + vocab.INST_COUNT] = True
                 mask[b] = allowed
                 continue
 
             if num_inst_tokens == 0:
-                allowed[vocab.INST_START:vocab.INST_START + vocab.INST_COUNT] = True
+                allowed[vocab.INST_START : vocab.INST_START + vocab.INST_COUNT] = True
                 mask[b] = allowed
                 continue
 
@@ -1075,7 +1082,7 @@ class RV32ITransformer(nn.Module):
                         allowed[vocab.NO_REG] = True
                     else:
                         # R/I/U/J: rd is a register
-                        allowed[vocab.REG_START:vocab.REG_START + vocab.REG_COUNT] = True
+                        allowed[vocab.REG_START : vocab.REG_START + vocab.REG_COUNT] = True
                 allowed[vocab.SEP] = True
 
             elif num_inst_tokens == 3:
@@ -1087,7 +1094,7 @@ class RV32ITransformer(nn.Module):
                         allowed[vocab.NO_REG] = True
                     else:
                         # R/I/S/B: rs1 is a register
-                        allowed[vocab.REG_START:vocab.REG_START + vocab.REG_COUNT] = True
+                        allowed[vocab.REG_START : vocab.REG_START + vocab.REG_COUNT] = True
                 allowed[vocab.SEP] = True
 
             elif num_inst_tokens == 4:
@@ -1099,7 +1106,7 @@ class RV32ITransformer(nn.Module):
                         allowed[vocab.NO_REG] = True
                     else:
                         # R/S/B: rs2 is a register
-                        allowed[vocab.REG_START:vocab.REG_START + vocab.REG_COUNT] = True
+                        allowed[vocab.REG_START : vocab.REG_START + vocab.REG_COUNT] = True
                 allowed[vocab.SEP] = True
 
             elif num_inst_tokens == 5:
@@ -1111,7 +1118,7 @@ class RV32ITransformer(nn.Module):
                         allowed[vocab.NO_REG] = True
                     else:
                         # I/S/B/U/J: imm high nibble (16 possible values)
-                        allowed[vocab.IMM_POS0_START:vocab.IMM_POS0_START + 16] = True
+                        allowed[vocab.IMM_POS0_START : vocab.IMM_POS0_START + 16] = True
                 allowed[vocab.SEP] = True
 
             elif num_inst_tokens == 6:
@@ -1123,7 +1130,7 @@ class RV32ITransformer(nn.Module):
                         allowed[vocab.NO_REG] = True
                     else:
                         # I/S/B/U/J: imm mid nibble (16 possible values)
-                        allowed[vocab.IMM_POS1_START:vocab.IMM_POS1_START + 16] = True
+                        allowed[vocab.IMM_POS1_START : vocab.IMM_POS1_START + 16] = True
                 allowed[vocab.SEP] = True
 
             elif num_inst_tokens == 7:
@@ -1135,7 +1142,7 @@ class RV32ITransformer(nn.Module):
                         allowed[vocab.NO_REG] = True
                     else:
                         # I/S/B/U/J: imm low nibble (16 possible values)
-                        allowed[vocab.IMM_POS2_START:vocab.IMM_POS2_START + 16] = True
+                        allowed[vocab.IMM_POS2_START : vocab.IMM_POS2_START + 16] = True
                 allowed[vocab.SEP] = True
 
             elif num_inst_tokens == 8:
@@ -1144,7 +1151,7 @@ class RV32ITransformer(nn.Module):
 
             else:
                 # Past a full instruction → start new one
-                allowed[vocab.INST_START:vocab.INST_START + vocab.INST_COUNT] = True
+                allowed[vocab.INST_START : vocab.INST_START + vocab.INST_COUNT] = True
 
             mask[b] = allowed
 
@@ -1156,7 +1163,7 @@ class RV32ITransformer(nn.Module):
         input_ids: Tensor,
         max_new_tokens: int,
         temperature: float = 1.0,
-        top_k: Optional[int] = None,
+        top_k: int | None = None,
         eos_token_id: int = RV32IVocab.SEP,
     ) -> Tensor:
         """Autoregressive generation with logit masking.
@@ -1172,11 +1179,11 @@ class RV32ITransformer(nn.Module):
             (batch, seq_len + generated_tokens) completed sequences
         """
         self.eval()
-        batch_size = input_ids.shape[0]
+        _batch_size = input_ids.shape[0]
 
         for _ in range(max_new_tokens):
             # Truncate to max_seq_len
-            curr_seq = input_ids[:, -self.max_seq_len:]
+            curr_seq = input_ids[:, -self.max_seq_len :]
 
             # Forward pass
             logits = self.forward(curr_seq)
@@ -1184,7 +1191,7 @@ class RV32ITransformer(nn.Module):
 
             # Apply logit mask
             mask = self._get_logit_mask(curr_seq)
-            next_logits = next_logits.masked_fill(~mask, float('-inf'))
+            next_logits = next_logits.masked_fill(~mask, float("-inf"))
 
             # Apply temperature
             if temperature > 0 and temperature != 1.0:
@@ -1193,7 +1200,7 @@ class RV32ITransformer(nn.Module):
             # Top-k filtering
             if top_k is not None:
                 top_k_vals, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)), dim=-1)
-                next_logits[next_logits < top_k_vals[:, -1:]] = float('-inf')
+                next_logits[next_logits < top_k_vals[:, -1:]] = float("-inf")
 
             # Sample
             if temperature == 0.0:
@@ -1224,12 +1231,12 @@ class RV32ITransformer(nn.Module):
         Returns:
             Masked logits (batch, seq_len, vocab_size)
         """
-        B, T, V = logits.shape
+        _B, T, _V = logits.shape
 
         for t in range(T):
-            ctx = input_ids[:, :t + 1]
+            ctx = input_ids[:, : t + 1]
             mask = self._get_logit_mask(ctx)
-            logits[:, t, :] = logits[:, t, :].masked_fill(~mask, float('-inf'))
+            logits[:, t, :] = logits[:, t, :].masked_fill(~mask, float("-inf"))
 
         return logits
 
@@ -1237,6 +1244,7 @@ class RV32ITransformer(nn.Module):
 # =====================================================================
 #  POSITION-AWARE LOSS WEIGHTING
 # =====================================================================
+
 
 def _build_position_weights(tokens_per_inst: int, seq_len: int, device: torch.device) -> Tensor:
     """Build per-position weight tensor for loss weighting.
@@ -1264,15 +1272,16 @@ def _build_position_weights(tokens_per_inst: int, seq_len: int, device: torch.de
 #  TRAINING FUNCTIONS
 # =====================================================================
 
+
 def compute_loss(
     model: RV32ITransformer,
     input_ids: Tensor,
-    labels: Optional[Tensor] = None,
+    labels: Tensor | None = None,
     ignore_index: int = RV32IVocab.PAD,
-    boundary_mask: Optional[Tensor] = None,
+    boundary_mask: Tensor | None = None,
     label_smoothing: float = 0.0,
     noise_std: float = 0.0,
-    sample_weights: Optional[Tensor] = None,
+    sample_weights: Tensor | None = None,
 ) -> Tensor:
     """Compute position-aware weighted cross-entropy loss for next-token prediction.
 
@@ -1344,10 +1353,10 @@ def compute_loss(
     if sample_weights is not None:
         # Expand per-sample weights to per-token: (B,) -> (B, 1) -> (B, T) -> (B*T,)
         sw = sample_weights.unsqueeze(1).expand(B, T).reshape(-1)
-        weighted_loss = (per_token_loss * weights_expanded * active_mask * sw)
+        weighted_loss = per_token_loss * weights_expanded * active_mask * sw
         total_weight = (active_mask * sw).sum()
     else:
-        weighted_loss = (per_token_loss * weights_expanded * active_mask)
+        weighted_loss = per_token_loss * weights_expanded * active_mask
         total_weight = active_mask.sum()
 
     if total_weight == 0:
@@ -1362,10 +1371,10 @@ def compute_loss_with_scheduled_sampling(
     input_ids: Tensor,
     teacher_prob: float = 0.5,
     noise_std: float = 0.0,
-    labels: Optional[Tensor] = None,
+    labels: Tensor | None = None,
     ignore_index: int = RV32IVocab.PAD,
-    boundary_mask: Optional[Tensor] = None,
-    sample_weights: Optional[Tensor] = None,
+    boundary_mask: Tensor | None = None,
+    sample_weights: Tensor | None = None,
     label_smoothing: float = 0.0,
 ) -> Tensor:
     """Compute loss with scheduled sampling (Phase 3).
@@ -1396,10 +1405,14 @@ def compute_loss_with_scheduled_sampling(
     # Pure teacher-forcing path
     if torch.rand(1).item() < teacher_prob:
         return compute_loss(
-            model, input_ids,
-            labels=labels, ignore_index=ignore_index,
-            boundary_mask=boundary_mask, noise_std=noise_std,
-            sample_weights=sample_weights, label_smoothing=label_smoothing,
+            model,
+            input_ids,
+            labels=labels,
+            ignore_index=ignore_index,
+            boundary_mask=boundary_mask,
+            noise_std=noise_std,
+            sample_weights=sample_weights,
+            label_smoothing=label_smoothing,
         )
 
     B, seq_len = input_ids.shape
@@ -1419,7 +1432,7 @@ def compute_loss_with_scheduled_sampling(
     # --- Run teacher-forced forward up to the corruption point ---
     prefix = input_ids[:, :corrupt_pos]  # (B, corrupt_pos)
     with torch.no_grad():
-        prefix_logits = model(prefix, noise_std=noise_std)  # (B, corrupt_pos, V)
+        _prefix_logits = model(prefix, noise_std=noise_std)  # (B, corrupt_pos, V)
 
     # --- Generate n_gen tokens autoregressively from the model ---
     generated = []
@@ -1457,16 +1470,20 @@ def compute_loss_with_scheduled_sampling(
         corrupted_input = torch.cat([corrupted_input, pad], dim=1)
 
     return compute_loss(
-        model, corrupted_input,
-        labels=labels, ignore_index=ignore_index,
-        boundary_mask=boundary_mask, noise_std=noise_std,
-        sample_weights=sample_weights, label_smoothing=label_smoothing,
+        model,
+        corrupted_input,
+        labels=labels,
+        ignore_index=ignore_index,
+        boundary_mask=boundary_mask,
+        noise_std=noise_std,
+        sample_weights=sample_weights,
+        label_smoothing=label_smoothing,
     )
 
 
 def train_step(
     model: RV32ITransformer,
-    batch: List[List[int]],
+    batch: list[list[int]],
     optimizer: torch.optim.Optimizer,
     ignore_index: int = RV32IVocab.PAD,
 ) -> float:
@@ -1508,7 +1525,8 @@ def train_step(
 #  UTILITY: Count Parameters
 # =====================================================================
 
-def count_parameters(model: nn.Module) -> Tuple[int, int]:
+
+def count_parameters(model: nn.Module) -> tuple[int, int]:
     """Count total and trainable parameters in a model.
     Returns (total_params, trainable_params)."""
     total = sum(p.numel() for p in model.parameters())
@@ -1516,7 +1534,7 @@ def count_parameters(model: nn.Module) -> Tuple[int, int]:
     return total, trainable
 
 
-def estimate_memory_footprint(total_params: int, dtype_bytes: int = 4) -> Dict[str, float]:
+def estimate_memory_footprint(total_params: int, dtype_bytes: int = 4) -> dict[str, float]:
     """Estimate memory footprint of the model.
 
     Args:
@@ -1532,16 +1550,17 @@ def estimate_memory_footprint(total_params: int, dtype_bytes: int = 4) -> Dict[s
     optimizer_mb = params_mb * 2
     total_mb = params_mb + grads_mb + optimizer_mb
     return {
-        'parameters_mb': round(params_mb, 2),
-        'gradients_mb': round(grads_mb, 2),
-        'optimizer_mb': round(optimizer_mb, 2),
-        'total_mb': round(total_mb, 2),
+        "parameters_mb": round(params_mb, 2),
+        "gradients_mb": round(grads_mb, 2),
+        "optimizer_mb": round(optimizer_mb, 2),
+        "total_mb": round(total_mb, 2),
     }
 
 
 # =====================================================================
 #  SELF-TEST
 # =====================================================================
+
 
 def _run_self_test():
     """Instantiate the model, run through dummy data, verify shapes."""
@@ -1558,12 +1577,18 @@ def _run_self_test():
 
     # Print all 47 instructions grouped by format
     print("\n[1b] Instruction encodings by format:")
-    by_fmt: Dict[str, List[str]] = {}
+    by_fmt: dict[str, list[str]] = {}
     for name in RV32IVocab.get_instruction_names():
         fmt = RV32IVocab.get_format(name)
         by_fmt.setdefault(fmt, []).append(name)
-    for fmt in [RV32IVocab.R_FORMAT, RV32IVocab.I_FORMAT, RV32IVocab.S_FORMAT,
-                RV32IVocab.B_FORMAT, RV32IVocab.U_FORMAT, RV32IVocab.J_FORMAT]:
+    for fmt in [
+        RV32IVocab.R_FORMAT,
+        RV32IVocab.I_FORMAT,
+        RV32IVocab.S_FORMAT,
+        RV32IVocab.B_FORMAT,
+        RV32IVocab.U_FORMAT,
+        RV32IVocab.J_FORMAT,
+    ]:
         if fmt in by_fmt:
             names = by_fmt[fmt]
             print(f"    {fmt}-type ({len(names)}): {', '.join(names)}")
@@ -1572,19 +1597,19 @@ def _run_self_test():
     print("\n[2] Testing instruction encoding...")
     insts = [
         # ADD x1, x2, x3  (R-type)
-        {'name': 'ADD', 'rd': 1, 'rs1': 2, 'rs2': 3},
+        {"name": "ADD", "rd": 1, "rs1": 2, "rs2": 3},
         # ADDI x4, x5, 42  (I-type)
-        {'name': 'ADDI', 'rd': 4, 'rs1': 5, 'imm': 42},
+        {"name": "ADDI", "rd": 4, "rs1": 5, "imm": 42},
         # SW x2, 16(x1)  (S-type)
-        {'name': 'SW', 'rs1': 1, 'rs2': 2, 'imm': 16},
+        {"name": "SW", "rs1": 1, "rs2": 2, "imm": 16},
         # BEQ x6, x7, 8   (B-type)
-        {'name': 'BEQ', 'rs1': 6, 'rs2': 7, 'imm': 8},
+        {"name": "BEQ", "rs1": 6, "rs2": 7, "imm": 8},
         # LUI x8, 0x12345 (U-type)
-        {'name': 'LUI', 'rd': 8, 'imm': 0x12345},
+        {"name": "LUI", "rd": 8, "imm": 0x12345},
         # JAL x1, 0x1234  (J-type)
-        {'name': 'JAL', 'rd': 1, 'imm': 0x1234},
+        {"name": "JAL", "rd": 1, "imm": 0x1234},
         # NOP via ADDI x0, x0, 0
-        {'name': 'ADDI', 'rd': 0, 'rs1': 0, 'imm': 0},
+        {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
     ]
 
     trace_tokens = []
@@ -1592,7 +1617,7 @@ def _run_self_test():
         toks = tokenizer.encode_instruction(inst)
         trace_tokens.extend(toks)
         decoded = tokenizer.decode_tokens(toks)
-        fmt = RV32IVocab.get_format(inst['name'])
+        fmt = RV32IVocab.get_format(inst["name"])
         print(f"    {inst['name']:6s} [{fmt}]: {toks} → {decoded}")
 
     print(f"\n    Full trace ({len(insts)} insts, {len(trace_tokens)} tokens)")
@@ -1618,7 +1643,7 @@ def _run_self_test():
 
     # Memory footprint
     mem = estimate_memory_footprint(total_params)
-    print(f"    Memory (float32):")
+    print("    Memory (float32):")
     print(f"      Parameters: {mem['parameters_mb']} MB")
     print(f"      Gradients:  {mem['gradients_mb']} MB")
     print(f"      Optimizer:  {mem['optimizer_mb']} MB")
@@ -1633,8 +1658,11 @@ def _run_self_test():
 
     logits = model(input_ids)
     print(f"    Output shape: {logits.shape}")
-    assert logits.shape == (batch_size, seq_len, RV32IVocab.VOCAB_SIZE), \
-        f"Expected ({batch_size}, {seq_len}, {RV32IVocab.VOCAB_SIZE}), got {logits.shape}"
+    assert logits.shape == (
+        batch_size,
+        seq_len,
+        RV32IVocab.VOCAB_SIZE,
+    ), f"Expected ({batch_size}, {seq_len}, {RV32IVocab.VOCAB_SIZE}), got {logits.shape}"
     print(f"    Logit range: [{logits.min().item():.3f}, {logits.max().item():.3f}]")
 
     # --- 5. Test logit masking ---
@@ -1668,7 +1696,7 @@ def _run_self_test():
 
     # --- 6. Test generation ---
     print("\n[6] Testing generation (single step)...")
-    prompt_tok = RV32IVocab.get_instruction_token('ADD')
+    prompt_tok = RV32IVocab.get_instruction_token("ADD")
     prompt = torch.tensor([[RV32IVocab.CLS, prompt_tok]], dtype=torch.long)
     print(f"    Prompt shape: {prompt.shape}")
     print(f"    Prompt tokens: [{RV32IVocab.CLS}, {prompt_tok} (ADD)]")

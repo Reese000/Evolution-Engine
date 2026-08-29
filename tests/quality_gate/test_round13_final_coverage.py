@@ -31,7 +31,6 @@ import tempfile
 from typing import NamedTuple, Optional
 from unittest.mock import patch
 
-
 import pytest
 
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, VMFarm, compute_qd_axes
@@ -102,7 +101,7 @@ class _FakeEvalResult(NamedTuple):
     memory: dict
     trace: list
     cycles: int
-    error: Optional[str]
+    error: str | None
     blocked_writes: int
 
 

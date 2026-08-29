@@ -28,8 +28,8 @@ from milestone1.training.scaling.model_migrator import ModelMigrator
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
 # Model size configs matching MODEL_SIZE_CONFIGS in model_factory.py
-OLD_CONFIG = dict(d_model=256, n_layers=8, n_heads=8, d_ff=1024)
-NEW_CONFIG = dict(d_model=512, n_layers=14, n_heads=8, d_ff=1365)
+OLD_CONFIG = {"d_model": 256, "n_layers": 8, "n_heads": 8, "d_ff": 1024}
+NEW_CONFIG = {"d_model": 512, "n_layers": 14, "n_heads": 8, "d_ff": 1365}
 
 
 def _make_old_model(seed: int = 42) -> RV32ITransformer:
@@ -338,7 +338,7 @@ class TestMigratorIdentity:
 
     def test_migrator_identity_no_depth_change(self):
         """Migration with same depth should also work."""
-        same_depth_config = dict(d_model=256, n_layers=8, n_heads=8, d_ff=1024)
+        same_depth_config = {"d_model": 256, "n_layers": 8, "n_heads": 8, "d_ff": 1024}
         old_model = _make_old_model(seed=42)
         new_model = _make_old_model(seed=999)
 

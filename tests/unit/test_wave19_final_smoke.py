@@ -178,6 +178,7 @@ class TestPipelineIntegrity:
 
     def test_meta_controller_instantiation(self):
         import tempfile
+
         from meta_controller import MetaController
         with tempfile.TemporaryDirectory() as td:
             mc = MetaController(checkpoint_dir=td)
@@ -333,7 +334,7 @@ class TestTestSuiteHealth:
                     ast.parse(f.read(), filename=fpath)
             except SyntaxError as e:
                 errors.append(f"{fname}: {e}")
-        assert not errors, f"Syntax errors in wave test files:\n" + "\n".join(errors)
+        assert not errors, "Syntax errors in wave test files:\n" + "\n".join(errors)
 
     def test_all_test_files_parseable(self):
         """Every test_*.py file in tests/ has valid Python syntax."""
@@ -349,4 +350,4 @@ class TestTestSuiteHealth:
                         ast.parse(f.read(), filename=fpath)
                 except SyntaxError as e:
                     errors.append(f"{fname}: {e}")
-        assert not errors, f"Syntax errors in test files:\n" + "\n".join(errors)
+        assert not errors, "Syntax errors in test files:\n" + "\n".join(errors)

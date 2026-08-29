@@ -8,17 +8,15 @@ champion archive management.
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from typing import List
 
 import pytest
 
-import sys
-
+from champion_archive import ChampionArchive
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from strategy_archive import StrategyArchive
-from champion_archive import ChampionArchive
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Helpers

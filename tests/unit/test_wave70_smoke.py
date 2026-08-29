@@ -11,9 +11,9 @@ Does NOT modify any existing files.
 from __future__ import annotations
 
 import pytest
+
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
-
 
 # ── TestEngineHealth ────────────────────────────────────────────────────────
 

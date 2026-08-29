@@ -174,12 +174,11 @@ class TestMethodDocstrings:
         docstring_found = False
 
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name == method_name:
-                    docstring = ast.get_docstring(node)
-                    if docstring:
-                        docstring_found = True
-                    found = True
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == method_name:
+                docstring = ast.get_docstring(node)
+                if docstring:
+                    docstring_found = True
+                found = True
                     # Don't break — check all matches (e.g., static methods)
 
         assert found, (
@@ -277,10 +276,9 @@ def _get_method_ast_node(
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     if item.name == method_name:
                         return item
-        elif class_name is None:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name == method_name:
-                    return node
+        elif class_name is None and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == method_name:
+                return node
     return None
 
 
@@ -313,7 +311,7 @@ class TestCodeQuality:
         for i, line in enumerate(lines[start:end], start=start + 1):
             stripped = line.strip()
             # Skip lines that are part of a docstring (triple-quoted)
-            if stripped.startswith("#") or stripped.startswith('"') or stripped.startswith("'"):
+            if stripped.startswith(("#", '"', "'")):
                 # Only flag comments containing these markers
                 if re.search(r"\b(TODO|FIXME|HACK)\b", stripped, re.IGNORECASE):
                     violations.append(f"  Line {i}: {stripped}")

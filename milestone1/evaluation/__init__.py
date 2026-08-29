@@ -1,1 +1,1 @@
-from .pipeline import EvaluationManager, MetricsCollector, ReportGenerator, EvalResult
+from .pipeline import EvalResult, EvaluationManager, MetricsCollector, ReportGenerator

@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class BarrierType(Enum):
@@ -42,12 +41,12 @@ class CycleMetrics:
     novelty_size: int = 0
     traces_count: int = 0
     retrained: bool = False
-    val_loss: Optional[float] = None
+    val_loss: float | None = None
     generations_completed: int = 0
     mutation_rate: float = 0.5
     # Training visibility (set post-construction by diagnostic wiring)
-    memorization_score: Optional[float] = None
-    generalization_score: Optional[float] = None
+    memorization_score: float | None = None
+    generalization_score: float | None = None
 
 
 @dataclass
@@ -128,7 +127,7 @@ class BarrierTuner:
             raw_history = data.get("history", [])
             self.history = [CycleMetrics(**entry) for entry in raw_history[-50:]]
             return True
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+        except (json.JSONDecodeError, KeyError, TypeError):
             return False
 
     def save_state(self, state_path: str) -> None:

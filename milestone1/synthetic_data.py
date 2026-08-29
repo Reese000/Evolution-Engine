@@ -59,7 +59,7 @@ EBREAK_WORD = 0x00100073  # EBREAK encoding: opcode=0x73, funct3=0, bit20=1
 # ======================================================================
 
 
-def make_ebreak() -> Dict:
+def make_ebreak() -> dict:
     """Return a properly formatted EBREAK instruction dict.
 
     EBREAK has special encoding (bit 20 set) that must go through
@@ -68,7 +68,7 @@ def make_ebreak() -> Dict:
     return rv32i_decode(EBREAK_WORD)
 
 
-def get_ref_solution(level: int) -> List[Dict]:
+def get_ref_solution(level: int) -> list[dict]:
     """Get reference solution for a curriculum level (normalized to uppercase name)."""
     return [
         {"name": inst["name"].upper(), **{k: v for k, v in inst.items() if k != "name"}}
@@ -76,7 +76,7 @@ def get_ref_solution(level: int) -> List[Dict]:
     ]
 
 
-def register_rename(instr_dicts: List[Dict], rng: random.Random) -> List[Dict]:
+def register_rename(instr_dicts: list[dict], rng: random.Random) -> list[dict]:
     """Apply a random permutation to registers 1..31 (x0 stays fixed).
 
     The permutation is a bijection on {1, ..., 31}.  Register 0 is never
@@ -89,7 +89,7 @@ def register_rename(instr_dicts: List[Dict], rng: random.Random) -> List[Dict]:
     perm = list(range(1, 32))  # possible output values: 1..31
     rng.shuffle(perm)
 
-    result: List[Dict] = []
+    result: list[dict] = []
     for d in instr_dicts:
         nd = dict(d)
         # Remap destination register (R/I/U/J types)
@@ -126,7 +126,7 @@ class SyntheticDataGenerator:
 
     # ── Public API ────────────────────────────────────────────────────
 
-    def generate_all(self) -> List[List[int]]:
+    def generate_all(self) -> list[list[int]]:
         """Generate all synthetic training sequences.
 
         Returns:
@@ -134,9 +134,9 @@ class SyntheticDataGenerator:
             Duplicates are removed; every sequence ends with EBREAK tokens.
         """
         seen: set = set()
-        sequences: List[List[int]] = []
+        sequences: list[list[int]] = []
 
-        def _add(inst_list: List[Dict]) -> bool:
+        def _add(inst_list: list[dict]) -> bool:
             """Tokenize an instruction list and add if unique. Returns True if added."""
             toks = tuple(self.tokenizer.encode_trace(inst_list))
             if toks in seen:
@@ -175,9 +175,9 @@ class SyntheticDataGenerator:
     # followed by EBREAK.  We iterate over all 47 instruction types in the
     # ISA encoding table and produce representative field combinations.
 
-    def _gen_single_instructions(self) -> List[List[Dict]]:
+    def _gen_single_instructions(self) -> list[list[dict]]:
         """Generate representative single-instruction programs (~3K)."""
-        programs: List[List[Dict]] = []
+        programs: list[list[dict]] = []
         imm_values = [0, 1, 2, 4, 8, -1, 3, 7, 16, -4]
 
         for opcode, funct3, funct7, name, fmt in _INSTRUCTIONS:
@@ -268,7 +268,7 @@ class SyntheticDataGenerator:
 
     _ARITH_NAMES = ("ADD", "SUB", "AND", "OR", "XOR", "SLL", "SRL", "SLT")
 
-    def _gen_data_flow_chain(self) -> Optional[List[Dict]]:
+    def _gen_data_flow_chain(self) -> list[dict] | None:
         """Generate a single data flow chain program (2-4 instructions + EBREAK).
 
         Returns None if a degenerate chain is produced (e.g. all instructions
@@ -276,7 +276,7 @@ class SyntheticDataGenerator:
         """
         rng = self.rng
         n_insts = rng.randint(2, 4)
-        program: List[Dict] = []
+        program: list[dict] = []
         live_regs = {1, 2}  # x1, x2 are always available inputs
 
         for i in range(n_insts):
@@ -304,9 +304,9 @@ class SyntheticDataGenerator:
     # reference solution (L0-L11).  Each window is register-renamed 16x
     # to produce diverse training data from known-correct program fragments.
 
-    def _gen_subsequences(self) -> List[List[Dict]]:
+    def _gen_subsequences(self) -> list[list[dict]]:
         """Extract and register-rename subsequence windows from reference solutions."""
-        programs: List[List[Dict]] = []
+        programs: list[list[dict]] = []
 
         for level in range(12):
             ref = get_ref_solution(level)
@@ -325,9 +325,9 @@ class SyntheticDataGenerator:
     # instantiate each with varied register assignments.  This teaches
     # the model common program structures (loads, loops, branches).
 
-    def _gen_templates(self) -> List[List[Dict]]:
+    def _gen_templates(self) -> list[list[dict]]:
         """Generate all template-based programs (~30K total)."""
-        programs: List[List[Dict]] = []
+        programs: list[list[dict]] = []
 
         # Template 1: Load-Add pattern (from L8) -- 5000 instantiations
         programs.extend(self._gen_load_add(5000))
@@ -343,13 +343,13 @@ class SyntheticDataGenerator:
 
         return programs
 
-    def _gen_load_add(self, n: int) -> List[List[Dict]]:
+    def _gen_load_add(self, n: int) -> list[list[dict]]:
         """Load-Add: LW r_a, 0(r_x); LW r_b, 0(r_y); ADD r_out, r_a, r_b
 
         Pattern from L8.  Teaches the model to load two values from memory
         and combine them with an arithmetic instruction.
         """
-        programs: List[List[Dict]] = []
+        programs: list[list[dict]] = []
         rng = self.rng
 
         for _ in range(n):
@@ -364,7 +364,7 @@ class SyntheticDataGenerator:
 
         return programs
 
-    def _gen_loop_sum(self, n: int) -> List[List[Dict]]:
+    def _gen_loop_sum(self, n: int) -> list[list[dict]]:
         """Loop-Sum: iterative accumulation with word-aligned addressing.
 
         Structure (12 instructions):
@@ -381,7 +381,7 @@ class SyntheticDataGenerator:
             SLLI is at position 0, BLT at position 7.
             BLT target = position 0.  offset = (0 - 7) * 4 = -28.
         """
-        programs: List[List[Dict]] = []
+        programs: list[list[dict]] = []
         rng = self.rng
         shamt = rng.choice((1, 2, 3))
 
@@ -419,7 +419,7 @@ class SyntheticDataGenerator:
 
         return programs
 
-    def _gen_max_find(self, n: int) -> List[List[Dict]]:
+    def _gen_max_find(self, n: int) -> list[list[dict]]:
         """Max-Find: find maximum in a memory range using SLT/BEQ.
 
         Structure (15 instructions):
@@ -438,7 +438,7 @@ class SyntheticDataGenerator:
             BEQ at position 6, targets position 8 (skip ADDI): (8-6)*4 = 8
             BLT at position 9, targets position 2 (SLLI):      (2-9)*4 = -28
         """
-        programs: List[List[Dict]] = []
+        programs: list[list[dict]] = []
         rng = self.rng
         shamt = rng.choice((1, 2, 3))
 
@@ -476,7 +476,7 @@ class SyntheticDataGenerator:
 
         return programs
 
-    def _gen_fibonacci(self, n: int) -> List[List[Dict]]:
+    def _gen_fibonacci(self, n: int) -> list[list[dict]]:
         """Fibonacci: iterative computation with skip-loop optimization.
 
         Structure (10 instructions):
@@ -498,7 +498,7 @@ class SyntheticDataGenerator:
         ADDI r_a,r_b,0 -- this works because after the loop r_a holds F(n).
         We use the more natural offset to the copy-out instruction.
         """
-        programs: List[List[Dict]] = []
+        programs: list[list[dict]] = []
         rng = self.rng
 
         for _ in range(n):
@@ -541,9 +541,9 @@ class SyntheticDataGenerator:
     # Mutation types: swap independent instructions, shift immediates,
     # replace with semantically similar instruction, duplicate one.
 
-    def _gen_mutations(self) -> List[List[Dict]]:
+    def _gen_mutations(self) -> list[list[dict]]:
         """Mutate reference solutions L8-L11 and register-rename each (~5K)."""
-        programs: List[List[Dict]] = []
+        programs: list[list[dict]] = []
         rng = self.rng
 
         for level in range(8, 12):
@@ -561,7 +561,7 @@ class SyntheticDataGenerator:
 
         return programs
 
-    def _mutate_program(self, program: List[Dict], rng: random.Random) -> Optional[List[Dict]]:
+    def _mutate_program(self, program: list[dict], rng: random.Random) -> list[dict] | None:
         """Apply a single random mutation to a program.
 
         Returns the mutated program, or None if mutation is degenerate.
@@ -732,7 +732,7 @@ def _run_self_test():
     print(f"    2-inst programs: {sum(1 for l in lengths if l == 27)}")  # 2 inst + EBREAK = 27 tokens
 
     # Verify no duplicates
-    unique_tokens = set(tuple(s) for s in all_seqs)
+    unique_tokens = {tuple(s) for s in all_seqs}
     assert len(unique_tokens) == total, "Duplicates found!"
     print(f"    Deduplication verified: {total} unique")
 

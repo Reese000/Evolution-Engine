@@ -30,7 +30,6 @@ instruction dicts compatible with rv32i_mask encode/decode.
 
 import random
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
 
 # ──────────────────────────────────────────────────────────────────────
 # RV32I constants
@@ -69,7 +68,7 @@ def _sign32(val: int) -> int:
 class TaskLevel(ABC):
     """Base class for curriculum task levels."""
 
-    def __init__(self, seed: Optional[int] = None):
+    def __init__(self, seed: int | None = None):
         self._rng = random.Random(seed)
 
     @abstractmethod
@@ -83,7 +82,7 @@ class TaskLevel(ABC):
 
     @staticmethod
     @abstractmethod
-    def reference_solution() -> List[dict]: ...
+    def reference_solution() -> list[dict]: ...
 
     def _pick_value(self) -> int:
         """Pick a random 32-bit register value (unsigned, matches VM representation)."""
@@ -110,7 +109,7 @@ class TaskLevel(ABC):
 # ===========================================================================
 
 
-def _compute_base_expected(x1_val: int, x2_val: int) -> Dict[int, int]:
+def _compute_base_expected(x1_val: int, x2_val: int) -> dict[int, int]:
     """Compute the base expected register values from L0-L6.
 
     All values are capped to unsigned 32-bit to match what the VM stores.
@@ -133,7 +132,7 @@ def _compute_base_expected(x1_val: int, x2_val: int) -> Dict[int, int]:
     return {3: x3, 4: x4, 5: x5, 6: x6, 7: x7, 8: x8, 9: x9}
 
 
-def _base_ref() -> List[dict]:
+def _base_ref() -> list[dict]:
     """Reference instructions for cumulative L0-L6."""
     return [
         {"name": "ADDI", "rd": 3, "rs1": 1, "imm": 0},  # L0: x3 = x1
@@ -185,7 +184,7 @@ class Level0(TaskLevel):
         return compute_difficulty(1, 1, 1)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return [{"name": "ADDI", "rd": 3, "rs1": 1, "imm": 0}]
 
 
@@ -214,7 +213,7 @@ class Level1(TaskLevel):
         return compute_difficulty(2, 1, 1)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return [
             {"name": "ADDI", "rd": 3, "rs1": 1, "imm": 0},
             {"name": "ADD", "rd": 4, "rs1": 1, "rs2": 1},
@@ -247,7 +246,7 @@ class Level2(TaskLevel):
         return compute_difficulty(3, 1, 2)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return _base_ref()[:3]
 
 
@@ -280,7 +279,7 @@ class Level3(TaskLevel):
         return compute_difficulty(4, 1, 2)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return _base_ref()[:4]
 
 
@@ -313,7 +312,7 @@ class Level4(TaskLevel):
         return compute_difficulty(5, 1, 3)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return _base_ref()[:5]
 
 
@@ -346,7 +345,7 @@ class Level5(TaskLevel):
         return compute_difficulty(6, 2, 5)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return _base_ref()[:6]
 
 
@@ -379,7 +378,7 @@ class Level6(TaskLevel):
         return compute_difficulty(7, 1, 3)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return _base_ref()[:7]
 
 
@@ -412,7 +411,7 @@ class Level7(TaskLevel):
         return compute_difficulty(8, 2, 5)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return _base_ref() + [
             {"name": "LW", "rd": 10, "rs1": 1, "imm": 0},
         ]
@@ -451,7 +450,7 @@ class Level8(TaskLevel):
         return compute_difficulty(10, 2, 6)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return _base_ref() + [
             {"name": "LW", "rd": 10, "rs1": 1, "imm": 0},
             {"name": "LW", "rd": 15, "rs1": 2, "imm": 0},
@@ -496,7 +495,7 @@ class Level9(TaskLevel):
         return compute_difficulty(16, 3, 10)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """Reference: cumulative L0-L8 + loop summing mem[x1..x1+x2-1] -> x12.
         Uses SLLI for word-aligned addressing in the loop body.
         BLT: target=inst 13, current=inst 17, offset=(13-17)*4=-16
@@ -556,7 +555,7 @@ class Level10(TaskLevel):
         return compute_difficulty(20, 3, 12)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """Reference: cumulative L0-L9 + max-finding loop.
         Uses SLLI for word-aligned addressing.
         """
@@ -622,7 +621,7 @@ class Level11(TaskLevel):
         return compute_difficulty(25, 3, 14)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """Reference: L0-L6 + iterative fibonacci -> x14.
         BEQ jumps +20 bytes (5 instructions) to skip loop when n=0.
         BLT jumps -16 bytes back to loop body.
@@ -691,7 +690,7 @@ class Level12(TaskLevel):
         return compute_difficulty(30, 4, 16)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L6 base + self-modifying ADDI construct-and-execute.
 
         Instruction word for ADDI x15, x1, x2:
@@ -774,7 +773,7 @@ class Level13(TaskLevel):
         return compute_difficulty(40, 5, 20)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L6 base + dual self-modifying instruction construct-and-execute.
 
         Instruction 1: ADDI x16, x1, 100
@@ -866,7 +865,7 @@ class Level14(TaskLevel):
         return compute_difficulty(50, 5, 22)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L6 base + multi-program composition via shared memory.
 
         Stores x1 and x2 to shared data, then Program A computes
@@ -932,7 +931,7 @@ class Level15(TaskLevel):
         return compute_difficulty(55, 6, 24)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L6 base + conditional self-modification.
 
         SLT determines which branch to take; BEQ x0,x0 is an
@@ -989,7 +988,7 @@ class Level16(TaskLevel):
         return compute_difficulty(60, 6, 26)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L6 base + shift-and-add: x19 = 4*x1 + 8*x2."""
         return _base_ref() + [
             {"name": "SLLI", "rd": 20, "rs1": 1, "imm": 2},  # x20 = x1 << 2
@@ -1043,7 +1042,7 @@ class Level17(TaskLevel):
         return compute_difficulty(70, 7, 28)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L6 base + meta-evolution: generate and execute sub-program.
 
         Builds ADDI x20, x1, x2 = (x2 << 20) | 0x8A13.
@@ -1102,7 +1101,7 @@ class Level18(TaskLevel):
         return compute_difficulty(75, 8, 30)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L6 base + L17 meta-evolution + L18: XOR + AND mask."""
         # Reuse L17's reference (builds and executes sub-program)
         base_ref = _base_ref() + [
@@ -1160,7 +1159,7 @@ class Level19(TaskLevel):
         return compute_difficulty(80, 9, 32)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L6 base + L17 meta-evolution + L18 XOR + L19 BNE."""
         base_ref = _base_ref() + [
             {"name": "ADDI", "rd": 21, "rs1": 0, "imm": 1},
@@ -1230,7 +1229,7 @@ class Level20(TaskLevel):
         return compute_difficulty(85, 10, 35)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L6 + L17 meta-evolution + L18 XOR + L19 BNE + L20 mem XOR."""
         base_ref = _base_ref() + [
             {"name": "ADDI", "rd": 21, "rs1": 0, "imm": 1},
@@ -1299,7 +1298,7 @@ class Level21(TaskLevel):
         return compute_difficulty(90, 10, 36)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L20 base + L21: XOR chain + shift pipeline."""
         # L17-L20 base (abbreviated — reuse L20's chain)
         base_ref = _base_ref() + [
@@ -1380,7 +1379,7 @@ class Level22(TaskLevel):
         return compute_difficulty(95, 11, 38)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L20 base + L21 chain + L22 nested conditional."""
         # L21 chain
         l21_ref = [
@@ -1479,7 +1478,7 @@ class Level23(TaskLevel):
         return compute_difficulty(100, 12, 40)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L21 base + L22 nested + L23 memory array."""
         # Reuse L22's reference as base
         # For simplicity, add memory operations after L21 chain
@@ -1570,7 +1569,7 @@ class Level24(TaskLevel):
         return compute_difficulty(105, 13, 42)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L23 base + L24 conditional memory."""
         # Reuse L23's reference, add conditional memory at the end
         base_ref = _base_ref() + [
@@ -1667,7 +1666,7 @@ class Level25(TaskLevel):
         return compute_difficulty(110, 14, 45)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         """L0-L24 base + L25: complex computation with all operations."""
         # Reuse L24's reference, add L25 computation
         base_ref = _base_ref() + [
@@ -1732,7 +1731,7 @@ class Level25(TaskLevel):
 # ===========================================================================
 
 
-def _l25_base_ref() -> List[dict]:
+def _l25_base_ref() -> list[dict]:
     """L0-L25 base reference instructions."""
     return _base_ref() + [
         # L17: meta-evolution
@@ -1787,7 +1786,7 @@ def _l25_base_ref() -> List[dict]:
     ]
 
 
-def _compute_l25_expected(v1: int, v2: int) -> Dict[int, int]:
+def _compute_l25_expected(v1: int, v2: int) -> dict[int, int]:
     """Compute expected register values for L0-L25."""
     base = _compute_base_expected(v1, v2)
     base[20] = _cap32(v1 + v2)
@@ -1837,7 +1836,7 @@ class Level26(TaskLevel):
         return compute_difficulty(115, 14, 46)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return _l25_base_ref() + [
             {"name": "SLLI", "rd": 29, "rs1": 1, "imm": 3},
             {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 1},
@@ -1875,7 +1874,7 @@ class Level27(TaskLevel):
         return compute_difficulty(120, 15, 48)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         base = _l25_base_ref() + [
             {"name": "SLLI", "rd": 29, "rs1": 1, "imm": 3},
             {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 1},
@@ -1921,7 +1920,7 @@ class Level28(TaskLevel):
         return compute_difficulty(125, 16, 50)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         base = _l25_base_ref() + [
             {"name": "SLLI", "rd": 29, "rs1": 1, "imm": 3},
             {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 1},
@@ -1972,7 +1971,7 @@ class Level29(TaskLevel):
         return compute_difficulty(130, 17, 52)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         base = _l25_base_ref() + [
             {"name": "SLLI", "rd": 29, "rs1": 1, "imm": 3},
             {"name": "SRLI", "rd": 29, "rs1": 29, "imm": 1},
@@ -2025,7 +2024,7 @@ class Level30(TaskLevel):
         return compute_difficulty(135, 18, 54)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         base = _l25_base_ref() + [
             {"name": "SLLI", "rd": 28, "rs1": 1, "imm": 3},
             {"name": "SRLI", "rd": 28, "rs1": 28, "imm": 1},
@@ -2096,7 +2095,7 @@ class BitManipulationTask(TaskLevel):
         return compute_difficulty(3, 1, 1)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return [
             {"name": "ORI", "rd": 15, "rs1": 1, "imm": 0xFF00},
             {"name": "ANDI", "rd": 16, "rs1": 1, "imm": 0xFF00},
@@ -2135,7 +2134,7 @@ class ArithmeticTask(TaskLevel):
         return compute_difficulty(3, 1, 2)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return [
             {"name": "ADD", "rd": 15, "rs1": 1, "rs2": 2},
             {"name": "SUB", "rd": 16, "rs1": 1, "rs2": 2},
@@ -2172,7 +2171,7 @@ class MemoryAccessTask(TaskLevel):
         return compute_difficulty(4, 1, 2)
 
     @staticmethod
-    def reference_solution() -> List[dict]:
+    def reference_solution() -> list[dict]:
         return [
             {"name": "SW", "rd": 0, "rs1": 1, "rs2": 2, "imm": 0},
             {"name": "ADDI", "rd": 19, "rs1": 2, "imm": 1},
@@ -2257,7 +2256,7 @@ def generate_all_tasks(seed: int = 42):
 # ===========================================================================
 
 if __name__ == "__main__":
-    import sys
+
     from paths import ensure_project_on_path
     ensure_project_on_path()
 

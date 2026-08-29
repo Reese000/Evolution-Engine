@@ -28,7 +28,7 @@ if str(_ROOT) not in sys.path:
 # ══════════════════════════════════════════════════════════════════════════════
 # Each entry: (module_name, class_or_None, method_name, is_static_or_module_func)
 
-METHOD_INVENTORY: List[Tuple[str, str | None, str, bool]] = [
+METHOD_INVENTORY: list[tuple[str, str | None, str, bool]] = [
     # MetaController (3)
     ("meta_controller", "MetaController", "get_cross_cycle_trends", False),
     ("meta_controller", "MetaController", "get_recovery_confidence", False),
@@ -156,7 +156,7 @@ class TestCompleteMethodInventory:
 # ══════════════════════════════════════════════════════════════════════════════
 # Read evolution_engine.py source and verify references exist.
 
-PIPELINE_POINTS: List[str] = [
+PIPELINE_POINTS: list[str] = [
     "adaptive_exploration_bonus",
     "manage_capacity",
     "get_cross_cycle_trends",

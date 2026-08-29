@@ -20,10 +20,9 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from evolution_engine import EvolutionEngine  # noqa: E402
-from config import EvolutionSection  # noqa: E402
-from tests.conftest import make_engine as _make_engine  # noqa: E402
-
+from config import EvolutionSection
+from evolution_engine import EvolutionEngine
+from tests.conftest import make_engine as _make_engine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth

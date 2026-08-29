@@ -12,8 +12,8 @@ Does NOT modify any existing files.
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 import pytest
 
@@ -24,7 +24,6 @@ if _ROOT not in sys.path:
 
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth

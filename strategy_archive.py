@@ -10,7 +10,7 @@ import json
 import os
 import random
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 
 class StrategyArchive:
@@ -29,22 +29,22 @@ class StrategyArchive:
 
     def __init__(self, max_records: int = 10000):
         self.max_records = max_records
-        self._records: List[Dict[str, Any]] = []
-        self._loaded_from: Optional[str] = None
+        self._records: list[dict[str, Any]] = []
+        self._loaded_from: str | None = None
         # Level+strategy indexed counts for O(1) UCB bonus queries.
-        self._level_strategy_counts: Dict[Tuple[int, str], int] = {}
-        self._level_total: Dict[int, int] = {}
+        self._level_strategy_counts: dict[tuple[int, str], int] = {}
+        self._level_total: dict[int, int] = {}
         self._global_total: int = 0
         # Per-strategy record index: strategy -> set of record positions.
         # Enables O(1) filtered access in success_rate instead of O(N) scan.
-        self._strategy_record_idx: Dict[str, set] = {}
+        self._strategy_record_idx: dict[str, set] = {}
         # R13: Level-to-strategies index: level -> set of strategy names.
         # Avoids O(K) scan of _level_strategy_counts keys in best_for_level.
-        self._level_strategies: Dict[int, set] = {}
+        self._level_strategies: dict[int, set] = {}
         # Per-strategy total count across all levels (for O(1) global UCB bonus).
         # Avoids the O(N) sum over _level_strategy_counts keys in exploration_bonus
         # when level is None.
-        self._strategy_total: Dict[str, int] = {}
+        self._strategy_total: dict[str, int] = {}
         # Lazily imported math.sqrt for exploration_bonus
         self._sqrt = None
         # Cached timestamp for record() calls (refreshed per batch via
@@ -55,7 +55,7 @@ class StrategyArchive:
         # call (pop_size times per generation). Invalidated on record/trim.
         self._global_strategy_set: set = set()
         # Delta tracking: champion quality deltas per strategy for tiebreaking.
-        self._champion_deltas: Dict[str, List[float]] = {}
+        self._champion_deltas: dict[str, list[float]] = {}
 
     def refresh_timestamp(self) -> None:
         """Refresh the cached timestamp (call once per generation)."""
@@ -117,7 +117,7 @@ class StrategyArchive:
             self._records = self._records[-self.max_records :]
             self._rebuild_indices()
 
-    def record_batch(self, records: List[Dict[str, Any]]) -> None:
+    def record_batch(self, records: list[dict[str, Any]]) -> None:
         """Bulk-record multiple outcomes.
 
         Uses list.extend for bulk append (single allocation) instead of
@@ -192,7 +192,7 @@ class StrategyArchive:
         self,
         strategy: str,
         window: int = 50,
-        level: Optional[int] = None,
+        level: int | None = None,
         use_laplace: bool = True,
     ) -> float:
         """Compute recency-weighted success rate for a strategy.
@@ -340,7 +340,7 @@ class StrategyArchive:
     def exploration_bonus(
         self,
         strategy: str,
-        level: Optional[int] = None,
+        level: int | None = None,
     ) -> float:
         """Upper Confidence Bound exploration bonus for a strategy.
 
@@ -378,7 +378,7 @@ class StrategyArchive:
         bonus = self._sqrt(2.0 * self._log_fn(N) / n_i)
         return min(bonus, 1.0)  # Cap at 1.0 to avoid dominating the rate
 
-    def best_for_level(self, level: int, skip_strategy: Optional[str] = None) -> Optional[Tuple[str, float]]:
+    def best_for_level(self, level: int, skip_strategy: str | None = None) -> tuple[str, float] | None:
         """Return (strategy_name, success_rate) with highest success rate
         for the given level.
 
@@ -444,7 +444,7 @@ class StrategyArchive:
 
         return (best_strat, best_score)
 
-    def recommend_strategy(self, level: int, skip_strategy: Optional[str] = None) -> str:
+    def recommend_strategy(self, level: int, skip_strategy: str | None = None) -> str:
         """Return the best strategy name for this level.
 
         Falls back to:
@@ -506,13 +506,13 @@ class StrategyArchive:
     def total_records(self) -> int:
         return len(self._records)
 
-    def records_by_level(self, level: int) -> List[Dict[str, Any]]:
+    def records_by_level(self, level: int) -> list[dict[str, Any]]:
         """Get all records for a specific level.
 
         Uses the _level_strategies index to enumerate strategies at this level,
         then uses per-strategy indices for filtered access.
         """
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         records = self._records
         strategies = self._level_strategies.get(level)
         if not strategies:
@@ -525,7 +525,7 @@ class StrategyArchive:
                         result.append(records[i])
         return result
 
-    def records_by_strategy(self, strategy: str) -> List[Dict[str, Any]]:
+    def records_by_strategy(self, strategy: str) -> list[dict[str, Any]]:
         """Get all records for a specific strategy.
 
         Uses the per-strategy index for O(K) access instead of O(N) scan.
@@ -536,9 +536,9 @@ class StrategyArchive:
         records = self._records
         return [records[i] for i in indices if i < len(records)]
 
-    def get_strategy_history(self, strategy: str, level: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_strategy_history(self, strategy: str, level: int | None = None) -> list[dict[str, Any]]:
         """Return recent records for a specific strategy."""
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         for r in reversed(self._records):
             if r["strategy"] != strategy:
                 continue
@@ -549,14 +549,14 @@ class StrategyArchive:
                 break
         return result
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         """Return a summary dict of all recorded strategies.
 
         Uses _strategy_total for counts (O(K) vs O(N) full scan) but still
         needs a single pass for successes and levels (these aren't indexed).
         """
         # Use _strategy_total for counts (avoids counting from records)
-        strategies: Dict[str, Dict[str, Any]] = {}
+        strategies: dict[str, dict[str, Any]] = {}
         for strat, count in self._strategy_total.items():
             strategies[strat] = {"count": count, "successes": 0, "levels": set()}
 
@@ -669,7 +669,7 @@ class StrategyArchive:
             self._global_strategy_set.update(strats)
 
     def decay_level_records(
-        self, level: int, factor: float = 0.5, rng: Optional[random.Random] = None, level_dependent: bool = False
+        self, level: int, factor: float = 0.5, rng: random.Random | None = None, level_dependent: bool = False
     ) -> int:
         """Decay records at a given level by flipping `success` toward False.
 
@@ -758,7 +758,7 @@ class StrategyArchive:
             return 0.0
         return sum(deltas) / len(deltas)
 
-    def per_level_effectiveness(self, strategy: str) -> Dict[int, float]:
+    def per_level_effectiveness(self, strategy: str) -> dict[int, float]:
         """Return effectiveness score per level for a given strategy.
 
         Effectiveness = successful_delta_count / total_records_at_level,
@@ -775,8 +775,8 @@ class StrategyArchive:
         if not indices:
             return {}
 
-        level_counts: Dict[int, int] = {}
-        level_successes: Dict[int, int] = {}
+        level_counts: dict[int, int] = {}
+        level_successes: dict[int, int] = {}
         for idx in indices:
             rec = self._records[idx]
             lev = rec["level"]
@@ -784,7 +784,7 @@ class StrategyArchive:
             if rec.get("success", False):
                 level_successes[lev] = level_successes.get(lev, 0) + 1
 
-        result: Dict[int, float] = {}
+        result: dict[int, float] = {}
         for lev, total in level_counts.items():
             successful = level_successes.get(lev, 0)
             result[lev] = successful / total if total > 0 else 0.0
@@ -821,7 +821,7 @@ class StrategyArchive:
 
     # ── Diversity ────────────────────────────────────────────────────
 
-    def get_strategy_diversity(self, level: Optional[int] = None) -> float:
+    def get_strategy_diversity(self, level: int | None = None) -> float:
         """Compute Shannon entropy of strategy distribution, normalized to [0, 1].
 
         1.0 = perfectly uniform distribution (maximum diversity).
@@ -831,7 +831,7 @@ class StrategyArchive:
             level: Optional level filter. If None, uses all records.
         """
         # Count records per strategy
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
         if level is not None:
             strategies = self._level_strategies.get(level)
             if not strategies:
@@ -860,7 +860,7 @@ class StrategyArchive:
         max_entropy = math.log(len(counts)) if len(counts) > 1 else 1.0
         return entropy / max_entropy if max_entropy > 0 else 0.0
 
-    def get_dominance_report(self) -> Dict[str, Any]:
+    def get_dominance_report(self) -> dict[str, Any]:
         """Detect monoculture in strategy usage.
 
         Returns dict with:
@@ -882,7 +882,7 @@ class StrategyArchive:
                 "all_strategy_rates": {},
             }
 
-        strat_rates: Dict[str, float] = {}
+        strat_rates: dict[str, float] = {}
         for strat in strategies:
             strat_rates[strat] = self.success_rate(strat, window=100)
 
@@ -905,7 +905,7 @@ class StrategyArchive:
 
     # ── Archive summary ─────────────────────────────────────────────
 
-    def get_archive_summary(self) -> Dict[str, Any]:
+    def get_archive_summary(self) -> dict[str, Any]:
         """Return a comprehensive archive summary.
 
         Returns dict with: total_records, unique_strategies, levels_covered,
@@ -913,12 +913,12 @@ class StrategyArchive:
         """
         global_div = self.get_strategy_diversity()
 
-        per_level_div: Dict[int, float] = {}
+        per_level_div: dict[int, float] = {}
         for lev in self._level_strategies:
             per_level_div[lev] = self.get_strategy_diversity(level=lev)
 
         # Top strategies: best-per-strategy global success rate, up to 5
-        strat_rates: List[Tuple[str, float]] = []
+        strat_rates: list[tuple[str, float]] = []
         for strat in self._global_strategy_set:
             rate = self.success_rate(strat, window=100)
             strat_rates.append((strat, rate))

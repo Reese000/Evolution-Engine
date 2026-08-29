@@ -147,7 +147,7 @@ class TestChampionArchiveSampling:
                 batch = archive.sample_tiered_batch(batch_size=50)
                 assert len(batch) > 0
                 # At least some entries should have come from different tiers
-                levels = set(e.level for e in batch)
+                levels = {e.level for e in batch}
                 assert len(levels) >= 2
 
     def test_empty_archive_returns_empty_batch(self):

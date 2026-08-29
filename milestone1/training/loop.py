@@ -10,17 +10,18 @@ from __future__ import annotations
 import gc
 import os
 import sys
+
+# Ensure project paths are on sys.path so sibling modules resolve.
+from pathlib import Path as _Path
 from typing import Any
 
 import torch
 
-# Ensure project paths are on sys.path so sibling modules resolve.
-from pathlib import Path as _Path
-
 _root = str(_Path(__file__).resolve().parent.parent.parent)
 if _root not in sys.path:
     sys.path.insert(0, _root)
-from paths import MILESTONE1_DIR as BASE_DIR, ensure_project_on_path
+from paths import MILESTONE1_DIR as BASE_DIR
+from paths import ensure_project_on_path
 
 ensure_project_on_path()
 
@@ -58,6 +59,7 @@ def train(
     from data.packing import pad_or_pack_sequences
     from rv32i_mask import decode as rv32i_decode
     from rv32i_model import RV32IFieldTokenizer
+
     from training.checkpoint import find_existing_checkpoint, save_training_checkpoint
     from training.model_factory import load_or_create_model
     from training.schedule import adjust_dropout, build_optimizer_and_schedulers
@@ -75,7 +77,7 @@ def train(
 
     # ── Handle reset/migrate flags ─────────────────────────────────
     if reset_checkpoint and ckpt_path and os.path.isfile(ckpt_path):
-        from training.checkpoint import save_training_checkpoint  # noqa: F811
+        from training.checkpoint import save_training_checkpoint
 
         print(f"[Train] --reset-checkpoint: deleting {os.path.basename(ckpt_path)}")
         os.remove(ckpt_path)
@@ -115,7 +117,7 @@ def train(
     # ── torch.compile for faster training ──────────────────────────
     if device.type == "cuda" and compile_mode:
         try:
-            import triton  # noqa: F401
+            import triton
 
             model = torch.compile(model, mode=compile_mode)
             print(f"[Train] torch.compile enabled (mode={compile_mode})")

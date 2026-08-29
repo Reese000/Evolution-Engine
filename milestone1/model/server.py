@@ -15,13 +15,13 @@ Classes:
     ModelServer        -- Main server integrating cache, dedup, batching
 """
 
+import dataclasses
+import hashlib
+import logging
 import os
 import sys
-import time
-import hashlib
-import dataclasses
 import threading
-import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -36,8 +36,9 @@ _milestone1 = os.path.join(
 if _milestone1 not in sys.path:
     sys.path.insert(0, _milestone1)
 
-from rv32i_model import RV32ITransformer, RV32IFieldTokenizer, RV32IVocab
-from rv32i_mask import decode as rv_decode, encode as rv_encode
+from rv32i_mask import decode as rv_decode
+from rv32i_mask import encode as rv_encode
+from rv32i_model import RV32IFieldTokenizer, RV32ITransformer, RV32IVocab
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +90,9 @@ class ResultCache:
         self.default_ttl = default_ttl
 
         self._lock = threading.Lock()
-        self._cache: Dict[str, Any] = {}          # key -> value
-        self._expiry: Dict[str, float] = {}        # key -> timestamp
-        self._access_order: List[str] = []          # LRU order (most recent at end)
+        self._cache: dict[str, Any] = {}          # key -> value
+        self._expiry: dict[str, float] = {}        # key -> timestamp
+        self._access_order: list[str] = []          # LRU order (most recent at end)
 
         # Statistics
         self._hits = 0
@@ -104,11 +105,11 @@ class ResultCache:
 
     @staticmethod
     def make_key(
-        prompt_tokens: List[int],
+        prompt_tokens: list[int],
         max_new_tokens: int,
         temperature: float,
-        top_k: Optional[int],
-        top_p: Optional[float] = None,
+        top_k: int | None,
+        top_p: float | None = None,
         repetition_penalty: float = 1.1,
     ) -> str:
         """Build a deterministic SHA-256 cache key from generation params.
@@ -139,7 +140,7 @@ class ResultCache:
     #  Public API
     # -----------------------------------------------------------------
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Return the cached value for *key*, or ``None`` on miss / expiry."""
         with self._lock:
             if key not in self._cache:
@@ -160,7 +161,7 @@ class ResultCache:
             self._hits += 1
             return self._cache[key]
 
-    def set(self, key: str, value: Any, ttl: Optional[float] = None) -> None:
+    def set(self, key: str, value: Any, ttl: float | None = None) -> None:
         """Store *value* under *key* with an optional TTL override.
 
         If the cache is at capacity, the least-recently-used entry is evicted.
@@ -200,7 +201,7 @@ class ResultCache:
             self._misses = 0
             self._evictions = 0
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Return a dict with cache statistics."""
         with self._lock:
             total = self._hits + self._misses
@@ -242,11 +243,11 @@ class DeduplicationTracker:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._inflight: Dict[str, List[_PendingRequest]] = {}
+        self._inflight: dict[str, list[_PendingRequest]] = {}
 
     def register(
         self, dedup_key: str, request: "_PendingRequest"
-    ) -> Optional[List["_PendingRequest"]]:
+    ) -> list["_PendingRequest"] | None:
         """Register a new request.
 
         Args:
@@ -267,7 +268,7 @@ class DeduplicationTracker:
             self._inflight[dedup_key] = []
             return None
 
-    def complete(self, dedup_key: str) -> List["_PendingRequest"]:
+    def complete(self, dedup_key: str) -> list["_PendingRequest"]:
         """Mark a deduplication key as completed and return all waiters.
 
         The caller is responsible for signaling all returned waiters with the
@@ -286,15 +287,15 @@ class DeduplicationTracker:
 class _PendingRequest:
     """A single inference request waiting to be batched and executed."""
 
-    prompt_tokens: List[int]
+    prompt_tokens: list[int]
     max_new_tokens: int
     temperature: float
-    top_k: Optional[int]
-    top_p: Optional[float]
+    top_k: int | None
+    top_p: float | None
     repetition_penalty: float
     event: threading.Event = dataclasses.field(default_factory=threading.Event)
-    result: Optional[List[int]] = None
-    error: Optional[Exception] = None
+    result: list[int] | None = None
+    error: Exception | None = None
 
 
 # =====================================================================
@@ -318,8 +319,8 @@ class BatchCollector:
         max_batch_size: int = 16,
         batch_timeout: float = 0.05,
         max_seq_len: int = 1024,
-        cache: Optional[ResultCache] = None,
-        dedup_tracker: Optional[DeduplicationTracker] = None,
+        cache: ResultCache | None = None,
+        dedup_tracker: DeduplicationTracker | None = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -331,9 +332,9 @@ class BatchCollector:
         self.dedup_tracker = dedup_tracker
 
         self._lock = threading.Lock()
-        self._pending: List[_PendingRequest] = []
+        self._pending: list[_PendingRequest] = []
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     # -----------------------------------------------------------------
     #  Lifecycle
@@ -372,11 +373,11 @@ class BatchCollector:
 
     def submit(
         self,
-        prompt_tokens: List[int],
+        prompt_tokens: list[int],
         max_new_tokens: int,
         temperature: float,
-        top_k: Optional[int],
-        top_p: Optional[float],
+        top_k: int | None,
+        top_p: float | None,
         repetition_penalty: float,
     ) -> _PendingRequest:
         """Submit a single inference request for batched execution.
@@ -419,7 +420,7 @@ class BatchCollector:
 
     def _drain_batch(self) -> None:
         """Take up to max_batch_size requests and run them as a batch."""
-        batch: List[_PendingRequest] = []
+        batch: list[_PendingRequest] = []
 
         with self._lock:
             n = min(self.max_batch_size, len(self._pending))
@@ -434,7 +435,7 @@ class BatchCollector:
     def _flush_pending(self) -> None:
         """Process all remaining pending requests (called on shutdown)."""
         while True:
-            batch: List[_PendingRequest] = []
+            batch: list[_PendingRequest] = []
             with self._lock:
                 n = min(self.max_batch_size, len(self._pending))
                 if n == 0:
@@ -447,7 +448,7 @@ class BatchCollector:
     #  Batch execution
     # -----------------------------------------------------------------
 
-    def _run_batch(self, batch: List[_PendingRequest]) -> None:
+    def _run_batch(self, batch: list[_PendingRequest]) -> None:
         """Pad, run model.generate(), slice results, and signal events.
 
         Handles CUDA OOM by splitting the batch in half and retrying.
@@ -481,7 +482,7 @@ class BatchCollector:
             else:
                 self._signal_error(batch[0], e)
 
-    def _execute_batch(self, batch: List[_PendingRequest]) -> None:
+    def _execute_batch(self, batch: list[_PendingRequest]) -> None:
         """Core batched generation logic.
 
         Pads all prompts to the same length, runs a single forward pass,
@@ -493,7 +494,7 @@ class BatchCollector:
         max_prompt_len = max(len(r.prompt_tokens) for r in batch)
 
         # Pad all prompts to the same length
-        padded: List[List[int]] = []
+        padded: list[list[int]] = []
         for req in batch:
             pad_len = max_prompt_len - len(req.prompt_tokens)
             padded.append(
@@ -794,13 +795,13 @@ class ModelServer:
 
     def infer(
         self,
-        prompt_tokens: List[int],
+        prompt_tokens: list[int],
         max_new_tokens: int = 81,
         temperature: float = 0.9,
-        top_k: Optional[int] = 40,
-        top_p: Optional[float] = 0.9,
+        top_k: int | None = 40,
+        top_p: float | None = 0.9,
         repetition_penalty: float = 1.1,
-    ) -> List[int]:
+    ) -> list[int]:
         """Run inference on a single prompt, with caching and batching.
 
         1. Check the result cache for a matching entry.
@@ -888,13 +889,13 @@ class ModelServer:
 
     def infer_batch(
         self,
-        prompts: List[List[int]],
+        prompts: list[list[int]],
         max_new_tokens: int = 81,
         temperature: float = 0.9,
-        top_k: Optional[int] = 40,
-        top_p: Optional[float] = 0.9,
+        top_k: int | None = 40,
+        top_p: float | None = 0.9,
         repetition_penalty: float = 1.1,
-    ) -> List[List[int]]:
+    ) -> list[list[int]]:
         """Run inference on multiple prompts concurrently.
 
         Each prompt is submitted independently through the batch collector,
@@ -911,7 +912,7 @@ class ModelServer:
         Returns:
             List of generated token sequences, one per prompt.
         """
-        results: List[List[int]] = []
+        results: list[list[int]] = []
         for prompt in prompts:
             result = self.infer(
                 prompt_tokens=prompt,
@@ -928,13 +929,13 @@ class ModelServer:
     #  Health & diagnostics
     # -----------------------------------------------------------------
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         """Return a dict describing server status and diagnostics.
 
         Includes GPU memory stats (when available), cache stats, and the
         number of pending requests in the batch collector.
         """
-        info: Dict[str, Any] = {
+        info: dict[str, Any] = {
             "running": self._running,
             "device": str(self.device),
             "model_params": sum(p.numel() for p in self.model.parameters()),
@@ -961,7 +962,7 @@ class ModelServer:
 
         return info
 
-    def invalidate_cache(self, model_path: Optional[str] = None) -> None:
+    def invalidate_cache(self, model_path: str | None = None) -> None:
         """Clear the result cache.
 
         Args:

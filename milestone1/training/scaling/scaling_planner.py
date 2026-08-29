@@ -33,7 +33,7 @@ class ScalingPlanner:
         """Initialize the scaling planner."""
         self._ladder = self.SCALING_LADDER
 
-    def plan(self, current_stage: int, report: SaturationReport) -> Optional[ScalingDecision]:
+    def plan(self, current_stage: int, report: SaturationReport) -> ScalingDecision | None:
         """Plan a scaling decision based on current stage and saturation report.
 
         Args:
@@ -94,7 +94,7 @@ class ScalingPlanner:
             reason=reason,
         )
 
-    def next_stage(self, current_stage: int) -> Optional[Tuple]:
+    def next_stage(self, current_stage: int) -> tuple | None:
         """Get the next stage entry whose VRAM budget fits available GPU memory.
 
         Args:
@@ -113,14 +113,14 @@ class ScalingPlanner:
         # Find next stage that fits in available VRAM
         for i in range(current_stage + 1, len(self._ladder)):
             entry = self._ladder[i]
-            stage, embed, ff, heads, params, vram = entry
+            _stage, _embed, _ff, _heads, _params, vram = entry
 
             if vram <= available_vram:
                 return entry
 
         return None  # No stage fits in available VRAM
 
-    def _get_stage_entry(self, stage: int) -> Optional[Tuple]:
+    def _get_stage_entry(self, stage: int) -> tuple | None:
         """Get a specific stage entry from the ladder.
 
         Args:
@@ -147,7 +147,7 @@ class ScalingPlanner:
             import torch
 
             if torch.cuda.is_available():
-                free, total = torch.cuda.mem_get_info()
+                free, _total = torch.cuda.mem_get_info()
                 return free / (1024**3)  # Convert bytes to GB
         except (ImportError, RuntimeError):
             pass
@@ -163,7 +163,7 @@ class ScalingPlanner:
         """
         return len(self._ladder) - 1
 
-    def stage_config(self, stage: int) -> Optional[Dict]:
+    def stage_config(self, stage: int) -> dict | None:
         """Get the configuration dict for a specific stage.
 
         Args:

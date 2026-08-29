@@ -23,7 +23,7 @@ import argparse
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 from paths import PROJECT_ROOT
 
@@ -79,7 +79,7 @@ class EvolutionSection:
     temperature_end: float = 0.5
     temperature_schedule_generations: int = 200
 
-    def get_config_summary(self) -> Dict[str, Any]:
+    def get_config_summary(self) -> dict[str, Any]:
         """Return a human-readable summary of the evolution configuration."""
         archives_enabled = self.use_novelty_archive or self.use_qd_archive or self.use_strategy_archive
         return {
@@ -96,9 +96,9 @@ class EvolutionSection:
             "total_config_fields": len(self.__dataclass_fields__),
         }
 
-    def validate_config(self) -> List[str]:
+    def validate_config(self) -> list[str]:
         """Validate the configuration and return a list of warnings/errors."""
-        warnings: List[str] = []
+        warnings: list[str] = []
 
         if self.novelty_weight > 0.8:
             warnings.append(

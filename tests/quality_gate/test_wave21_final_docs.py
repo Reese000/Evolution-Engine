@@ -29,18 +29,17 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 # ── lazy imports (one-time, cached by Python) ─────────────────────────────────
+import data_rotation
+from champion_archive import ChampionArchive
 from config import EvolutionSection
 from meta_controller import MetaController
-from strategy_archive import StrategyArchive
-from champion_archive import ChampionArchive
-from novelty import SparseArchive
-from qd_archive import MAPElitesArchive
-from mutation_proposer import DirectedMutator
-from monitoring_alerts import AlertManager
 from metrics import MetricsCollector
+from monitoring_alerts import AlertManager
+from mutation_proposer import DirectedMutator
+from novelty import SparseArchive
 from progression_tracker import ProgressionTracker
-import data_rotation
-
+from qd_archive import MAPElitesArchive
+from strategy_archive import StrategyArchive
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Shared method specs — all 26 new methods across all modules

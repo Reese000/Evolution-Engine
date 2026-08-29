@@ -23,9 +23,14 @@ from __future__ import annotations
 
 import json
 import os
+
+# ------------------------------------------------------------------
+#  Import project model classes
+# ------------------------------------------------------------------
+import sys
 import threading
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -33,18 +38,12 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import torch
 
-# ------------------------------------------------------------------
-#  Import project model classes
-# ------------------------------------------------------------------
-import sys
-
 # Ensure the milestone1 directory is on the path so rv32i_model is importable
 _MILESTONE1_DIR = str(Path(__file__).resolve().parent.parent)
 if _MILESTONE1_DIR not in sys.path:
     sys.path.insert(0, _MILESTONE1_DIR)
 
-from rv32i_model import RV32ITransformer, RV32IFieldTokenizer, RV32IVocab, compute_loss  # noqa: E402
-
+from rv32i_model import RV32IFieldTokenizer, RV32ITransformer, RV32IVocab, compute_loss
 
 # ==================================================================
 #  EvalResult — frozen-ish container for one evaluation run
@@ -72,7 +71,7 @@ class EvalResult:
     # Generalisation
     memorization_score: float = 0.0
     generalization_score: float = 0.0
-    per_level_generalization: Dict[str, float] = field(default_factory=dict)
+    per_level_generalization: dict[str, float] = field(default_factory=dict)
 
     # Hardware utilisation
     gpu_memory_used_mb: float = 0.0
@@ -83,16 +82,16 @@ class EvalResult:
     num_samples: int = 0
 
     # Catch-all
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # Serialisation helpers
     # ------------------------------------------------------------------
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> EvalResult:
+    def from_dict(cls, d: dict[str, Any]) -> EvalResult:
         # Be lenient: only pass known fields
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in d.items() if k in known}
@@ -112,9 +111,9 @@ class MetricsCollector:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._latencies_ms: List[float] = []
-        self._tokens_generated: List[int] = []
-        self._gpu_memory_mb: List[float] = []
+        self._latencies_ms: list[float] = []
+        self._tokens_generated: list[int] = []
+        self._gpu_memory_mb: list[float] = []
 
     # ------------------------------------------------------------------
     def record_inference(
@@ -147,7 +146,7 @@ class MetricsCollector:
             self._gpu_memory_mb.append(gpu_memory_mb)
 
     # ------------------------------------------------------------------
-    def get_summary(self) -> Dict[str, float]:
+    def get_summary(self) -> dict[str, float]:
         """Compute summary statistics from collected samples.
 
         Returns dict with keys: p50_ms, p95_ms, p99_ms,
@@ -234,7 +233,7 @@ class EvaluationManager:
     # ------------------------------------------------------------------
     def evaluate_quality(
         self,
-        eval_data: List[List[int]],
+        eval_data: list[list[int]],
         batch_size: int = 8,
     ) -> EvalResult:
         """Evaluate model quality on tokenised sequences.
@@ -347,7 +346,7 @@ class EvaluationManager:
     def evaluate_performance(
         self,
         num_samples: int = 100,
-        prompt_lengths: Optional[List[int]] = None,
+        prompt_lengths: list[int] | None = None,
     ) -> EvalResult:
         """Measure inference latency and throughput.
 
@@ -470,8 +469,8 @@ class EvaluationManager:
     # ------------------------------------------------------------------
     def run_full_evaluation(
         self,
-        eval_data: List[List[int]],
-        recurrent_data_path: Optional[str] = None,
+        eval_data: list[list[int]],
+        recurrent_data_path: str | None = None,
     ) -> EvalResult:
         """Run quality + performance evaluation and merge results.
 
@@ -494,7 +493,7 @@ class EvaluationManager:
         # --- Generalisation (if recurrent data provided) ---
         gen_score = 0.0
         mem_score = 0.0
-        per_level: Dict[str, float] = {}
+        per_level: dict[str, float] = {}
         if recurrent_data_path and os.path.isfile(recurrent_data_path):
             gen_score, mem_score, per_level = self._evaluate_generalisation(
                 recurrent_data_path
@@ -548,7 +547,7 @@ class EvaluationManager:
     def _evaluate_generalisation(
         self,
         recurrent_data_path: str,
-    ) -> tuple[float, float, Dict[str, float]]:
+    ) -> tuple[float, float, dict[str, float]]:
         """Evaluate memorisation vs generalisation on recurrent data.
 
         The JSONL file is expected to have lines like:
@@ -560,7 +559,7 @@ class EvaluationManager:
         """
         print(f"[Eval] Generalisation eval from {recurrent_data_path}")
 
-        level_data: Dict[str, List[List[int]]] = {}
+        level_data: dict[str, list[list[int]]] = {}
         with open(recurrent_data_path, "r") as f:
             for line in f:
                 line = line.strip()
@@ -579,8 +578,8 @@ class EvaluationManager:
             return 0.0, 0.0, {}
 
         self.model.eval()
-        per_level: Dict[str, float] = {}
-        all_accuracies: List[float] = []
+        per_level: dict[str, float] = {}
+        all_accuracies: list[float] = []
         train_accuracy = 0.0
 
         for level, sequences in sorted(level_data.items()):
@@ -617,12 +616,12 @@ class EvaluationManager:
         print(f"[Eval] Result saved to {path}")
         return str(path)
 
-    def load_history(self) -> List[EvalResult]:
+    def load_history(self) -> list[EvalResult]:
         """Read eval_history.jsonl and return a list of EvalResult."""
         path = self.output_dir / "eval_history.jsonl"
         if not path.exists():
             return []
-        results: List[EvalResult] = []
+        results: list[EvalResult] = []
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -654,7 +653,7 @@ class ReportGenerator:
     # ------------------------------------------------------------------
     def generate_summary_report(
         self,
-        history: Optional[List[EvalResult]] = None,
+        history: list[EvalResult] | None = None,
     ) -> str:
         """Produce a markdown summary report.
 
@@ -674,7 +673,7 @@ class ReportGenerator:
         latest = history[-1]
         previous = history[-2] if len(history) >= 2 else None
 
-        lines: List[str] = []
+        lines: list[str] = []
         lines.append("# RV32I Transformer — Evaluation Report")
         lines.append("")
         lines.append(f"**Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
@@ -684,8 +683,8 @@ class ReportGenerator:
         # --- Latest metrics ---
         lines.append("## Latest Run")
         lines.append("")
-        lines.append(f"| Metric | Value |")
-        lines.append(f"|--------|-------|")
+        lines.append("| Metric | Value |")
+        lines.append("|--------|-------|")
         lines.append(f"| Timestamp | {latest.timestamp} |")
         lines.append(f"| Loss | {latest.loss:.4f} |")
         lines.append(f"| Perplexity | {latest.perplexity:.2f} |")
@@ -762,8 +761,8 @@ class ReportGenerator:
         if latest.generalization_score > 0 or latest.per_level_generalization:
             lines.append("## Generalisation")
             lines.append("")
-            lines.append(f"| Metric | Value |")
-            lines.append(f"|--------|-------|")
+            lines.append("| Metric | Value |")
+            lines.append("|--------|-------|")
             lines.append(f"| Memorisation Score | {latest.memorization_score:.4f} |")
             lines.append(f"| Generalisation Score | {latest.generalization_score:.4f} |")
             lines.append("")
@@ -785,11 +784,11 @@ class ReportGenerator:
         result_b: EvalResult,
     ) -> str:
         """Produce a markdown table comparing two EvalResults."""
-        lines: List[str] = []
+        lines: list[str] = []
         lines.append("# Evaluation Comparison")
         lines.append("")
-        lines.append(f"| Metric | Run A | Run B | Delta |")
-        lines.append(f"|--------|-------|-------|-------|")
+        lines.append("| Metric | Run A | Run B | Delta |")
+        lines.append("|--------|-------|-------|-------|")
 
         fields = [
             ("Timestamp", "timestamp", None),
@@ -858,11 +857,11 @@ class ReportGenerator:
     # ------------------------------------------------------------------
     #  Internal helpers
     # ------------------------------------------------------------------
-    def _load_history(self) -> List[EvalResult]:
+    def _load_history(self) -> list[EvalResult]:
         path = self.output_dir / "eval_history.jsonl"
         if not path.exists():
             return []
-        results: List[EvalResult] = []
+        results: list[EvalResult] = []
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()

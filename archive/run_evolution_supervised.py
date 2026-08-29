@@ -326,7 +326,7 @@ def supervisor_main() -> int:
         extra_args = ["--resume"]
 
         # Run the batch
-        exit_code, output = run_evolution_batch(
+        exit_code, _output = run_evolution_batch(
             cycles=subprocess_cycles,
             gens=args.gens,
             python_path=python_path,
@@ -439,10 +439,10 @@ def kill_ee_subtree() -> int:
                 "powershell.exe",
                 "-NoProfile",
                 "-Command",
-                'Get-CimInstance Win32_Process -Filter "'
+                ('Get-CimInstance Win32_Process -Filter "'
                 "CommandLine LIKE '%run_multi_cycle%' OR "
                 "CommandLine LIKE '%augmentation_subprocess%'"
-                '" | Select-Object -ExpandProperty ProcessId',
+                '" | Select-Object -ExpandProperty ProcessId'),
             ],
             capture_output=True,
             text=True,

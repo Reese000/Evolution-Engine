@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from evolution_engine import EvolutionConfig, EvolutionEngine
 from config import EvolutionSection
-
+from evolution_engine import EvolutionConfig, EvolutionEngine
 
 # ═══════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth

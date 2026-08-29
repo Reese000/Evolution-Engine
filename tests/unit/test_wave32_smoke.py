@@ -16,7 +16,6 @@ from evolution_engine import EvolutionConfig, EvolutionEngine
 # Re-use the conftest factory (not the fixture, to keep tests standalone)
 from tests.conftest import make_engine
 
-
 # ─── TestEngineHealth ───────────────────────────────────────────────────────
 
 

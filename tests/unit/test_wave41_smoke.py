@@ -12,8 +12,7 @@ from __future__ import annotations
 import pytest
 
 from config import Config
-from evolution_engine import EvolutionEngine, EvolutionConfig
-
+from evolution_engine import EvolutionConfig, EvolutionEngine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TestEngineHealth

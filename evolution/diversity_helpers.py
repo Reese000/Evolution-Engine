@@ -6,8 +6,6 @@ novelty tracking, circuit breaker logic, and program analysis.
 
 from __future__ import annotations
 
-from typing import Any
-
 
 # ------------------------------------------------------------------
 # Pure / static helpers (no engine state needed)

@@ -308,9 +308,8 @@ class TestCodeQualityChecks:
         tree = ast.parse(source)
         violations: list[str] = []
         for node in ast.walk(tree):
-            if isinstance(node, ast.ExceptHandler):
-                if node.type is None:
-                    violations.append(f"line {node.lineno}: bare except")
+            if isinstance(node, ast.ExceptHandler) and node.type is None:
+                violations.append(f"line {node.lineno}: bare except")
         assert not violations, (
             f"{filename} has bare except clauses: {violations}"
         )

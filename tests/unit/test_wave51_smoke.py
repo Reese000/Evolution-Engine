@@ -9,9 +9,9 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. EngineHealth — EvolutionEngine basics

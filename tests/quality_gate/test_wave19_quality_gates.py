@@ -265,7 +265,7 @@ def _method_body_lines(
         if not stripped:
             continue
         if not in_docstring:
-            if stripped.startswith('"""') or stripped.startswith("'''"):
+            if stripped.startswith(('"""', "'''")):
                 quote = stripped[:3]
                 # Single-line docstring: opening and closing quotes on same line
                 if stripped.endswith(quote) and len(stripped) > 6:

@@ -13,12 +13,11 @@ Usage:
 """
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 import time
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -108,7 +107,7 @@ class CheckpointManager:
     def load(
         self,
         name: str = "checkpoint_best",
-        config_name: Optional[str] = None,
+        config_name: str | None = None,
         allow_mismatch: bool = False,
     ) -> tuple[Any, dict]:
         """Load checkpoint with optional config validation.
@@ -132,13 +131,12 @@ class CheckpointManager:
 
         # Validate config if requested
         ckpt_config = checkpoint.get("config_name", None)
-        if config_name and ckpt_config and ckpt_config != config_name:
-            if not allow_mismatch:
-                raise CheckpointMismatchError(
-                    f"Checkpoint is '{ckpt_config}' but requested '{config_name}'. "
-                    f"Use allow_mismatch=True to force load, or "
-                    f"start fresh with a new checkpoint."
-                )
+        if config_name and ckpt_config and ckpt_config != config_name and not allow_mismatch:
+            raise CheckpointMismatchError(
+                f"Checkpoint is '{ckpt_config}' but requested '{config_name}'. "
+                f"Use allow_mismatch=True to force load, or "
+                f"start fresh with a new checkpoint."
+            )
 
         meta = checkpoint.get("meta", {})
         return checkpoint, meta
@@ -166,4 +164,3 @@ class CheckpointManager:
 class CheckpointMismatchError(Exception):
     """Raised when checkpoint architecture doesn't match requested config."""
 
-    pass

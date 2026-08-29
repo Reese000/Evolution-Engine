@@ -28,7 +28,7 @@ RECURRENT_FILE = os.path.join(M1_DIR, "recurrent_data.jsonl")
 RECURRENT_DIR = os.path.join(os.path.dirname(__file__), "recurrent_data")
 
 
-def collect_champion_snapshots(engine: Any) -> List[Dict]:
+def collect_champion_snapshots(engine: Any) -> list[dict]:
     """Collect champion programs and metadata from the evolution engine.
 
     Returns a list of snapshots, each containing:
@@ -71,7 +71,7 @@ def collect_champion_snapshots(engine: Any) -> List[Dict]:
         "code_size": champion.code_size,
         "sha256": champion.sha256,
         "trace_entries": len(engine.champion_trace or []),
-        "completed_levels": sorted(list(engine.completed_tasks)),
+        "completed_levels": sorted(engine.completed_tasks),
         "champion_error": engine.champion_error,
     }
 
@@ -83,7 +83,7 @@ def collect_champion_snapshots(engine: Any) -> List[Dict]:
     return snapshots
 
 
-def format_training_examples(snapshots: List[Dict]) -> List[Dict]:
+def format_training_examples(snapshots: list[dict]) -> list[dict]:
     """Format champion snapshots into training examples.
 
     Each example has the format expected by data/loading.py:
@@ -117,7 +117,7 @@ def format_training_examples(snapshots: List[Dict]) -> List[Dict]:
     return examples
 
 
-def save_recurrent_data(examples: List[Dict], filename: str = "recurrent_data.jsonl") -> str:
+def save_recurrent_data(examples: list[dict], filename: str = "recurrent_data.jsonl") -> str:
     """Save training examples to JSONL file.
 
     Writes to milestone1/recurrent_data.jsonl (the canonical path
@@ -126,16 +126,14 @@ def save_recurrent_data(examples: List[Dict], filename: str = "recurrent_data.js
     # Primary path: milestone1/recurrent_data.jsonl (matches training default)
     path = RECURRENT_FILE
     with open(path, "a") as f:
-        for ex in examples:
-            f.write(json.dumps(ex, separators=(",", ":")) + "\n")
+        f.writelines(json.dumps(ex, separators=(",", ":")) + "\n" for ex in examples)
 
     # Also write to legacy subdirectory for backward compat
     legacy_path = os.path.join(RECURRENT_DIR, filename)
     os.makedirs(RECURRENT_DIR, exist_ok=True)
     try:
         with open(legacy_path, "a") as f:
-            for ex in examples:
-                f.write(json.dumps(ex, separators=(",", ":")) + "\n")
+            f.writelines(json.dumps(ex, separators=(",", ":")) + "\n" for ex in examples)
     except OSError:
         pass  # Legacy path is best-effort
 
@@ -163,7 +161,7 @@ def check_ready_for_retrain(min_examples: int = 100) -> bool:
     return count >= min_examples
 
 
-def build_and_save(engine: Any) -> Optional[str]:
+def build_and_save(engine: Any) -> str | None:
     """Main entry point: collect champion data, format, save.
 
     Called by evolution_engine.py when curriculum is STALLED.

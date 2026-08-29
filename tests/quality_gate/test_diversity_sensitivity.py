@@ -4,13 +4,12 @@
 Verifies that _current_diversity actually tracks population diversity
 rather than being stuck at the initial value.
 """
-import sys
 import os
+import sys
 
 # Path setup
-
-from evolution_engine import EvolutionEngine, EvolutionConfig
-from mutation_proposer import make_rv32i, EBREAK
+from evolution_engine import EvolutionConfig, EvolutionEngine
+from mutation_proposer import EBREAK, make_rv32i
 
 
 def _make_engine():

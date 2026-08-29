@@ -136,13 +136,13 @@ def pad_or_pack_sequences(
                     loss_mask[p, offset + 1:offset + slen] = True
                 offset += slen
 
-        result = dict(packed=True, padded=padded, loss_mask=loss_mask,
-                      n_packs=n_packs, waste_pct=waste_pct, max_len=None)
+        result = {"packed": True, "padded": padded, "loss_mask": loss_mask,
+                      "n_packs": n_packs, "waste_pct": waste_pct, "max_len": None}
 
     except Exception as exc:
         print(f"[Train] Sequence packing failed ({exc}), falling back to padding")
-        result = dict(packed=False, padded=None, loss_mask=None,
-                      n_packs=0, waste_pct=0.0, max_len=None)
+        result = {"packed": False, "padded": None, "loss_mask": None,
+                      "n_packs": 0, "waste_pct": 0.0, "max_len": None}
 
     if not result["packed"]:
         # Fallback: simple longest-padding.

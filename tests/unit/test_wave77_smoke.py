@@ -12,8 +12,8 @@ Fast — no VM, no evolution. Does NOT modify any existing files.
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 import pytest
 
@@ -22,10 +22,9 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from tests.conftest import make_engine
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig
-
+from tests.conftest import make_engine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth

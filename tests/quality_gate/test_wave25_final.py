@@ -21,7 +21,7 @@ import pytest
 # Map: (module_name, class_or_none, method_name)
 # class_or_none = None → module-level function/staticmethod imported directly
 
-METHOD_INVENTORY: List[Tuple[str, str | None, str]] = [
+METHOD_INVENTORY: list[tuple[str, str | None, str]] = [
     # champion_archive.py — ChampionArchive
     ("champion_archive", "ChampionArchive", "quality_weighted_prune"),
     # meta_controller.py — MetaController
@@ -89,7 +89,7 @@ class TestCompleteMethodInventory:
 # ---------------------------------------------------------------------------
 # Read evolution_engine.py source and verify references exist.
 
-PIPELINE_POINTS: List[str] = [
+PIPELINE_POINTS: list[str] = [
     "adaptive_exploration_bonus",
     "manage_capacity",
     "get_cross_cycle_trends",

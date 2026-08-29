@@ -124,7 +124,7 @@ result = subprocess.run(
         "wsl",
         "bash",
         "-c",
-        f'cd "/mnt/c/Users/reese/Projects/Evolution Engine" && ' f"/root/venv/bin/python -c {repr(LOOP_SCRIPT)}",
+        (f'cd "/mnt/c/Users/reese/Projects/Evolution Engine" && ' f"/root/venv/bin/python -c {LOOP_SCRIPT!r}"),
     ],
     capture_output=True,
     text=True,

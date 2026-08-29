@@ -6,7 +6,6 @@ import sys
 import unittest
 
 
-
 class TestValidateProgram(unittest.TestCase):
     """Test the static validate_program method."""
 
@@ -42,7 +41,7 @@ class TestValidateProgram(unittest.TestCase):
     def test_valid_program(self):
         """Typical valid program with EBREAK at end."""
         prog = [0x00100013, 0x00200013, 0x00300013, 0x00100073]
-        valid, reason = self._validate(prog)
+        valid, _reason = self._validate(prog)
         self.assertTrue(valid)
 
     def test_overflow(self):
@@ -60,7 +59,7 @@ class TestValidateProgram(unittest.TestCase):
     def test_many_ebreaks_at_end(self):
         """Program with many trailing EBREAKs but valid body is OK."""
         prog = [0x00100013, 0x00200013, 0x00300013] + [0x00100073] * 10
-        valid, reason = self._validate(prog)
+        valid, _reason = self._validate(prog)
         self.assertTrue(valid)
 
 

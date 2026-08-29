@@ -112,10 +112,8 @@ class MAPElitesArchive:
     def _update_bounds(self, descriptor: list[float]) -> None:
         """Update running descriptor min/max (for diagnostics only)."""
         for i in range(2):
-            if descriptor[i] < self._descriptor_min[i]:
-                self._descriptor_min[i] = descriptor[i]
-            if descriptor[i] > self._descriptor_max[i]:
-                self._descriptor_max[i] = descriptor[i]
+            self._descriptor_min[i] = min(self._descriptor_min[i], descriptor[i])
+            self._descriptor_max[i] = max(self._descriptor_max[i], descriptor[i])
 
     def _distance(self, a: list[float], b: list[float]) -> float:
         """Manhattan distance between two 2-D descriptors."""
@@ -395,9 +393,8 @@ class MAPElitesArchive:
         """
         best: dict[str, Any] | None = None
         for cell in self._grid:
-            if cell is not None:
-                if best is None or cell["fitness"] > best["fitness"]:
-                    best = cell
+            if cell is not None and (best is None or cell["fitness"] > best["fitness"]):
+                best = cell
         return best
 
     def get_fitness_distribution(self) -> dict[str, Any]:
@@ -893,7 +890,7 @@ class MAPElitesArchive:
         }
 
     @classmethod
-    def deserialize(cls, data: dict) -> "MAPElitesArchive":
+    def deserialize(cls, data: dict) -> MAPElitesArchive:
         """Reconstruct an archive from serialized data."""
         archive = cls(bins=data.get("bins", _DEFAULT_BINS))
         for entry in data.get("entries", []):

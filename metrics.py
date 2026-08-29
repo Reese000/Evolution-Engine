@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 
 class MetricsCollector:
@@ -151,10 +151,8 @@ class MetricsCollector:
         for i in range(n):
             v = values[i]
             total += v
-            if v < mn:
-                mn = v
-            if v > mx:
-                mx = v
+            mn = min(mn, v)
+            mx = max(mx, v)
             if i < mid:
                 first_half_sum += v
             else:
@@ -215,7 +213,7 @@ class MetricsCollector:
             os.remove(self.path)
         self._cached_records = None
 
-    def detect_anomalies(self, metric: str, window: int = 20, threshold: float = 2.0) -> List[Dict]:
+    def detect_anomalies(self, metric: str, window: int = 20, threshold: float = 2.0) -> list[dict]:
         """Detect anomalous values in a metric using z-score analysis.
 
         Uses a rolling window to compute mean and standard deviation, then
@@ -245,7 +243,7 @@ class MetricsCollector:
                 values.append(float(v))
                 timestamps.append(r.get("timestamp"))
 
-        anomalies: List[Dict] = []
+        anomalies: list[dict] = []
         n = len(values)
 
         if n == 0:
@@ -284,7 +282,7 @@ class MetricsCollector:
 
         return anomalies
 
-    def correlate_metrics(self, metric_a: str, metric_b: str, window: int = 20) -> Dict[str, Any]:
+    def correlate_metrics(self, metric_a: str, metric_b: str, window: int = 20) -> dict[str, Any]:
         """Compute Pearson correlation between two metrics over a window.
 
         Extracts paired values for both metrics from the most recent records,

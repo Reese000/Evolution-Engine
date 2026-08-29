@@ -6,18 +6,16 @@ APIs return expected shapes.  No actual evolution is run.
 """
 from __future__ import annotations
 
-import sys
 import os
-
+import sys
 
 import pytest
 
-from evolution_engine import EvolutionConfig, EvolutionEngine
 from config import EvolutionSection
+from evolution_engine import EvolutionConfig, EvolutionEngine
 
 # Re-use the conftest factory for engine creation
 from tests.conftest import make_engine
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth

@@ -22,7 +22,7 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from paths import M1_CHECKPOINTS, M1_RECURRENT, PROJECT_ROOT
 
@@ -54,7 +54,7 @@ logger = logging.getLogger("ee.data_rotation")
 # ── Disk Usage Reporting ─────────────────────────────────────────────
 
 
-def get_disk_usage(self_path: str | Path | None = None) -> Dict[str, Any]:
+def get_disk_usage(self_path: str | Path | None = None) -> dict[str, Any]:
     """Report disk usage for the partition containing rotation targets.
 
     Uses :func:`shutil.disk_usage` on the partition that contains the
@@ -184,7 +184,7 @@ def rotate_checkpoints(keep_n: int = DEFAULT_CHECKPOINT_KEEP) -> list[str]:
 # ── Quality-Aware Checkpoint Rotation ────────────────────────────────
 
 
-def quality_aware_rotate_checkpoints(keep_n: int = 5, fitness_scores: Dict[str, float] | None = None) -> list[str]:
+def quality_aware_rotate_checkpoints(keep_n: int = 5, fitness_scores: dict[str, float] | None = None) -> list[str]:
     """Rotate checkpoints while considering fitness scores.
 
     When *fitness_scores* is provided, checkpoints are ranked by their

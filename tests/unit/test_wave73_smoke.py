@@ -22,8 +22,8 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
 from config import EvolutionSection
+from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
 
 # conftest fixtures are auto-discovered by pytest
 

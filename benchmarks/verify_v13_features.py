@@ -13,6 +13,7 @@ import os
 import sys
 
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
 from evolution_engine import EvolutionConfig, EvolutionEngine

@@ -108,7 +108,7 @@ class TestSelectEliteDedupAlignment:
         engine._compute_fitness = lambda prog, trace, eval_budget=None, raw_only=False: float(sum(prog))
         engine.task_instance = {"inputs": {}, "expected_output": {"registers": {}}}
 
-        elites, elite_fits, _idxs = engine._select_elite(programs, results)
+        elites, _elite_fits, _idxs = engine._select_elite(programs, results)
         assert len(elites) <= len(programs), f"Elite count {len(elites)} exceeds population {len(programs)}"
 
 
@@ -169,7 +169,7 @@ class TestSkipEvolutionFlag:
         in main(), so it survives across iterations. Verify it does not
         reset at the top of each cycle."""
         # We test by reading the source file and checking the structure
-        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "run_multi_cycle.py")
+        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "run_multi_cycle.py")
         with open(source_path, encoding="utf-8") as f:
             source = f.read()
 
@@ -435,7 +435,7 @@ class TestValLossNoneDoesNotUndoRollback:
         """If new_ck is the same as the original retrain result but
         no retry succeeded, the code should not blindly copy."""
         # This is a structural test that the new code path exists
-        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "run_multi_cycle.py")
+        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "run_multi_cycle.py")
         with open(source_path, encoding="utf-8") as f:
             source = f.read()
 

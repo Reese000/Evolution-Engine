@@ -207,7 +207,7 @@ class TestLargeScaleStrategyArchive:
         archive = self._populate_archive()
         for strat in self.STRATEGIES[:4]:
             eff = archive.per_level_effectiveness(strat)
-            for level, score in eff.items():
+            for score in eff.values():
                 assert 0.0 <= score <= 1.0
 
     def test_adaptive_exploration_bonus(self):

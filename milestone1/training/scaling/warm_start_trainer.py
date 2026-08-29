@@ -25,8 +25,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -72,8 +72,8 @@ class WarmStartTrainer:
         student_model: nn.Module,
         archive: Any,
         tokenizer: Any,
-        config: Optional[WarmStartConfig] = None,
-        device: Optional[torch.device] = None,
+        config: WarmStartConfig | None = None,
+        device: torch.device | None = None,
     ):
         self.teacher = teacher_model
         self.student = student_model
@@ -226,9 +226,9 @@ class WarmStartTrainer:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _prepare_token_data(self) -> List[torch.Tensor]:
+    def _prepare_token_data(self) -> list[torch.Tensor]:
         """Convert archive entries to padded token tensors."""
-        tensors: List[torch.Tensor] = []
+        tensors: list[torch.Tensor] = []
         for entry in self.archive.entries:
             try:
                 # entry.program_hex is list of "0x..." strings
@@ -272,7 +272,7 @@ class WarmStartTrainer:
         else:
             return self._supervised_loss(student_logits, labels)
 
-    def _validate(self, token_data: List[torch.Tensor]) -> float:
+    def _validate(self, token_data: list[torch.Tensor]) -> float:
         """Compute mean validation loss over token data."""
         if not token_data:
             return float("inf")

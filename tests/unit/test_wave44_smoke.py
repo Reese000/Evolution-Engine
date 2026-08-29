@@ -5,15 +5,15 @@ surface without running any actual evolution cycles.
 """
 from __future__ import annotations
 
+# Import shared factory from conftest
+import os
+import sys
+
 import pytest
 
-from evolution_engine import EvolutionEngine, EvolutionConfig
 from config import EvolutionSection
-
-# Import shared factory from conftest
-import os, sys
+from evolution_engine import EvolutionConfig, EvolutionEngine
 from tests.conftest import make_engine
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth

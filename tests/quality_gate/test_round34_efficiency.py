@@ -35,7 +35,6 @@ from copy import copy
 import pytest
 
 # ── Path setup ────────────────────────────────────────────────────────────
-
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, compute_qd_axes
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from meta_evolution import MetaEvolutionEngine

@@ -9,7 +9,6 @@ milestone0/vm-farm directory layout at import time.
 from __future__ import annotations
 
 from collections import namedtuple
-from typing import Any, Dict, List, Optional
 
 # ──────────────────────────────────────────────────────────────────────
 #  EvalResult namedtuple
@@ -32,8 +31,8 @@ def _run_one_evaluation(
     kernel_path: str,
     program: bytes,
     budget: int,
-    init_regs: Optional[Dict[int, int]] = None,
-    init_mem: Optional[Dict[int, int]] = None,
+    init_regs: dict[int, int] | None = None,
+    init_mem: dict[int, int] | None = None,
 ) -> EvalResult:
     """Execute a single RV32I program via the GPU VM farm.
 

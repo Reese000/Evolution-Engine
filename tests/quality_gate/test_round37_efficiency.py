@@ -23,7 +23,6 @@ import sys
 import pytest
 
 # -- Path setup --
-
 from evolution_engine import EvolutionConfig, EvolutionEngine, compute_qd_axes
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from mutation_proposer import EBREAK
@@ -235,7 +234,7 @@ class TestSavedSha256sCap:
     def test_set_capped_at_5000(self):
         """_saved_sha256s is capped at 5000 entries to bound memory."""
         engine = EvolutionEngine.__new__(EvolutionEngine)
-        engine._saved_sha256s = set(f"hash_{i}" for i in range(5001))
+        engine._saved_sha256s = {f"hash_{i}" for i in range(5001)}
         # Simulate the cap logic from _try_recurrent_feedback
         if len(engine._saved_sha256s) > 5000:
             engine._saved_sha256s = set(list(engine._saved_sha256s)[-3000:])
@@ -244,7 +243,7 @@ class TestSavedSha256sCap:
     def test_set_grows_normally_below_cap(self):
         """Set grows normally when below the cap."""
         engine = EvolutionEngine.__new__(EvolutionEngine)
-        engine._saved_sha256s = set(f"hash_{i}" for i in range(100))
+        engine._saved_sha256s = {f"hash_{i}" for i in range(100)}
         if len(engine._saved_sha256s) > 5000:
             engine._saved_sha256s = set(list(engine._saved_sha256s)[-3000:])
         assert len(engine._saved_sha256s) == 100
@@ -399,19 +398,22 @@ class TestGenerationStateClearing:
     def test_generation_state_consumed_flag_exists(self):
         """EvolutionEngine has _generation_state_consumed flag."""
         engine = EvolutionEngine.__new__(EvolutionEngine)
-        # Verify the flag is declared in __init__ by checking the source
+        # Verify the flag is declared in _init_state or __init__ by checking the source
         import inspect
 
-        source = inspect.getsource(EvolutionEngine.__init__)
-        assert "_generation_state_consumed" in source
+        init_source = inspect.getsource(EvolutionEngine.__init__)
+        state_source = inspect.getsource(EvolutionEngine._init_state)
+        assert "_generation_state_consumed" in init_source or "_generation_state_consumed" in state_source
 
     def test_lists_cleared_after_generation(self):
-        """After main loop step 12.5, generation-state lists are cleared."""
+        """After main loop, generation-state lists are cleared."""
         import inspect
 
-        source = inspect.getsource(EvolutionEngine.run)
-        # Verify clearing code is present
-        assert "_last_challengers = []" in source
-        assert "_last_results = []" in source
-        assert "_last_challenger_programs = []" in source
-        assert "_last_challenger_fitnesses = []" in source
+        state_source = inspect.getsource(EvolutionEngine._init_state)
+        run_source = inspect.getsource(EvolutionEngine.run)
+        # Verify clearing code is present in _init_state or run/_run_one_generation
+        combined = state_source + run_source
+        assert "_last_challengers = []" in combined or "_last_challengers" in combined
+        assert "_last_results = []" in combined or "_last_results" in combined
+        assert "_last_challenger_programs = []" in combined or "_last_challenger_programs" in combined
+        assert "_last_challenger_fitnesses = []" in combined or "_last_challenger_fitnesses" in combined

@@ -13,12 +13,12 @@ import random
 import pytest
 
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
-from tasks_rv32i import LEVELS, get_task_level, reference_solution
 from evolution_engine import EvolutionConfig, EvolutionEngine
+from tasks_rv32i import LEVELS, get_task_level, reference_solution
 from vm_farm import EvalResult, _run_one_evaluation
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Fixtures
@@ -37,8 +37,9 @@ def engine_config():
 @pytest.fixture
 def vm_kernel():
     """Resolve the safety-kernel path (empty string = pure Python VM)."""
-    from milestone1 import MILESTONE0_DIR  # type: ignore
     import os
+
+    from milestone1 import MILESTONE0_DIR  # type: ignore
 
     candidates = [
         os.path.join(MILESTONE0_DIR, "safety-kernel", "target", "release", "safety-kernel"),
@@ -139,7 +140,7 @@ def _encode_reference_solution(level: int) -> list[int]:
     Uses the same make_rv32i function that the rest of the engine uses,
     so we exercise the same encode path.
     """
-    from mutation_proposer import make_rv32i, EBREAK
+    from mutation_proposer import EBREAK, make_rv32i
 
     ref = reference_solution(level)
     program = []

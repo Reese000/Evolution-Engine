@@ -11,11 +11,16 @@ from __future__ import annotations
 import os
 import sys
 
+# Ensure USERNAME is set on Windows — torch's getuser() falls back to
+# the pwd module which does not exist on Windows.
+if os.name == "nt" and "USERNAME" not in os.environ:
+    os.environ["USERNAME"] = os.environ.get("COMPUTERNAME", "test_user")
+
 # Add project root to path so milestone1 modules resolve
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from milestone1.training.scaling.warm_start_trainer import WarmStartConfig, WarmStartTrainer
 

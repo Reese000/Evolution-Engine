@@ -16,8 +16,8 @@ import importlib.util as _ilu
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from milestone1.training.scaling.types import TrendSnapshot
@@ -74,7 +74,7 @@ class CycleMetrics:
     fitness: float
     words: int
     archive_size: int
-    val_loss: Optional[float]
+    val_loss: float | None
     time_s: float
     mg_count: int
     total_challengers: int
@@ -90,7 +90,7 @@ class ProgressionTracker:
 
     def __init__(self, path: str = "champions/progression.jsonl"):
         self.path = path
-        self.history: List[CycleMetrics] = []
+        self.history: list[CycleMetrics] = []
         self._load()
 
     def _load(self) -> None:
@@ -115,11 +115,10 @@ class ProgressionTracker:
     def save(self) -> None:
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         with open(self.path, "w") as f:
-            for m in self.history:
-                f.write(json.dumps(asdict(m)) + "\n")
+            f.writelines(json.dumps(asdict(m)) + "\n" for m in self.history)
 
     @property
-    def last_cycle(self) -> Optional[CycleMetrics]:
+    def last_cycle(self) -> CycleMetrics | None:
         return self.history[-1] if self.history else None
 
     def fitness_trend(self, window: int = 5) -> float:
@@ -158,7 +157,7 @@ class ProgressionTracker:
         words_stable = max(m.words for m in recent) - min(m.words for m in recent) < 3
         return fitness_stable and words_stable
 
-    def suggest_adjustments(self) -> Dict[str, Any]:
+    def suggest_adjustments(self) -> dict[str, Any]:
         """Suggest hyperparameter adjustments based on progression."""
         suggestions = {}
         ft = self.fitness_trend()
@@ -204,7 +203,7 @@ class ProgressionTracker:
                 break
         return count
 
-    def analyze_population_patterns(self, window: int = 5) -> Dict[str, Any]:
+    def analyze_population_patterns(self, window: int = 5) -> dict[str, Any]:
         """Analyze structural patterns in the population across recent cycles.
 
         Used by EvolutionEngine to dynamically scale structural fitness
@@ -335,7 +334,7 @@ class ProgressionTracker:
             "div_pressure": div_pressure,
         }
 
-    def get_plateau_analysis(self, window: int = 10) -> Dict[str, Any]:
+    def get_plateau_analysis(self, window: int = 10) -> dict[str, Any]:
         """Detailed plateau analysis over the last *window* cycles.
 
         Returns
@@ -417,7 +416,7 @@ class ProgressionTracker:
         metric: str,
         window_a: int = 5,
         window_b: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Compare a metric across two consecutive time windows.
 
         *window_b* is the older slice, *window_a* the newer.
@@ -469,7 +468,7 @@ class ProgressionTracker:
         slice_b = self.history[start_b:end_b]  # older window
         slice_a = self.history[end_b:]  # newer window
 
-        def _extract(entries: list, attr_name: str) -> List[float]:
+        def _extract(entries: list, attr_name: str) -> list[float]:
             values = []
             for m in entries:
                 v = getattr(m, attr_name, None)
@@ -480,7 +479,7 @@ class ProgressionTracker:
         vals_b = _extract(slice_b, metric)
         vals_a = _extract(slice_a, metric)
 
-        def _stats(values: List[float]):
+        def _stats(values: list[float]):
             if not values:
                 return 0.0, 0.0
             mean = sum(values) / len(values)
@@ -511,7 +510,7 @@ class ProgressionTracker:
             "window_b_stddev": std_b,
         }
 
-    def emit_snapshot(self, window: int = 20, current_archive_size: int = None) -> "TrendSnapshot":
+    def emit_snapshot(self, window: int = 20, current_archive_size: int | None = None) -> TrendSnapshot:
         """Create a TrendSnapshot from the tracker's history for SaturationDetector.
 
         Parameters
@@ -548,7 +547,7 @@ class ProgressionTracker:
         report = detector.evaluate(snapshot)
         return report.should_scale
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         if not self.history:
             return {"cycles": 0}
         return {
@@ -603,12 +602,12 @@ class TuningPolicy:
     def __init__(self, cooldown: int = 2):
         self.cooldown = cooldown
         # param_name -> cycle number when last adjusted
-        self._last_adjusted: Dict[str, int] = {}
+        self._last_adjusted: dict[str, int] = {}
         # the parameter adjusted in the most recent call (prevents
         # adjusting the same param twice in a row)
-        self._last_param: Optional[str] = None
+        self._last_param: str | None = None
         # cumulative log of all adjustments applied
-        self.adjustment_history: List[TuningAdjustment] = []
+        self.adjustment_history: list[TuningAdjustment] = []
 
     def _eligible(self, param: str, current_cycle: int) -> bool:
         """Check if a parameter is eligible for adjustment."""
@@ -617,16 +616,14 @@ class TuningPolicy:
             return False
         # Cooldown check
         last = self._last_adjusted.get(param, -999)
-        if current_cycle - last < self.cooldown:
-            return False
-        return True
+        return not current_cycle - last < self.cooldown
 
     def compute_adjustments(
         self,
         tracker: ProgressionTracker,
         current_cycle: int,
-        current_config: Optional[Dict[str, Any]] = None,
-    ) -> List[TuningAdjustment]:
+        current_config: dict[str, Any] | None = None,
+    ) -> list[TuningAdjustment]:
         """Compute a prioritized list of adjustments.
 
         Returns the top-eligible adjustment (one per cycle, per the
@@ -653,7 +650,7 @@ class TuningPolicy:
         mg_avg = tracker.mg_ratio_avg()
         stagnant = tracker.is_stagnant()
 
-        candidates: List[TuningAdjustment] = []
+        candidates: list[TuningAdjustment] = []
 
         # -- Rule 1: Fitness plateau ---------------------------------
         if pc >= 5 or (ft < 0 and stagnant):
@@ -732,7 +729,7 @@ class TuningPolicy:
         self._last_param = adjustment.parameter
         self.adjustment_history.append(adjustment)
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         """Return a summary of tuning policy state."""
         return {
             "cooldown": self.cooldown,
@@ -757,7 +754,7 @@ class ParameterActuator:
     """
 
     # Parameter bounds: (min, max)
-    BOUNDS: Dict[str, tuple[float, float]] = {
+    BOUNDS: dict[str, tuple[float, float]] = {
         "mutation_rate": (0.05, 0.8),
         "crossover_rate": (0.0, 0.5),
         "elite_ratio": (0.01, 0.3),
@@ -773,7 +770,7 @@ class ParameterActuator:
 
     def __init__(self):
         self._applied_count: int = 0
-        self._last_applied: Optional[TuningAdjustment] = None
+        self._last_applied: TuningAdjustment | None = None
 
     def _clamp(self, param: str, value: Any) -> Any:
         """Clamp numeric values to valid bounds."""
@@ -808,7 +805,7 @@ class ParameterActuator:
         self._last_applied = adjustment
         return True
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         """Return a summary of actuator state."""
         return {
             "applied_count": self._applied_count,

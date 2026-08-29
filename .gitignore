@@ -12,6 +12,7 @@ Thumbs.db
 .env.local
 venv/
 .venv/
+.venv-win/
 
 # Python
 __pycache__/

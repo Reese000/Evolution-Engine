@@ -15,17 +15,12 @@ meta-generations.
 from __future__ import annotations
 
 import copy
-import json
 import math
-import os
 import random
-import subprocess
-import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from logging_config import get_logger
 
@@ -59,7 +54,7 @@ _EVOLUTION_ENGINE = _SCRIPT_DIR / "evolution_engine.py"
 
 # We import MetaGenome (which does import EvolutionConfig internally) but
 # we do NOT import EvolutionEngine or EvolutionConfig directly at this level.
-from meta_genome import MetaGenome  # noqa: E402
+from meta_genome import MetaGenome
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -100,7 +95,7 @@ _VARIANCE_PENALTY_COEFF: float = _DEFAULT_VARIANCE_PENALTY_COEFF
 # These are known-good configurations from previous meta-evolution runs.
 # The population is seeded with these before filling the rest randomly,
 # giving meta-evolution a head start.
-_SEEDED_META_GENOMES: List[Dict[str, Any]] = [
+_SEEDED_META_GENOMES: list[dict[str, Any]] = [
     # Config A: Default (pop=50, μ=0.3, elite=0.1) — stable baseline
     {
         "mutation_rate": 0.3,
@@ -221,7 +216,7 @@ class MetaEvolutionEngine:
     def __init__(
         self,
         meta_config: MetaEvolutionConfig,
-        rng: Optional[random.Random] = None,
+        rng: random.Random | None = None,
     ) -> None:
         self.config = meta_config
         self._rng: random.Random = rng if rng is not None else random.Random(meta_config.seed)
@@ -267,7 +262,7 @@ class MetaEvolutionEngine:
         seeded = [MetaGenome(**cfg) for cfg in seed_list]
         remaining = max(0, meta_config.meta_population_size - len(seeded))
         random_genomes = [MetaGenome.random(rng=self._rng) for _ in range(remaining)]
-        self.population: List[MetaGenome] = seeded + random_genomes
+        self.population: list[MetaGenome] = seeded + random_genomes
 
         # Log seeded genomes for observability
         if seeded:
@@ -278,24 +273,24 @@ class MetaEvolutionEngine:
             )
 
         # Fitness array: same length as population, -inf means unevaluated
-        self.fitness: List[float] = [float("-inf") for _ in range(meta_config.meta_population_size)]
+        self.fitness: list[float] = [float("-inf") for _ in range(meta_config.meta_population_size)]
 
         # Track the best across all generations
-        self._best_genome: Optional[MetaGenome] = None
+        self._best_genome: MetaGenome | None = None
         self._best_fitness: float = float("-inf")
-        self._best_summary: Optional[Dict[str, Any]] = None
+        self._best_summary: dict[str, Any] | None = None
 
         # Generation-level logging
         self.current_meta_gen: int = 0
-        self.history: List[Dict[str, Any]] = []
+        self.history: list[dict[str, Any]] = []
 
         # Meta-params cache: populated from the first genome decoded during
         # evaluation.  Used to make meta-fitness computation configurable.
-        self._meta_params: Optional[Dict[str, Any]] = None
+        self._meta_params: dict[str, Any] | None = None
         self._num_eval_seeds: int = _DEFAULT_NUM_EVAL_SEEDS
 
     # ── Public API ─────────────────────────────────────────────────────────
-    def run(self) -> Dict[str, Any]:
+    def run(self) -> dict[str, Any]:
         """Execute the meta-evolution loop.
 
         For each meta-generation:
@@ -341,10 +336,8 @@ class MetaEvolutionEngine:
             for f_val in fitness_list:
                 if f_val > _neg_inf:
                     raw_fitness.append(f_val)
-                    if f_val > best_fit:
-                        best_fit = f_val
-                    if f_val < worst_fit:
-                        worst_fit = f_val
+                    best_fit = max(best_fit, f_val)
+                    worst_fit = min(worst_fit, f_val)
             if best_fit == _neg_inf:
                 best_fit = 0.0
                 worst_fit = 0.0
@@ -367,10 +360,8 @@ class MetaEvolutionEngine:
                     worst_fit = float("inf")
                     for f_val in fitness_list:
                         if f_val > _neg_inf:
-                            if f_val > best_fit:
-                                best_fit = f_val
-                            if f_val < worst_fit:
-                                worst_fit = f_val
+                            best_fit = max(best_fit, f_val)
+                            worst_fit = min(worst_fit, f_val)
                     if best_fit == _neg_inf:
                         best_fit = 0.0
                         worst_fit = 0.0
@@ -384,7 +375,7 @@ class MetaEvolutionEngine:
             valid_normalized = [f for f in fitness_list if f > _neg_inf]
             avg_fit = sum(valid_normalized) / len(valid_normalized) if valid_normalized else 0.0
 
-            gen_info: Dict[str, Any] = {
+            gen_info: dict[str, Any] = {
                 "meta_gen": meta_gen,
                 "avg_fitness": avg_fit,
                 "best_fitness": best_fit,
@@ -403,7 +394,7 @@ class MetaEvolutionEngine:
 
         # ── Final summary ─────────────────────────────────────────────────
         total_elapsed = time.time() - start_time
-        meta_summary: Dict[str, Any] = {
+        meta_summary: dict[str, Any] = {
             "meta_generations_completed": self.config.meta_generations,
             "best_meta_fitness": self._best_fitness,
             "best_genome_repr": repr(self._best_genome) if self._best_genome else None,
@@ -449,7 +440,7 @@ class MetaEvolutionEngine:
 
     def _run_eval_cycle(self, genome, config_dict):
         """Run a single evaluation cycle and return fitness metrics."""
-        from evolution_engine import EvolutionEngine, EvolutionConfig
+        from evolution_engine import EvolutionConfig, EvolutionEngine
         eval_config = EvolutionConfig(**config_dict)
         engine = EvolutionEngine(config=eval_config)
         engine._seed_model_path = genome.model_path if hasattr(genome, 'model_path') else ""
@@ -481,7 +472,7 @@ class MetaEvolutionEngine:
             cycle_results.append(result)
         return self._aggregate_eval_results(cycle_results)
     @staticmethod
-    def _compute_meta_fitness(summary: Dict[str, Any], meta_params: Optional[Dict[str, Any]] = None) -> float:
+    def _compute_meta_fitness(summary: dict[str, Any], meta_params: dict[str, Any] | None = None) -> float:
         """Compute a weighted meta-fitness score from a base evolution summary.
 
         The summary dict is expected to contain at least the keys:
@@ -627,7 +618,7 @@ class MetaEvolutionEngine:
             return self.population[winner_idx]
 
         # ── Reproduction ─────────────────────────────────────────────────
-        next_pop: List[MetaGenome] = [elite_genome]
+        next_pop: list[MetaGenome] = [elite_genome]
 
         while len(next_pop) < pop_size:
             # R33: Select fresh parents per pair to maximize genetic
@@ -660,7 +651,7 @@ class MetaEvolutionEngine:
         self.population = next_pop[:pop_size]
         self.fitness = [float("-inf") for _ in range(pop_size)]
 
-    def _log_generation(self, gen_info: Dict[str, Any]) -> None:
+    def _log_generation(self, gen_info: dict[str, Any]) -> None:
         """Log a formatted meta-generation summary via structured logging.
 
         Parameters

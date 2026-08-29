@@ -71,7 +71,7 @@ class TestCheckpointManager:
             mgr.save(model, config_name="small", val_loss=0.5, cycle=1)
 
             # Should not raise
-            ckpt, meta = mgr.load(config_name="medium", allow_mismatch=True)
+            ckpt, _meta = mgr.load(config_name="medium", allow_mismatch=True)
             assert ckpt is not None
 
     def test_exists_returns_correctly(self):

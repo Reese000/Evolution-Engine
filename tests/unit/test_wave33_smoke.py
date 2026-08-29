@@ -9,9 +9,9 @@ types.  No actual evolution runs.
 from __future__ import annotations
 
 import pytest
+
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth

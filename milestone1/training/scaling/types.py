@@ -15,9 +15,9 @@ class TrendSnapshot:
     plateaued and should be scaled to a larger architecture.
     """
 
-    fitness_history: List[float] = field(default_factory=list)
-    val_loss_history: List[float] = field(default_factory=list)
-    max_level_history: List[int] = field(default_factory=list)
+    fitness_history: list[float] = field(default_factory=list)
+    val_loss_history: list[float] = field(default_factory=list)
+    max_level_history: list[int] = field(default_factory=list)
     archive_size: int = 0
     cycles_observed: int = 0
 
@@ -72,8 +72,8 @@ class ScalingDecision:
 
     current_stage: int = 0
     target_stage: int = 0
-    current_config: Dict = field(default_factory=dict)
-    target_config: Dict = field(default_factory=dict)
+    current_config: dict = field(default_factory=dict)
+    target_config: dict = field(default_factory=dict)
     reason: str = ""
 
 

@@ -14,7 +14,7 @@ from typing import Dict
 # TOKEN DICTIONARY — CSS hex values from tokens.css
 # ══════════════════════════════════════════════════════════════════════════════
 
-TOKENS: Dict[str, str] = {
+TOKENS: dict[str, str] = {
     # ── CANVAS (backgrounds) ──────────────────────────────────────────────────
     "canvas_void":     "#0e1013",  # Deepest background
     "canvas_base":     "#14161b",  # App background
@@ -131,7 +131,7 @@ TOKENS: Dict[str, str] = {
 }
 
 # Light mode overrides (for future light terminal themes)
-LIGHT_OVERRIDES: Dict[str, str] = {
+LIGHT_OVERRIDES: dict[str, str] = {
     "canvas_void":     "#f0f1f3",
     "canvas_base":     "#e8e9ec",
     "canvas_surface":  "#e0e1e5",
@@ -155,7 +155,7 @@ def get_token(name: str, fallback: str = "") -> str:
     return TOKENS.get(name, fallback)
 
 
-def get_all_tokens(dark: bool = True) -> Dict[str, str]:
+def get_all_tokens(dark: bool = True) -> dict[str, str]:
     """Get all tokens, optionally with light mode overrides."""
     tokens = dict(TOKENS)
     if not dark:

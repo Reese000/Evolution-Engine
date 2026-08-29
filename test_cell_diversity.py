@@ -1,6 +1,7 @@
 """Test per-cell program diversity tracking in QDArchive."""
-import sys
+
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
 from qd_archive import MAPElitesArchive

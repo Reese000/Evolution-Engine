@@ -10,7 +10,6 @@ import pytest
 
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth
 # ══════════════════════════════════════════════════════════════════════════════

@@ -15,13 +15,19 @@ import os
 import shutil
 import sys
 import tempfile
+
+# Ensure USERNAME is set on Windows — torch's getuser() falls back to
+# the pwd module which does not exist on Windows.
+if os.name == "nt" and "USERNAME" not in os.environ:
+    os.environ["USERNAME"] = os.environ.get("COMPUTERNAME", "test_user")
+
 from dataclasses import dataclass
 from typing import Dict, List
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 # ---------------------------------------------------------------------------
 # Path setup
@@ -57,45 +63,45 @@ from milestone1.training.scaling.warm_start_trainer import WarmStartConfig, Warm
 #   OLD_CONFIG = dict(d_model=256, n_layers=8, n_heads=8, d_ff=1024)
 #   NEW_CONFIG = dict(d_model=512, n_layers=14, n_heads=8, d_ff=1365)
 # The scaling planner uses different naming. Let's align with what _attempt_scale does:
-OLD_MODEL_CONFIG: Dict = dict(
-    vocab_size=2048,
-    d_model=256,
-    n_layers=8,
-    n_heads=8,
-    d_ff=1024,
-    max_seq_len=256,
-    dropout=0.0,
-    tie_weights=True,
-    use_rope=True,
-    use_checkpointing=False,
-)
-NEW_MODEL_CONFIG: Dict = dict(
-    vocab_size=2048,
-    d_model=512,
-    n_layers=14,
-    n_heads=8,
-    d_ff=1365,
-    max_seq_len=256,
-    dropout=0.0,
-    tie_weights=True,
-    use_rope=True,
-    use_checkpointing=False,
-)
+OLD_MODEL_CONFIG: dict = {
+    "vocab_size": 2048,
+    "d_model": 256,
+    "n_layers": 8,
+    "n_heads": 8,
+    "d_ff": 1024,
+    "max_seq_len": 256,
+    "dropout": 0.0,
+    "tie_weights": True,
+    "use_rope": True,
+    "use_checkpointing": False,
+}
+NEW_MODEL_CONFIG: dict = {
+    "vocab_size": 2048,
+    "d_model": 512,
+    "n_layers": 14,
+    "n_heads": 8,
+    "d_ff": 1365,
+    "max_seq_len": 256,
+    "dropout": 0.0,
+    "tie_weights": True,
+    "use_rope": True,
+    "use_checkpointing": False,
+}
 # Scaling planner configs (match SCALING_LADDER naming)
-OLD_PLANNER_CONFIG: Dict = dict(
-    embed_dim=256,
-    ff_dim=1024,
-    num_heads=8,
-    params_approx="9M",
-    vram_budget_gb=4.0,
-)
-NEW_PLANNER_CONFIG: Dict = dict(
-    embed_dim=512,
-    ff_dim=1365,
-    num_heads=8,
-    params_approx="35M",
-    vram_budget_gb=8.5,
-)
+OLD_PLANNER_CONFIG: dict = {
+    "embed_dim": 256,
+    "ff_dim": 1024,
+    "num_heads": 8,
+    "params_approx": "9M",
+    "vram_budget_gb": 4.0,
+}
+NEW_PLANNER_CONFIG: dict = {
+    "embed_dim": 512,
+    "ff_dim": 1365,
+    "num_heads": 8,
+    "params_approx": "35M",
+    "vram_budget_gb": 8.5,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +109,7 @@ NEW_PLANNER_CONFIG: Dict = dict(
 # ---------------------------------------------------------------------------
 
 
-def _make_model(config: Dict, seed: int = 42) -> RV32ITransformer:
+def _make_model(config: dict, seed: int = 42) -> RV32ITransformer:
     """Create an RV32ITransformer from a config dict."""
     torch.manual_seed(seed)
     return RV32ITransformer(
@@ -248,7 +254,7 @@ class _FakeArchive:
     """Lightweight archive with program_hex entries for WarmStartTrainer."""
 
     class _Entry:
-        def __init__(self, tokens: List[int]):
+        def __init__(self, tokens: list[int]):
             self.program_hex = [f"0x{t:08x}" for t in tokens]
 
     def __init__(self, n: int = 10, seq_len: int = 9):
@@ -782,7 +788,7 @@ class TestScaleCoordinatorPipeline:
         We exercise each stage of the state machine by calling the
         coordinator's internal methods with mocked collaborators.
         """
-        coord, migrator, warm_start, validator, ckpt_mgr = coordinator
+        coord, migrator, warm_start, validator, _ckpt_mgr = coordinator
 
         # Configure mocks
         migrator.migrate.return_value = MigrationResult(success=True, message="OK")
@@ -837,7 +843,7 @@ class TestScaleCoordinatorPipeline:
 
     def test_coordinator_rolls_back_on_failed_validation(self, coordinator):
         """When validation fails, coordinator should rollback."""
-        coord, migrator, warm_start, validator, ckpt_mgr = coordinator
+        coord, migrator, warm_start, validator, _ckpt_mgr = coordinator
 
         migrator.migrate.return_value = MigrationResult(success=True, message="OK")
         warm_start.warm_start.return_value = {"val_fitness": 0.70, "val_loss": 0.35}
@@ -876,7 +882,7 @@ class TestScaleCoordinatorPipeline:
 
     def test_coordinator_handles_migration_failure(self, coordinator):
         """When migration fails, coordinator should handle gracefully."""
-        coord, migrator, warm_start, validator, ckpt_mgr = coordinator
+        coord, migrator, _warm_start, _validator, _ckpt_mgr = coordinator
 
         migrator.migrate.return_value = MigrationResult(success=False, message="Shape mismatch in qkv")
 

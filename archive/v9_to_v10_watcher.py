@@ -8,7 +8,12 @@ Usage:
   python3 v9_to_v10_watcher.py --force    # Force: kill v9 and launch v10 NOW
   python3 v9_to_v10_watcher.py --status   # Just print status, don't act
 """
-import re, os, sys, time, subprocess, json
+import json
+import os
+import re
+import subprocess
+import sys
+import time
 
 LOG_PATH = "/root/continuous_iteration/run_mc_v9_20260604_042450.log"
 SCRIPT_DIR = "/root/milestone2"

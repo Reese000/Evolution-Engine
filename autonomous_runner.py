@@ -1078,12 +1078,11 @@ class AutonomousRunner:
 
                 # Validate retrain result for NaN / divergence
                 val_loss = result.get("val_loss")
-                if val_loss is not None:
-                    if math.isnan(val_loss) or math.isinf(val_loss):
-                        log(f"  Retrain produced NaN/Inf val_loss on attempt {attempt + 1}")
-                        self._retrain_config.retrain_lr *= 0.5
-                        log(f"  Reduced LR to {self._retrain_config.retrain_lr:.2e}")
-                        continue
+                if val_loss is not None and (math.isnan(val_loss) or math.isinf(val_loss)):
+                    log(f"  Retrain produced NaN/Inf val_loss on attempt {attempt + 1}")
+                    self._retrain_config.retrain_lr *= 0.5
+                    log(f"  Reduced LR to {self._retrain_config.retrain_lr:.2e}")
+                    continue
 
                 return result
 

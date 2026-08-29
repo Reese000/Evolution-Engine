@@ -25,7 +25,6 @@ import random
 import sys
 
 # -- Path setup --
-
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, VMFarm, compute_qd_axes
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from meta_evolution import MetaEvolutionConfig, MetaEvolutionEngine
@@ -385,7 +384,7 @@ class TestStochasticDeleteGuard:
         rng = random.Random(42)
         prog = [0x12345678, EBREAK]
         for _ in range(50):
-            result, desc = DirectedMutator.stochastic_perturbation(prog, rng)
+            result, _desc = DirectedMutator.stochastic_perturbation(prog, rng)
             assert result[-1] == EBREAK or EBREAK in result
 
 

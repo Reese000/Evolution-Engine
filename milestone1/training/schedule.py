@@ -6,7 +6,7 @@ Extracted from the monolithic train_model.py.
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def adjust_dropout(
@@ -76,13 +76,13 @@ def build_optimizer_and_schedulers(
             eta_min=swa_lr_val,
         )
 
-    return dict(
-        optimizer=optimizer,
-        scheduler=scheduler,
-        use_swa=use_swa,
-        swa_model=swa_model,
-        swa_scheduler=swa_scheduler,
-    )
+    return {
+        "optimizer": optimizer,
+        "scheduler": scheduler,
+        "use_swa": use_swa,
+        "swa_model": swa_model,
+        "swa_scheduler": swa_scheduler,
+    }
 
 
 def build_swa_components(

@@ -32,7 +32,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from logging_config import get_logger
 
@@ -75,24 +75,24 @@ class TelemetrySnapshot:
     """
 
     __slots__ = (
-        "cycle",
-        "fitness",
-        "level",
         "champion_words",
-        "val_loss",
+        "cycle",
         "diversity",
+        "fitness",
+        "generations_completed",
+        "level",
         "novelty_size",
         "qd_occupied",
         "qd_total",
-        "traces_count",
         "retrained",
-        "generations_completed",
+        "traces_count",
+        "val_loss",
     )
     cycle: int
     fitness: float
     level: int
     champion_words: int
-    val_loss: Optional[float]  # None = retrain didn't run or wasn't captured
+    val_loss: float | None  # None = retrain didn't run or wasn't captured
     diversity: float  # population diversity at end of cycle
     novelty_size: int
     qd_occupied: int
@@ -101,7 +101,7 @@ class TelemetrySnapshot:
     retrained: bool  # whether retrain ran this cycle
     generations_completed: int
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "cycle": self.cycle,
             "fitness": self.fitness,
@@ -129,7 +129,7 @@ class TuningAction:
         self.reason = reason  # e.g. "stagnation: fitness_plateau"
         self.cycle = cycle  # which cycle this tuning was applied in
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "domain": self.domain,
             "param": self.param,
@@ -176,7 +176,7 @@ class MetaController:
         # ── Checkpoint gating ──────────────────────────────────────────
         checkpoint_acceptance_tolerance: float = 1.0,
         # ── Logging ────────────────────────────────────────────────────
-        log_file: Optional[str] = None,
+        log_file: str | None = None,
     ):
         # Paths
         self.checkpoint_dir = checkpoint_dir
@@ -203,7 +203,7 @@ class MetaController:
         # R34: Cap telemetry to last 100 entries. detect_stagnation only uses
         # the last 5, save_state/get_state_summary only use the last 5/20.
         # Unbounded growth on long multi-cycle runs wastes memory.
-        self.telemetry: List[TelemetrySnapshot] = []
+        self.telemetry: list[TelemetrySnapshot] = []
         self._max_telemetry_len: int = 100
 
         # Best known values
@@ -221,7 +221,7 @@ class MetaController:
         self.recovery_mode: bool = False
         self.recovery_cycles_remaining: int = 0
         self._last_stagnation: StagnationResult = StagnationResult.NORMAL
-        self._tuning_log: List[TuningAction] = []
+        self._tuning_log: list[TuningAction] = []
         # R34: Cap tuning log to prevent unbounded memory growth.
         # get_state_summary only shows last 20, consecutive stagnation
         # counter only uses last 16 ring entries. 200 is sufficient.
@@ -264,12 +264,12 @@ class MetaController:
 
         # R16: Cache stagnation detection result per cycle (both tune_retrain_params
         # and tune_evolution_params call detect_stagnation; cache avoids redundant scan).
-        self._cached_stagnation: Optional[StagnationResult] = None
+        self._cached_stagnation: StagnationResult | None = None
         self._cached_stagnation_len: int = -1  # len(self.telemetry) when cached
 
         # Escalation event history — tracks stagnation detections that triggered
         # tuning actions, with effectiveness score at time of detection.
-        self._escalation_history: List[Dict[str, Any]] = []
+        self._escalation_history: list[dict[str, Any]] = []
 
         # Lazy log file handle (avoids fd exhaustion on long runs)
         self._log_file = None
@@ -315,13 +315,11 @@ class MetaController:
 
         self.last_level = snapshot.level
 
-        if snapshot.champion_words > self.best_champion_words:
-            self.best_champion_words = snapshot.champion_words
+        self.best_champion_words = max(self.best_champion_words, snapshot.champion_words)
 
         # Update best val loss if we got a valid measurement
         if snapshot.val_loss is not None and snapshot.val_loss > 0:
-            if snapshot.val_loss < self._best_val_loss:
-                self._best_val_loss = snapshot.val_loss
+            self._best_val_loss = min(self._best_val_loss, snapshot.val_loss)
             self._consecutive_none_val_loss = 0
         else:
             self._consecutive_none_val_loss += 1
@@ -371,8 +369,7 @@ class MetaController:
         if val_loss <= threshold:
             # Accept — update best val loss
             old_best = self._best_val_loss
-            if val_loss < self._best_val_loss:
-                self._best_val_loss = val_loss
+            self._best_val_loss = min(self._best_val_loss, val_loss)
             self._log(f"Gate: ACCEPT val_loss={val_loss:.4f} " f"(best={old_best:.4f}, threshold={threshold:.4f})")
             self._gated_count += 1
             return True
@@ -454,8 +451,7 @@ class MetaController:
             elif fj > f_max:
                 f_max = fj
             dj = snap.diversity
-            if dj < div_min:
-                div_min = dj
+            div_min = min(div_min, dj)
             vj = snap.val_loss
             if vj is not None:
                 vl_last = vj
@@ -518,7 +514,7 @@ class MetaController:
         self._cached_stagnation_len = tel_len
         return result
 
-    def tune_retrain_params(self, cycle: int) -> Dict[str, Any]:
+    def tune_retrain_params(self, cycle: int) -> dict[str, Any]:
         """Return dynamically tuned retrain hyperparameters.
 
         This is the central tuning function for the retrain pipeline.
@@ -531,7 +527,7 @@ class MetaController:
         Returns:
             Dict of retrain parameters (empty dict = use defaults).
         """
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
 
         # ── Baseline tuning by cycle number ──────────────────────────
         if cycle == 1:
@@ -697,7 +693,7 @@ class MetaController:
 
         return params
 
-    def tune_evolution_params(self, cycle: int) -> Dict[str, Any]:
+    def tune_evolution_params(self, cycle: int) -> dict[str, Any]:
         """Return dynamically tuned evolution hyperparameters.
 
         These are applied as overrides to EvolutionConfig before
@@ -706,7 +702,7 @@ class MetaController:
         Returns:
             Dict of evolution parameters (empty dict = use defaults).
         """
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
         state = self.detect_stagnation()
 
         # Count consecutive stagnation events for escalation
@@ -847,7 +843,7 @@ class MetaController:
 
         return False
 
-    def get_best_checkpoint(self) -> Optional[str]:
+    def get_best_checkpoint(self) -> str | None:
         """Return path to best known checkpoint, if it exists."""
         if os.path.isfile(self.best_checkpoint_path):
             return self.best_checkpoint_path
@@ -871,7 +867,7 @@ class MetaController:
         except (OSError, shutil.Error) as e:
             self._log(f"Snapshot: failed to save pre-cycle checkpoint: {e}")
 
-    def execute_rollback(self, current_checkpoint: str, use_snapshot: bool = False) -> Optional[str]:
+    def execute_rollback(self, current_checkpoint: str, use_snapshot: bool = False) -> str | None:
         """Perform rollback: copy best checkpoint (or pre-cycle snapshot) over current.
 
         Args:
@@ -934,7 +930,7 @@ class MetaController:
             self._log(f"Rollback failed: {e}")
             return None
 
-    def get_state_summary(self) -> Dict[str, Any]:
+    def get_state_summary(self) -> dict[str, Any]:
         """Return a JSON-serializable summary of current state."""
         return {
             "best_fitness": self.best_fitness,
@@ -962,7 +958,7 @@ class MetaController:
             "tuning_history": [a.to_dict() for a in self._tuning_log[-20:]],  # Last 20 actions
         }
 
-    def get_tuning_history_summary(self) -> Dict[str, Any]:
+    def get_tuning_history_summary(self) -> dict[str, Any]:
         """Return a summary of the tuning history.
 
         Provides aggregate stats and recent actions for dashboards
@@ -972,14 +968,14 @@ class MetaController:
         total = len(log)
 
         # Build per-domain counts
-        actions_by_domain: Dict[str, int] = {}
+        actions_by_domain: dict[str, int] = {}
         for action in log:
             actions_by_domain[action.domain] = actions_by_domain.get(action.domain, 0) + 1
 
         # Build per-stagnation-state counts from reason strings.
         # Reasons follow patterns: "stagnation: <value>", "regression: <value>",
         # "recovery", "fallback: <desc>". Extract the state label after the prefix.
-        actions_by_state: Dict[str, int] = {}
+        actions_by_state: dict[str, int] = {}
         for action in log:
             state_label: str
             if action.reason.startswith("stagnation: "):
@@ -1209,7 +1205,7 @@ class MetaController:
     # Effectiveness / tuning introspection
     # ──────────────────────────────────────────────────────────────────
 
-    def get_effectiveness_report(self) -> Dict[str, Any]:
+    def get_effectiveness_report(self) -> dict[str, Any]:
         """Return a comprehensive effectiveness report.
 
         Aggregates stagnation events, tuning actions, and outcomes
@@ -1221,7 +1217,7 @@ class MetaController:
         fallback_actions = [a for a in self._tuning_log if "fallback" in a.reason]
 
         # Count actions by domain
-        domain_counts: Dict[str, int] = {}
+        domain_counts: dict[str, int] = {}
         for a in self._tuning_log:
             domain_counts[a.domain] = domain_counts.get(a.domain, 0) + 1
 
@@ -1239,7 +1235,7 @@ class MetaController:
             "cycles_observed": len(self.telemetry),
         }
 
-    def suggest_parameter_reset(self) -> Dict[str, Any]:
+    def suggest_parameter_reset(self) -> dict[str, Any]:
         """Suggest whether parameters should be reset and to what values.
 
         Returns a dict with:
@@ -1323,7 +1319,7 @@ class MetaController:
         score = max(0.0, min(1.0, base - rollback_penalty + recovery_bonus))
         return score
 
-    def get_recovery_confidence(self) -> Dict[str, Any]:
+    def get_recovery_confidence(self) -> dict[str, Any]:
         """Assess whether recovery mode is working.
 
         Returns a dict with:
@@ -1385,7 +1381,7 @@ class MetaController:
             "should_exit_recovery": should_exit_recovery,
         }
 
-    def get_tuning_escalation_history(self) -> List[Dict[str, Any]]:
+    def get_tuning_escalation_history(self) -> list[dict[str, Any]]:
         """Return a chronological list of all escalation events.
 
         Each event is derived from the tuning log, representing a tuning action
@@ -1396,7 +1392,7 @@ class MetaController:
           - action_taken: description of the tuning action applied
           - effectiveness_before: effectiveness score at time of detection
         """
-        history: List[Dict[str, Any]] = []
+        history: list[dict[str, Any]] = []
         for a in self._tuning_log:
             stagnation_type = a.reason.split(":")[0] if ":" in a.reason else a.reason
             history.append(
@@ -1409,7 +1405,7 @@ class MetaController:
             )
         return history
 
-    def get_cross_cycle_trends(self, window: int = 5) -> Dict[str, Any]:
+    def get_cross_cycle_trends(self, window: int = 5) -> dict[str, Any]:
         """Analyze cross-cycle trends for fitness, val_loss, and diversity.
 
         Uses linear regression across the telemetry history to compute trend
@@ -1562,7 +1558,7 @@ _VAL_LOSS_RE = _re.compile(r"val[_=]?(?:loss)?:\s*([0-9]+\.[0-9]+)")
 _GRAD_NORM_RE = _re.compile(r"grad_norm[/\s](\S+?)\s*[=:]\s*([0-9]+\.?[0-9]*)")
 
 
-def parse_val_loss_from_retrain_log(log_path: str) -> Optional[float]:
+def parse_val_loss_from_retrain_log(log_path: str) -> float | None:
     """Extract final validation loss from a retrain log file.
 
     Matches multiple output formats from train_model.py:
@@ -1594,7 +1590,7 @@ def parse_val_loss_from_retrain_log(log_path: str) -> Optional[float]:
 # ══════════════════════════════════════════════════════════════════════
 
 
-def parse_grad_norms_from_retrain_log(log_path: str) -> Optional[Dict[str, float]]:
+def parse_grad_norms_from_retrain_log(log_path: str) -> dict[str, float] | None:
     """Extract per-layer gradient norms from a retrain log file.
 
     Matches output formats like:
@@ -1607,7 +1603,7 @@ def parse_grad_norms_from_retrain_log(log_path: str) -> Optional[Dict[str, float
     if not os.path.isfile(log_path):
         return None
     try:
-        norms: Dict[str, float] = {}
+        norms: dict[str, float] = {}
         with open(log_path) as f:
             for line in f:
                 m = _GRAD_NORM_RE.search(line)

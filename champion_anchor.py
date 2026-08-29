@@ -19,7 +19,6 @@ _NULL_4: bytes = _struct.pack("<4B", 0, 0, 0, 0)  # 4-byte reserved field
 class IntegrityError(Exception):
     """Raised when a champion file's SHA-256 checksum doesn't match."""
 
-    pass
 
 
 def sha256_program(program: list[int]) -> str:

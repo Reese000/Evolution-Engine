@@ -1291,7 +1291,7 @@ class SparseArchive:
         }
 
     @classmethod
-    def deserialize(cls, data: dict, k_neighbors: int = 10) -> "SparseArchive":
+    def deserialize(cls, data: dict, k_neighbors: int = 10) -> SparseArchive:
         """Reconstruct from serialized data."""
         archive = cls(k_neighbors=k_neighbors, novelty_threshold=data.get("threshold", _DEFAULT_THRESHOLD))
         for entry in data.get("entries", []):

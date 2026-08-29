@@ -30,26 +30,25 @@ _PROJECT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 if _PROJECT not in sys.path:
     sys.path.insert(0, _PROJECT)
 
+from champion_archive import FOUNDATIONAL_LEVELS, ChampionArchive, ChampionEntry
+from config import (
+    AutonomousRunnerSection,
+    Config,
+    EvolutionSection,
+    MetaControllerSection,
+    RetrainSection,
+    load_config,
+)
 from meta_controller import (
     MetaController,
     StagnationResult,
     TelemetrySnapshot,
     TuningAction,
 )
-from strategy_archive import StrategyArchive
-from champion_archive import ChampionArchive, ChampionEntry, FOUNDATIONAL_LEVELS
+from metrics import MetricsCollector
 from novelty import SparseArchive, extract_behavioral_descriptor
 from qd_archive import MAPElitesArchive, QDArchive
-from metrics import MetricsCollector
-from config import (
-    Config,
-    EvolutionSection,
-    RetrainSection,
-    MetaControllerSection,
-    AutonomousRunnerSection,
-    load_config,
-)
-
+from strategy_archive import StrategyArchive
 
 # ══════════════════════════════════════════════════════════════════════
 # Helpers
@@ -59,7 +58,7 @@ def _snap(
     cycle: int = 1,
     fitness: float = 1.0,
     level: int = 0,
-    val_loss: Optional[float] = None,
+    val_loss: float | None = None,
     diversity: float = 0.5,
 ) -> TelemetrySnapshot:
     """Quick TelemetrySnapshot factory."""
@@ -79,7 +78,7 @@ def _snap(
     )
 
 
-def _make_program(length: int = 5, seed: int = 42) -> List[int]:
+def _make_program(length: int = 5, seed: int = 42) -> list[int]:
     """Generate a deterministic RV32I-like program."""
     rng = random.Random(seed)
     # ALU opcodes: low bits 0x33, 0x13; BRANCH 0x63; LOAD 0x03; STORE 0x23; LUI 0x37
@@ -688,7 +687,7 @@ class TestNoveltyComplete:
         for i in range(20):
             desc = self._make_desc(seed=i * 10)
             metadata = {"program": list(range(i, i + 5)), "generation": i}
-            added, score = sa.add_to_archive(desc, metadata, check_threshold=True)
+            added, _score = sa.add_to_archive(desc, metadata, check_threshold=True)
             # First entry always added; later ones may be rejected by threshold
             if i == 0:
                 assert added is True

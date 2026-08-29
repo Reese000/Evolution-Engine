@@ -7,8 +7,6 @@ instance as the first parameter.
 
 from __future__ import annotations
 
-from typing import Any
-
 
 # ------------------------------------------------------------------
 # Pure / near-pure helpers (no or minimal engine state)
@@ -402,7 +400,7 @@ def apply_level_aware_strategy_bias(engine, chosen):
                 _weighted: list = []
                 for _s in _candidates:
                     _w = _lvl_weights.get(_s.value, 1.0)
-                    _count = max(1, int(round(_w * 4)))
+                    _count = max(1, round(_w * 4))
                     _weighted.extend([_s] * _count)
                 chosen = engine.rng.choice(_weighted)
                 engine._log(

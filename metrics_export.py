@@ -87,7 +87,6 @@ class _MetricsHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress default stderr logging."""
-        pass
 
     # -- helpers -------------------------------------------------------
 

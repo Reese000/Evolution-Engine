@@ -10,20 +10,20 @@ Does NOT modify any existing files.
 """
 from __future__ import annotations
 
+import random
 import sys
+from collections import deque
 from pathlib import Path
 
-import random
-from collections import deque
-
 import pytest
+
 # ── path setup ────────────────────────────────────────────────────────────────
 _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
 from config import EvolutionSection
+from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
 from mutation_proposer import EBREAK, make_rv32i
 
 

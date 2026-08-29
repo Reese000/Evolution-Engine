@@ -610,49 +610,56 @@ class TestHallOfFameEdgeCases:
 
 
 class TestEvolutionConfigValidation:
-    """Verify EvolutionConfig __post_init__ clamps invalid values to valid ranges."""
+    """Verify EvolutionConfig __post_init__ raises ValueError for invalid values."""
 
     def test_population_size_zero(self):
-        from evolution_engine import EvolutionConfig
+        import pytest
 
-        cfg = EvolutionConfig(population_size=0)
-        assert cfg.population_size == 4  # Clamped to minimum
+        from evolution_engine import EvolutionConfig
+        with pytest.raises(ValueError, match="population_size"):
+            EvolutionConfig(population_size=0)
 
     def test_max_generations_zero(self):
-        from evolution_engine import EvolutionConfig
+        import pytest
 
-        cfg = EvolutionConfig(max_generations=0)
-        assert cfg.max_generations == 1  # Clamped to minimum
+        from evolution_engine import EvolutionConfig
+        with pytest.raises(ValueError, match="max_generations"):
+            EvolutionConfig(max_generations=0)
 
     def test_mutation_rate_negative(self):
-        from evolution_engine import EvolutionConfig
+        import pytest
 
-        cfg = EvolutionConfig(mutation_rate=-0.1)
-        assert cfg.mutation_rate == 0.0  # Clamped to minimum
+        from evolution_engine import EvolutionConfig
+        with pytest.raises(ValueError, match="mutation_rate"):
+            EvolutionConfig(mutation_rate=-0.1)
 
     def test_mutation_rate_above_one(self):
-        from evolution_engine import EvolutionConfig
+        import pytest
 
-        cfg = EvolutionConfig(mutation_rate=1.5)
-        assert cfg.mutation_rate == 1.0  # Clamped to maximum
+        from evolution_engine import EvolutionConfig
+        with pytest.raises(ValueError, match="mutation_rate"):
+            EvolutionConfig(mutation_rate=1.5)
 
     def test_elite_ratio_too_high(self):
-        from evolution_engine import EvolutionConfig
+        import pytest
 
-        cfg = EvolutionConfig(elite_ratio=1.5)
-        assert cfg.elite_ratio == 1.0  # Clamped to maximum
+        from evolution_engine import EvolutionConfig
+        with pytest.raises(ValueError, match="elite_ratio"):
+            EvolutionConfig(elite_ratio=1.5)
 
     def test_tournament_size_one(self):
-        from evolution_engine import EvolutionConfig
+        import pytest
 
-        cfg = EvolutionConfig(tournament_size=1)
-        assert cfg.tournament_size == 2  # Clamped to minimum
+        from evolution_engine import EvolutionConfig
+        with pytest.raises(ValueError, match="tournament_size"):
+            EvolutionConfig(tournament_size=1)
 
     def test_retrain_lr_zero(self):
-        from evolution_engine import EvolutionConfig
+        import pytest
 
-        cfg = EvolutionConfig(retrain_lr=0.0)
-        assert cfg.retrain_lr == 0.0  # Valid value, no clamping needed
+        from evolution_engine import EvolutionConfig
+        with pytest.raises(ValueError, match="retrain_lr"):
+            EvolutionConfig(retrain_lr=0.0)
 
     def test_valid_config_does_not_raise(self):
         from evolution_engine import EvolutionConfig

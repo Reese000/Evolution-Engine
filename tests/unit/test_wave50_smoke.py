@@ -13,7 +13,6 @@ import pytest
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. EngineHealth — EvolutionEngine basics
 # ──────────────────────────────────────────────────────────────────────────────

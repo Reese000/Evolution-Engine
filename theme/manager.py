@@ -11,8 +11,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .tokens import TOKENS, LIGHT_OVERRIDES, get_token
-from .ansi import ansi_color, ansi_bg, colorize
+from .ansi import ansi_bg, ansi_color, colorize
+from .tokens import LIGHT_OVERRIDES, TOKENS, get_token
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +44,14 @@ class ThemeManager:
     Singleton pattern — use ThemeManager.instance() to get the global manager.
     """
 
-    _instance: Optional["ThemeManager"] = None
+    _instance: ThemeManager | None = None
 
     def __init__(self) -> None:
         self._dark = True
         self._load_preference()
 
     @classmethod
-    def instance(cls) -> "ThemeManager":
+    def instance(cls) -> ThemeManager:
         """Get or create the singleton ThemeManager."""
         if cls._instance is None:
             cls._instance = cls()

@@ -29,15 +29,14 @@ class CheckpointMismatchError(Exception):
     produce garbage output or crash with dimension errors.
     """
 
-    pass
 
 
 # ── Model size configs ──────────────────────────────────────────────────────
 MODEL_SIZE_CONFIGS: dict[str, dict] = {
-    "small": dict(d_model=256, n_layers=6, n_heads=8, d_ff=683),
-    "medium": dict(d_model=256, n_layers=8, n_heads=8, d_ff=1024),
-    "large": dict(d_model=512, n_layers=14, n_heads=8, d_ff=1365),
-    "xlarge": dict(d_model=768, n_layers=16, n_heads=12, d_ff=2048),
+    "small": {"d_model": 256, "n_layers": 6, "n_heads": 8, "d_ff": 683},
+    "medium": {"d_model": 256, "n_layers": 8, "n_heads": 8, "d_ff": 1024},
+    "large": {"d_model": 512, "n_layers": 14, "n_heads": 8, "d_ff": 1365},
+    "xlarge": {"d_model": 768, "n_layers": 16, "n_heads": 12, "d_ff": 2048},
 }
 
 
@@ -169,7 +168,7 @@ def load_or_create_model(
         if not ckpt_cfg:
             if ckpt_sd and isinstance(ckpt_sd, dict) and any(k.startswith("blocks.") for k in ckpt_sd):
                 n_blk = len([k for k in ckpt_sd if k.startswith("blocks.") and "ln1.weight" in k])
-                qkv_key = [k for k in ckpt_sd if k.startswith("blocks.0.attn.qkv.weight")][0]
+                qkv_key = next(k for k in ckpt_sd if k.startswith("blocks.0.attn.qkv.weight"))
                 ckpt_d = ckpt_sd[qkv_key].shape[1]
                 ckpt_l = n_blk
                 print(f"[Train] Empty config -- inferred from weights: {ckpt_l}L, d={ckpt_d}")
@@ -230,7 +229,7 @@ def load_or_create_model(
                         continue
                     new_sd[k] = v
                 sd = new_sd
-            missing, unexpected = model.load_state_dict(sd, strict=False)
+            missing, _unexpected = model.load_state_dict(sd, strict=False)
             if missing:
                 print(f"[Train] Missing keys (randomly initialized): {len(missing)}")
         print(f"[Train] Loaded model: {target_cfg['n_layers']}L, d={target_cfg['d_model']}")

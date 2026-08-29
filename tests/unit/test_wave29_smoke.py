@@ -14,7 +14,6 @@ import pytest
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # TestEngineHealth
 # ══════════════════════════════════════════════════════════════════════════════

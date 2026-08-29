@@ -14,13 +14,13 @@ by mapping compatible weights and randomly initializing new components.
 import logging
 import os
 import sys
-from typing import Dict, List, Optional
 
 import torch
 import torch.nn.functional as F
 
 # Ensure project paths are importable
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
 from rv32i_mask import decode as rv_decode
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 
-def _build_key_map(n_layers: int) -> Dict[str, str]:
+def _build_key_map(n_layers: int) -> dict[str, str]:
     """Build a mapping from old checkpoint keys to new model keys.
 
     Old architecture (in checkpoint):
@@ -164,7 +164,7 @@ class PrefixGenerator:
         checkpoint_path: str,
         temperature: float = 0.9,
         max_new_tokens: int = 64,
-        device: Optional[str] = None,
+        device: str | None = None,
         verbose: bool = True,
         **kwargs,
     ):
@@ -198,7 +198,7 @@ class PrefixGenerator:
             f"PrefixGenerator loaded from {checkpoint_path} " f"(device={self.device}, temp={temperature}, eager=True)"
         )
 
-    def resize(self, new_hidden: int, new_max_tokens: Optional[int] = None) -> None:
+    def resize(self, new_hidden: int, new_max_tokens: int | None = None) -> None:
         """Resize the model's embedding and projection layers to new dimensions.
 
         Pads the token_embedding and lm_head (projection) layers to new_hidden,
@@ -378,7 +378,7 @@ class PrefixGenerator:
         )
         return model.to(self.device)
 
-    def _hex_to_inst_dict(self, hex_str: str) -> Optional[Dict]:
+    def _hex_to_inst_dict(self, hex_str: str) -> dict | None:
         """Convert a hex instruction string to an instruction dict."""
         try:
             word = int(hex_str, 16)
@@ -386,7 +386,7 @@ class PrefixGenerator:
         except (ValueError, TypeError):
             return None
 
-    def _inst_dict_to_hex(self, inst: Dict) -> str:
+    def _inst_dict_to_hex(self, inst: dict) -> str:
         """Convert an instruction dict to a hex string.
 
         Uses the tokenizer to encode, then reconstructs the 32-bit word
@@ -406,7 +406,7 @@ class PrefixGenerator:
             # Fallback: NOP (ADDI x0, x0, 0)
             return "0x00000013"
 
-    def _tokens_to_hex_list(self, token_ids: List[int]) -> List[str]:
+    def _tokens_to_hex_list(self, token_ids: list[int]) -> list[str]:
         """Convert a list of generated token IDs to hex instruction strings.
 
         Parses the flat token stream into instruction groups (9 tokens each,
@@ -641,14 +641,14 @@ class PrefixGenerator:
 
     def complete(
         self,
-        prefix_source: List[str],
+        prefix_source: list[str],
         prefix_count: int = 4,
         num_samples: int = 4,
-        temperature: Optional[float] = None,
+        temperature: float | None = None,
         top_k: int = 40,
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
-    ) -> List[List[str]]:
+    ) -> list[list[str]]:
         """Generate instruction completions from a prefix context.
 
         Args:
@@ -740,14 +740,14 @@ class PrefixGenerator:
     @torch.no_grad()
     def batch_generate(
         self,
-        prefixes: List[List[str]],
+        prefixes: list[list[str]],
         n: int = 3,
         prefix_count: int = 4,
-        temperature: Optional[float] = None,
+        temperature: float | None = None,
         top_k: int = 40,
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
-    ) -> List[List[str]]:
+    ) -> list[list[str]]:
         """Batch-generate completions for multiple prefixes in one forward pass.
 
         Processes all prefixes simultaneously in a single batched forward pass,
@@ -779,8 +779,8 @@ class PrefixGenerator:
             return []
 
         # ── Step 1: Tokenize each prefix independently ──────────────────
-        prefix_token_lists: List[List[int]] = []
-        valid_prefix_indices: List[int] = []  # original indices of valid prefixes
+        prefix_token_lists: list[list[int]] = []
+        valid_prefix_indices: list[int] = []  # original indices of valid prefixes
 
         for i, prefix_source in enumerate(prefixes):
             # Take the last prefix_count instructions as context
@@ -846,7 +846,7 @@ class PrefixGenerator:
         )
 
         # ── Step 5: Split output back into per-prefix groups ────────────
-        all_results: List[List[str]] = [[] for _ in prefixes]
+        all_results: list[list[str]] = [[] for _ in prefixes]
 
         for valid_idx, orig_idx in enumerate(valid_prefix_indices):
             prefix_len = len(prefix_token_lists[valid_idx])  # includes CLS

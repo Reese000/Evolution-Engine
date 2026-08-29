@@ -16,7 +16,7 @@ Provides:
 import random
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # ── Mutation Strategy Enum ───────────────────────────────────────────
 
@@ -102,7 +102,7 @@ _STOCHASTIC_MUTATION_TYPES: tuple[str, ...] = ("replace", "delete", "insert", "i
 
 # Maps low 7 bits (opcode) to category index (0-10) for diversity computation.
 # Used by compute_qd_axes, _compute_population_diversity, and _inject_diversity.
-OPCODE_CATEGORY_MAP: Dict[int, int] = {
+OPCODE_CATEGORY_MAP: dict[int, int] = {
     0x37: 0,  # LUI
     0x17: 1,  # AUIPC
     0x6F: 2,  # JAL
@@ -116,7 +116,7 @@ OPCODE_CATEGORY_MAP: Dict[int, int] = {
     0x73: 10,  # SYSTEM
 }
 
-OPCODE_CATEGORY_NAMES: Dict[int, str] = {
+OPCODE_CATEGORY_NAMES: dict[int, str] = {
     0: "LUI",
     1: "AUIPC",
     2: "JAL",
@@ -133,7 +133,7 @@ OPCODE_CATEGORY_NAMES: Dict[int, str] = {
 NUM_OPCODE_CATEGORIES = 11
 
 # Branch swap pairs (flip funct3 to get opposite branch condition)
-BRANCH_SWAP_PAIRS: Dict[str, str] = {
+BRANCH_SWAP_PAIRS: dict[str, str] = {
     "BEQ": "BNE",
     "BNE": "BEQ",
     "BLT": "BGE",
@@ -143,7 +143,7 @@ BRANCH_SWAP_PAIRS: Dict[str, str] = {
 }
 
 # ALU swap pairs (flip funct7 to swap ADD<->SUB, SRL↔SRA)
-ALU_SWAP_PAIRS: Dict[str, str] = {
+ALU_SWAP_PAIRS: dict[str, str] = {
     "ADD": "SUB",
     "SUB": "ADD",
     "SRL": "SRA",
@@ -164,12 +164,12 @@ class TraceEntry:
         cycle: Cycle/instruction count (u64)
     """
 
-    regs: List[int]
+    regs: list[int]
     pc: int
     cycle: int
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "TraceEntry":
+    def from_dict(cls, d: dict[str, Any]) -> "TraceEntry":
         return cls(
             regs=list(d.get("regs", [0] * 32)),
             pc=d.get("pc", 0),
@@ -193,15 +193,15 @@ class TraceAnalysis:
         error:            Error string from safety-kernel (if any)
     """
 
-    divergence_point: Optional[int]
+    divergence_point: int | None
     divergence_type: str
-    final_regs: List[int]
+    final_regs: list[int]
     trace_length: int
-    suggestion: Dict[str, Any]
-    divergence_pc: Optional[int] = None
-    expected: Dict[str, Any] = field(default_factory=dict)
-    inputs: Dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
+    suggestion: dict[str, Any]
+    divergence_pc: int | None = None
+    expected: dict[str, Any] = field(default_factory=dict)
+    inputs: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
 
 
 # ── TraceAnalyzer ──────────────────────────────────────────────────────
@@ -217,12 +217,12 @@ class TraceAnalyzer:
 
     @staticmethod
     def analyze(
-        trace: List[Dict[str, Any]],
-        expected: Dict[str, Any],
-        inputs: Dict[str, Any],
-        program: Optional[List[int]] = None,
-        error: Optional[str] = None,
-        budget: Optional[int] = None,
+        trace: list[dict[str, Any]],
+        expected: dict[str, Any],
+        inputs: dict[str, Any],
+        program: list[int] | None = None,
+        error: str | None = None,
+        budget: int | None = None,
     ) -> TraceAnalysis:
         """Analyze a safety-kernel execution trace and return failure analysis.
 
@@ -302,10 +302,10 @@ class TraceAnalyzer:
             )
 
         # ── Compare final register state against expected ───
-        expected_regs: Dict = expected.get("registers", {})
+        expected_regs: dict = expected.get("registers", {})
 
         # Normalise keys to int
-        norm_expected: Dict[int, int] = {}
+        norm_expected: dict[int, int] = {}
         for k, v in expected_regs.items():
             if isinstance(k, str):
                 try:
@@ -315,7 +315,7 @@ class TraceAnalyzer:
             else:
                 norm_expected[int(k)] = int(v)
 
-        wrong_regs: Dict[int, Dict[str, int]] = {}
+        wrong_regs: dict[int, dict[str, int]] = {}
         for reg_idx, expected_val in norm_expected.items():
             actual = final_regs[reg_idx] if reg_idx < len(final_regs) else 0
             if actual != expected_val:
@@ -417,7 +417,7 @@ class TraceAnalyzer:
         )
 
     @staticmethod
-    def _extract_pc_from_error(error: str) -> Optional[int]:
+    def _extract_pc_from_error(error: str) -> int | None:
         """Try to extract a PC address from an error string.
 
         Uses pre-compiled regex patterns (module-level) to avoid
@@ -489,7 +489,7 @@ def make_random_rv32i(rng: random.Random) -> int:
         return NOP
 
 
-def find_ebreak_index(program: List[int]) -> Optional[int]:
+def find_ebreak_index(program: list[int]) -> int | None:
     """Find the index of the last EBREAK instruction in a program.
 
     Uses constant-time comparison against the known EBREAK encoding
@@ -503,7 +503,7 @@ def find_ebreak_index(program: List[int]) -> Optional[int]:
     return None
 
 
-def has_ebreak(program: List[int]) -> bool:
+def has_ebreak(program: list[int]) -> bool:
     """Check whether the program contains at least one EBREAK instruction.
 
     Uses the EBREAK constant directly (no decode overhead).
@@ -511,7 +511,7 @@ def has_ebreak(program: List[int]) -> bool:
     return EBREAK in program
 
 
-def trim_dead_code(program: List[int]) -> List[int]:
+def trim_dead_code(program: list[int]) -> list[int]:
     """Remove instructions after the last EBREAK (dead code).
 
     Dead code accumulates from mutations that insert after EBREAK
@@ -525,7 +525,7 @@ def trim_dead_code(program: List[int]) -> List[int]:
     return program
 
 
-def simplify_program(program: List[int]) -> List[int]:
+def simplify_program(program: list[int]) -> list[int]:
     """Simplify a program by removing provably redundant instructions.
 
     Operations:
@@ -556,7 +556,7 @@ def simplify_program(program: List[int]) -> List[int]:
             result.append(EBREAK)
         return result
 
-    result: List[int] = []
+    result: list[int] = []
     prev_was_nop = False
 
     for word in program:
@@ -609,15 +609,15 @@ class DirectedMutator:
     """
 
     # ── Mutation success tracking ───────────────────────────
-    _mutation_success: Dict[str, int] = {}  # description prefix -> success count
-    _mutation_attempts: Dict[str, int] = {}  # description prefix -> attempt count
+    _mutation_success: dict[str, int] = {}  # description prefix -> success count
+    _mutation_attempts: dict[str, int] = {}  # description prefix -> attempt count
     _mutation_history: list = []  # recent (description, fitness_delta) tuples, max 200
 
     # ── Per-program mutation affinity tracking ──────────────
     # Maps program_hash -> mutation_type -> {successes, attempts, total_delta}
-    _program_mutation_outcomes: Dict[str, Dict[str, Dict[str, float]]] = {}
+    _program_mutation_outcomes: dict[str, dict[str, dict[str, float]]] = {}
     # Maps program_hash -> cached opcode category histogram (normalized feature vector)
-    _program_feature_cache: Dict[str, tuple] = {}
+    _program_feature_cache: dict[str, tuple] = {}
     # Maximum number of program hashes to track (LRU eviction when exceeded)
     _PROGRAM_AFFINITY_MAX_ENTRIES: int = 2000
     # Cosine similarity threshold for "similar" programs
@@ -635,7 +635,7 @@ class DirectedMutator:
             DirectedMutator._mutation_history = DirectedMutator._mutation_history[-200:]
 
     @staticmethod
-    def get_mutation_stats() -> Dict[str, Any]:
+    def get_mutation_stats() -> dict[str, Any]:
         """Get mutation success statistics."""
         stats = {}
         for prefix in set(
@@ -659,7 +659,7 @@ class DirectedMutator:
     # ── Per-program mutation affinity ──────────────────────
 
     @staticmethod
-    def _compute_program_hash(program: List[int]) -> str:
+    def _compute_program_hash(program: list[int]) -> str:
         """Compute a stable hash of the instruction sequence for affinity tracking.
 
         Uses struct.pack for binary serialization (same approach as
@@ -672,7 +672,7 @@ class DirectedMutator:
         return hashlib.sha256(data).hexdigest()[:16]
 
     @staticmethod
-    def _compute_program_features(program: List[int]) -> tuple:
+    def _compute_program_features(program: list[int]) -> tuple:
         """Compute a compact opcode-category feature vector for similarity.
 
         Returns a tuple of 11 floats (normalized opcode category counts)
@@ -724,7 +724,7 @@ class DirectedMutator:
 
     @staticmethod
     def record_program_mutation_outcome(
-        program: List[int],
+        program: list[int],
         mutation_type: str,
         success: bool,
         fitness_delta: float = 0.0,
@@ -773,10 +773,10 @@ class DirectedMutator:
 
     @staticmethod
     def get_program_mutation_affinity(
-        program: List[int],
+        program: list[int],
         top_n: int = 5,
-        similarity_threshold: Optional[float] = None,
-    ) -> List[Tuple[str, float, int]]:
+        similarity_threshold: float | None = None,
+    ) -> list[tuple[str, float, int]]:
         """Return mutation strategies ranked by historical success for similar programs.
 
         Finds all previously-tracked programs whose opcode-category
@@ -812,7 +812,7 @@ class DirectedMutator:
         query_features = DirectedMutator._compute_program_features(program)
 
         # Aggregate stats from all similar programs
-        aggregated: Dict[str, Dict[str, float]] = {}  # prefix -> {successes, attempts}
+        aggregated: dict[str, dict[str, float]] = {}  # prefix -> {successes, attempts}
 
         for prog_hash, type_stats in DirectedMutator._program_mutation_outcomes.items():
             cached_features = DirectedMutator._program_feature_cache.get(prog_hash)
@@ -830,7 +830,7 @@ class DirectedMutator:
                 aggregated[prefix]["attempts"] += stats["attempts"]
 
         # Sort by success rate, then by attempts (tiebreak)
-        results: List[Tuple[str, float, int]] = []
+        results: list[tuple[str, float, int]] = []
         for prefix, agg in aggregated.items():
             attempts = agg["attempts"]
             if attempts < 1.0:
@@ -842,7 +842,7 @@ class DirectedMutator:
         return results[:top_n]
 
     @staticmethod
-    def get_program_affinity_stats() -> Dict[str, Any]:
+    def get_program_affinity_stats() -> dict[str, Any]:
         """Return summary statistics for the per-program affinity tracker.
 
         Useful for dashboarding and debugging.  Reports total tracked
@@ -856,7 +856,7 @@ class DirectedMutator:
         )
 
         # Global top mutation types (across all programs)
-        global_stats: Dict[str, Dict[str, float]] = {}
+        global_stats: dict[str, dict[str, float]] = {}
         for type_stats in outcomes.values():
             for prefix, stats in type_stats.items():
                 if prefix not in global_stats:
@@ -892,8 +892,8 @@ class DirectedMutator:
     def get_program_mutation_affinity_by_hash(
         program_hash: str,
         top_n: int = 5,
-        similarity_threshold: Optional[float] = None,
-    ) -> List[Tuple[str, float, int]]:
+        similarity_threshold: float | None = None,
+    ) -> list[tuple[str, float, int]]:
         """Return mutation strategies ranked by historical success for a program hash.
 
         This overload accepts a pre-computed program hash (as returned by
@@ -929,7 +929,7 @@ class DirectedMutator:
             if program_hash not in DirectedMutator._program_mutation_outcomes:
                 return []
             type_stats = DirectedMutator._program_mutation_outcomes[program_hash]
-            results: List[Tuple[str, float, int]] = []
+            results: list[tuple[str, float, int]] = []
             for prefix, stats in type_stats.items():
                 attempts = stats["attempts"]
                 if attempts < 1.0:
@@ -940,7 +940,7 @@ class DirectedMutator:
             return results[:top_n]
 
         # Aggregate stats from all similar programs
-        aggregated: Dict[str, Dict[str, float]] = {}
+        aggregated: dict[str, dict[str, float]] = {}
 
         for prog_hash, type_stats in DirectedMutator._program_mutation_outcomes.items():
             cached_features = DirectedMutator._program_feature_cache.get(prog_hash)
@@ -957,7 +957,7 @@ class DirectedMutator:
                 aggregated[prefix]["successes"] += stats["successes"]
                 aggregated[prefix]["attempts"] += stats["attempts"]
 
-        hash_results: List[Tuple[str, float, int]] = []
+        hash_results: list[tuple[str, float, int]] = []
         for prefix, agg in aggregated.items():
             attempts = agg["attempts"]
             if attempts < 1.0:
@@ -969,7 +969,7 @@ class DirectedMutator:
         return hash_results[:top_n]
 
     @staticmethod
-    def get_program_cached_features(program_hash: str) -> Optional[tuple]:
+    def get_program_cached_features(program_hash: str) -> tuple | None:
         """Return the cached opcode-category feature vector for a program hash.
 
         Returns ``None`` if the hash is not in the feature cache.
@@ -982,12 +982,12 @@ class DirectedMutator:
     # ── Structural helpers ─────────────────────────────────
 
     @staticmethod
-    def find_ebreak_index(program: List[int]) -> Optional[int]:
+    def find_ebreak_index(program: list[int]) -> int | None:
         """Find index of the last EBREAK in the program (delegates to module-level)."""
         return find_ebreak_index(program)
 
     @staticmethod
-    def insert_before_ebreak(program: List[int], new_instr: int) -> List[int]:
+    def insert_before_ebreak(program: list[int], new_instr: int) -> list[int]:
         """Insert an instruction just before the last EBREAK."""
         prog = list(program)
         ebreak_idx = find_ebreak_index(prog)
@@ -999,7 +999,7 @@ class DirectedMutator:
         return prog[:MAX_PROGRAM_LEN]
 
     @staticmethod
-    def insert_seq_before_ebreak(program: List[int], instrs: List[int]) -> List[int]:
+    def insert_seq_before_ebreak(program: list[int], instrs: list[int]) -> list[int]:
         """Insert a sequence of instructions before the last EBREAK."""
         prog = list(program)
         ebreak_idx = find_ebreak_index(prog)
@@ -1012,7 +1012,7 @@ class DirectedMutator:
         return prog[:MAX_PROGRAM_LEN]
 
     @staticmethod
-    def insert_after_ebreak(program: List[int], new_instr: int) -> List[int]:
+    def insert_after_ebreak(program: list[int], new_instr: int) -> list[int]:
         """Insert an instruction after the last EBREAK (dead code territory)."""
         prog = list(program)
         ebreak_idx = find_ebreak_index(prog)
@@ -1027,7 +1027,7 @@ class DirectedMutator:
         return prog[:MAX_PROGRAM_LEN]
 
     @staticmethod
-    def ensure_ebreak(program: List[int]) -> List[int]:
+    def ensure_ebreak(program: list[int]) -> list[int]:
         """Ensure the program has an EBREAK at the end.
 
         Optimized: single find_ebreak_index call replaces both
@@ -1047,12 +1047,12 @@ class DirectedMutator:
 
     @staticmethod
     def mutate(
-        program: List[int],
-        trace: List[Dict[str, Any]],
+        program: list[int],
+        trace: list[dict[str, Any]],
         analysis: TraceAnalysis,
         rng: random.Random,
-        task_level: Optional[int] = None,
-    ) -> Tuple[List[int], str]:
+        task_level: int | None = None,
+    ) -> tuple[list[int], str]:
         """Propose a targeted RV32I mutation based on trace analysis.
 
         Args:
@@ -1126,8 +1126,8 @@ class DirectedMutator:
 
     @staticmethod
     def _handle_illegal_instruction(
-        prog: List[int], analysis: TraceAnalysis, rng: random.Random
-    ) -> Tuple[List[int], str]:
+        prog: list[int], analysis: TraceAnalysis, rng: random.Random
+    ) -> tuple[list[int], str]:
         """Replace an illegal instruction with a safe valid one."""
         div_pc = analysis.divergence_pc
         if div_pc is not None and len(prog) > 0:
@@ -1143,7 +1143,7 @@ class DirectedMutator:
         return [NOP, EBREAK], "replace_illegal_new_program"
 
     @staticmethod
-    def _handle_budget_exhausted(prog: List[int], analysis: TraceAnalysis, rng: random.Random) -> Tuple[List[int], str]:
+    def _handle_budget_exhausted(prog: list[int], analysis: TraceAnalysis, rng: random.Random) -> tuple[list[int], str]:
         """Handle a program that ran out of instruction budget.
 
         Optimized: uses _is_ebreak() bitmask check in candidate filter.
@@ -1162,7 +1162,7 @@ class DirectedMutator:
         return DirectedMutator.insert_before_ebreak(prog, NOP), "insert_nop_budget"
 
     @staticmethod
-    def _handle_wrong_reg(prog: List[int], analysis: TraceAnalysis, rng: random.Random) -> Tuple[List[int], str]:
+    def _handle_wrong_reg(prog: list[int], analysis: TraceAnalysis, rng: random.Random) -> tuple[list[int], str]:
         """Fix wrong register values by injecting LUI/ADDI or ALU sequences."""
         suggestion = analysis.suggestion
         reg = suggestion.get("reg", 10)
@@ -1188,7 +1188,7 @@ class DirectedMutator:
         return (DirectedMutator.insert_before_ebreak(prog, addi), f"inject_addi_r{reg}_{expected}")
 
     @staticmethod
-    def _handle_halted_early(prog: List[int], analysis: TraceAnalysis, rng: random.Random) -> Tuple[List[int], str]:
+    def _handle_halted_early(prog: list[int], analysis: TraceAnalysis, rng: random.Random) -> tuple[list[int], str]:
         """Add more instructions if the program halted too early."""
         new_instr = make_random_rv32i(rng)
         idx = rng.randint(0, len(prog) - 1) if len(prog) > 1 else 0
@@ -1198,7 +1198,7 @@ class DirectedMutator:
     # ── Task-aware mutation ────────────────────────────────
 
     @staticmethod
-    def _task_aware_mutation(prog: List[int], rng: random.Random, task_level: int) -> Tuple[List[int], str]:
+    def _task_aware_mutation(prog: list[int], rng: random.Random, task_level: int) -> tuple[list[int], str]:
         """Apply a curriculum-task-aware mutation.
 
         Uses the progressive register convention: output register = 3 + task_level.
@@ -1377,7 +1377,7 @@ class DirectedMutator:
     # ── Fallback / generic mutations ───────────────────────
 
     @staticmethod
-    def _fallback_mutation(prog: List[int], rng: random.Random) -> Tuple[List[int], str]:
+    def _fallback_mutation(prog: list[int], rng: random.Random) -> tuple[list[int], str]:
         """Apply a generic mutation when no specific analysis is available.
 
         Optimized: uses _is_ebreak() bitmask check instead of full decode
@@ -1423,7 +1423,7 @@ class DirectedMutator:
         return prog, "no_change_fallback"
 
     @staticmethod
-    def _swap_operation(prog: List[int], rng: random.Random) -> Tuple[List[int], str]:
+    def _swap_operation(prog: list[int], rng: random.Random) -> tuple[list[int], str]:
         """Swap funct3/funct7 of an instruction (ADD<->SUB, BEQ<->BNE, etc.).
 
         Optimized: decode instructions lazily — only decode the one chosen
@@ -1432,7 +1432,7 @@ class DirectedMutator:
         full decode for clearly non-ALU/branch instructions.
         """
         # Opcode masks: BRANCH=0x63, ALU_REG=0x33, ALU_IMM=0x13
-        candidates: List[Tuple[int, str, str]] = []
+        candidates: list[tuple[int, str, str]] = []
         for i, word in enumerate(prog):
             if _is_ebreak(word):
                 continue
@@ -1481,7 +1481,7 @@ class DirectedMutator:
         return prog, f"swap_{name}_to_{new_name}"
 
     @staticmethod
-    def _swap_register(prog: List[int], rng: random.Random) -> Tuple[List[int], str]:
+    def _swap_register(prog: list[int], rng: random.Random) -> tuple[list[int], str]:
         """Swap register indices within an instruction."""
         idx = rng.randint(0, len(prog) - 1)
         try:
@@ -1516,7 +1516,7 @@ class DirectedMutator:
         return prog, "no_change_reg_swap"
 
     @staticmethod
-    def _reorder_block(prog: List[int], rng: random.Random) -> Tuple[List[int], str]:
+    def _reorder_block(prog: list[int], rng: random.Random) -> tuple[list[int], str]:
         """Reorder a contiguous block of 3-10 instructions.
 
         Optimized: uses _is_ebreak() bitmask check for EBREAK guard.
@@ -1558,7 +1558,7 @@ class DirectedMutator:
     # ── Immediate perturbation ─────────────────────────────
 
     @staticmethod
-    def immediate_perturbation(prog: List[int], rng: random.Random) -> Tuple[List[int], str]:
+    def immediate_perturbation(prog: list[int], rng: random.Random) -> tuple[list[int], str]:
         """Fine-tune an immediate value in an existing instruction.
 
         Rather than replacing the entire instruction (which loses the
@@ -1603,7 +1603,7 @@ class DirectedMutator:
     # ── Stochastic perturbation ────────────────────────────
 
     @staticmethod
-    def stochastic_perturbation(program: List[int], rng: random.Random) -> Tuple[List[int], str]:
+    def stochastic_perturbation(program: list[int], rng: random.Random) -> tuple[list[int], str]:
         """Single-instruction stochastic perturbation (~10% of mutations).
 
         Picks one of: replace instruction, delete instruction, insert
@@ -1664,19 +1664,19 @@ class DirectedMutator:
 
 
 def propose_mutation(
-    program: List[int],
-    trace: List[Dict[str, Any]],
-    expected: Dict[str, Any],
-    inputs: Dict[str, Any],
+    program: list[int],
+    trace: list[dict[str, Any]],
+    expected: dict[str, Any],
+    inputs: dict[str, Any],
     *,
-    error: Optional[str] = None,
-    budget: Optional[int] = None,
-    rng: Optional[random.Random] = None,
+    error: str | None = None,
+    budget: int | None = None,
+    rng: random.Random | None = None,
     stochastic_prob: float = 0.10,
-    task_level: Optional[int] = None,
+    task_level: int | None = None,
     strategy: Any = None,
     strategy_archive: Any = None,
-) -> Tuple[List[int], str, TraceAnalysis]:
+) -> tuple[list[int], str, TraceAnalysis]:
     """High-level entry point: analyse trace and propose a mutation.
 
     Supports strategy-based routing:
@@ -1793,12 +1793,12 @@ def propose_mutation(
 
 
 def _crossover_mutation(
-    program: List[int],
-    task_level: Optional[int],
+    program: list[int],
+    task_level: int | None,
     rng: random.Random,
-    champion: List[int],
+    champion: list[int],
     champion_crossover_prob: float = 0.7,
-) -> List[int]:
+) -> list[int]:
     """True crossover: blend instructions from two parent programs.
 
     For each instruction slot, picks from the *program* parent with
@@ -1822,7 +1822,7 @@ def _crossover_mutation(
     # that's 50 individual RNG calls. Pre-generating the random values
     # in a batch can reduce overhead by ~15% (fewer Python function call
     # frames). Uses uniform(0,1) array approach via list comprehension.
-    hybrid: List[int] = [0] * max_len  # pre-allocate
+    hybrid: list[int] = [0] * max_len  # pre-allocate
     _rand = rng.random
     prob = champion_crossover_prob
     _prog = program
@@ -1844,7 +1844,7 @@ def _crossover_mutation(
     return hybrid[:MAX_PROGRAM_LEN]
 
 
-def generate_seed_program(length: int = 5, rng: Optional[random.Random] = None) -> List[int]:
+def generate_seed_program(length: int = 5, rng: random.Random | None = None) -> list[int]:
     """Generate a random seed program of valid RV32I instructions.
 
     Pre-allocates the list with the correct final size to avoid
@@ -1853,7 +1853,7 @@ def generate_seed_program(length: int = 5, rng: Optional[random.Random] = None) 
     if rng is None:
         rng = random.Random()
     n_instrs = max(length - 1, 1)
-    prog: List[int] = [0] * (n_instrs + 1)  # pre-allocate
+    prog: list[int] = [0] * (n_instrs + 1)  # pre-allocate
     _make = make_random_rv32i
     for i in range(n_instrs):
         prog[i] = _make(rng)
@@ -1861,7 +1861,7 @@ def generate_seed_program(length: int = 5, rng: Optional[random.Random] = None) 
     return prog
 
 
-def validate_mutation(mutated: List[int]) -> Tuple[bool, Optional[str]]:
+def validate_mutation(mutated: list[int]) -> tuple[bool, str | None]:
     """Validate that every instruction in the program is a legal RV32I encoding.
 
     Returns:
@@ -1880,7 +1880,7 @@ def validate_mutation(mutated: List[int]) -> Tuple[bool, Optional[str]]:
 # ── Self-Test / Demo ──────────────────────────────────────────────────
 
 
-def _encode_inst(inst: dict) -> Optional[int]:
+def _encode_inst(inst: dict) -> int | None:
     """Encode an instruction dict to a 32-bit RV32I word.
 
     Converts the reference_solution instruction format:
@@ -1914,7 +1914,7 @@ def _demo() -> None:
 
     # ── Test 1: Empty program ──────────────────────────────
     print("\n--- Test 1: Empty program ---")
-    empty_prog: List[int] = []
+    empty_prog: list[int] = []
     analysis = TraceAnalyzer.analyze(trace=[], expected={}, inputs={}, program=empty_prog, error=None)
     print(f"  Divergence type: {analysis.divergence_type}")
     mutated, desc = DirectedMutator.mutate(empty_prog, [], analysis, rng)

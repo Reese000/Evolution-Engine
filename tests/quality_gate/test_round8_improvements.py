@@ -294,7 +294,7 @@ class TestStochasticPerturbationEBREAKFix:
         rng = random.Random(42)
         prog = [make_rv32i("ADDI", rd=5, rs1=0, imm=10), EBREAK]
         # Should run without NameError on ebreak_val
-        result, desc = DirectedMutator.stochastic_perturbation(prog, rng)
+        result, _desc = DirectedMutator.stochastic_perturbation(prog, rng)
         assert len(result) > 0
         assert result[-1] == EBREAK  # should always have EBREAK at end
 
@@ -304,7 +304,7 @@ class TestStochasticPerturbationEBREAKFix:
 
         rng = random.Random(42)
         prog = [make_rv32i("ADDI", rd=5, rs1=0, imm=10)]
-        result, desc = DirectedMutator.stochastic_perturbation(prog, rng)
+        result, _desc = DirectedMutator.stochastic_perturbation(prog, rng)
         assert len(result) > 0
         assert result[-1] == EBREAK
 

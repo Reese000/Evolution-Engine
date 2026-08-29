@@ -43,7 +43,7 @@ class TestVMFarmImport(unittest.TestCase):
         self.assertTrue(callable(_run_one_evaluation))
 
     def test_gpu_vm_farm_importable(self):
-        from gpu_vm_farm import _execute_vm, GpuVMFarm
+        from gpu_vm_farm import GpuVMFarm, _execute_vm
         self.assertTrue(callable(_execute_vm))
 
     def test_execute_vm_basic(self):
@@ -73,7 +73,7 @@ class TestPaths(unittest.TestCase):
         self.assertIsInstance(MILESTONE1_DIR, Path)
 
     def test_ensure_project_on_path(self):
-        from paths import ensure_project_on_path, PROJECT_ROOT
+        from paths import PROJECT_ROOT, ensure_project_on_path
         before = len(sys.path)
         ensure_project_on_path()
         after = len(sys.path)
@@ -162,7 +162,7 @@ class TestMutationProposerImport(unittest.TestCase):
     """mutation_proposer.py imports cleanly."""
 
     def test_import(self):
-        from mutation_proposer import MutationStrategy, TraceAnalyzer, DirectedMutator
+        from mutation_proposer import DirectedMutator, MutationStrategy, TraceAnalyzer
         self.assertTrue(callable(TraceAnalyzer.analyze))
 
     def test_mutation_strategy_enum(self):
@@ -178,11 +178,12 @@ class TestMutationProposerImport(unittest.TestCase):
         self.assertEqual(analysis.divergence_type, "unknown")
 
     def test_stochastic_perturbation(self):
-        from mutation_proposer import DirectedMutator, validate_mutation
         import random
+
+        from mutation_proposer import DirectedMutator, validate_mutation
         rng = random.Random(42)
         program = [0x02A00513, 0x00100073]  # ADDI x10, x0, 42; EBREAK
-        mutated, desc = DirectedMutator.stochastic_perturbation(program, rng)
+        mutated, _desc = DirectedMutator.stochastic_perturbation(program, rng)
         valid, err = validate_mutation(mutated)
         self.assertTrue(valid, f"Mutation invalid: {err}")
 
@@ -427,11 +428,11 @@ class TestMetaController(unittest.TestCase):
     """MetaController integration with runner."""
 
     def test_import(self):
-        from meta_controller import MetaController, TelemetrySnapshot, StagnationResult
+        from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
         self.assertTrue(callable(MetaController))
 
     def test_stagnation_detection(self):
-        from meta_controller import MetaController, TelemetrySnapshot, StagnationResult
+        from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
         mc = MetaController(checkpoint_dir="/tmp/test_mc")
         # Simulate 5 stagnant cycles
         for c in range(1, 6):

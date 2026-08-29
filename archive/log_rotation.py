@@ -116,11 +116,10 @@ class CompressedRotatingFileHandler(logging.handlers.RotatingFileHandler):
         if os.path.isfile(gz_path):
             return  # Already compressed
         try:
-            with open(filepath, "rb") as f_in:
-                with gzip.open(gz_path, "wb") as f_out:
-                    shutil.copyfileobj(f_in, f_out)
+            with open(filepath, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
             os.remove(filepath)
-        except (OSError, IOError):
+        except OSError:
             pass  # Best effort
 
 
@@ -266,12 +265,11 @@ def compress_old_logs(log_dir: str, max_age_days: int = DEFAULT_RETENTION_DAYS) 
 
         gz_path = full_path + COMPRESSED_SUFFIX
         try:
-            with open(full_path, "rb") as f_in:
-                with gzip.open(gz_path, "wb") as f_out:
-                    shutil.copyfileobj(f_in, f_out)
+            with open(full_path, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
             os.remove(full_path)
             compressed.append(gz_path)
-        except (OSError, IOError):
+        except OSError:
             pass
 
     return compressed
@@ -307,7 +305,7 @@ def get_log_stats(log_dir: str) -> dict[str, Any]:
         full_path = os.path.join(log_dir, entry)
         if not os.path.isfile(full_path):
             continue
-        if not (entry.endswith(".log") or entry.endswith(".gz")):
+        if not (entry.endswith((".log", ".gz"))):
             continue
 
         total_files += 1

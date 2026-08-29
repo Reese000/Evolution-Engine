@@ -818,11 +818,11 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
         os.makedirs(os.path.dirname(retrain_log), exist_ok=True)
 
         # Map CLI args to train() kwargs
-        train_kwargs = dict(
-            rebuild_dataset=False,
-            resume_path=checkpoint_path,
-            recurrent_data_path=recurrent_data,
-        )
+        train_kwargs = {
+            "rebuild_dataset": False,
+            "resume_path": checkpoint_path,
+            "recurrent_data_path": recurrent_data,
+        }
         model_size = getattr(config, "retrain_model_size", "xlarge") if config is not None else "xlarge"
         train_kwargs["model_size"] = model_size
         if lr:
@@ -1130,10 +1130,8 @@ def cycle_resume_state(cycle: int) -> dict[str, Any]:
                         # Track highest level and fitness across all cycles
                         rl = r.get("final_level", 0)
                         rf = r.get("final_fitness", 0.0)
-                        if rl > best_level:
-                            best_level = rl
-                        if rf > best_fitness:
-                            best_fitness = rf
+                        best_level = max(best_level, rl)
+                        best_fitness = max(best_fitness, rf)
                         last_fitness = rf
                         last_level = rl
                     except json.JSONDecodeError:
@@ -1416,10 +1414,8 @@ def main() -> None:
                         # R47: Track highest level for curriculum persistence
                         rl = r.get("final_level", 0)
                         rf = r.get("final_fitness", 0.0)
-                        if rl > resume_best_level:
-                            resume_best_level = rl
-                        if rf > resume_best_fitness:
-                            resume_best_fitness = rf
+                        resume_best_level = max(resume_best_level, rl)
+                        resume_best_fitness = max(resume_best_fitness, rf)
                     except json.JSONDecodeError:
                         continue
         log(f"  Resuming: {len(completed_cycles)} cycles already completed")
@@ -1790,9 +1786,8 @@ def main() -> None:
             }
             skip_evolution = False  # consumed
         else:
-            if meta_controller is not None:
-                if hasattr(meta_controller, "snapshot_before_cycle"):
-                    meta_controller.snapshot_before_cycle(cycle, checkpoint)
+            if meta_controller is not None and hasattr(meta_controller, "snapshot_before_cycle"):
+                meta_controller.snapshot_before_cycle(cycle, checkpoint)
             evo_with_archive = dict(evo_meta_params)
             evo_with_archive.update(archive_params)
             evo_result = run_evolution(
@@ -2570,7 +2565,7 @@ def compute_forgetting_curve(
     from tasks_rv32i import get_task_level
 
     scores: dict[int, float] = {}
-    for level in range(0, champion_level + 1):
+    for level in range(champion_level + 1):
         try:
             task = get_task_level(level)
             inst = task(seed=42).generate_instance()

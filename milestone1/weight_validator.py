@@ -21,8 +21,7 @@ import hashlib
 import json
 import os
 import sys
-from typing import Dict, List, Optional, Any
-
+from typing import Any, Dict, List, Optional
 
 # ── Validation ──────────────────────────────────────────────────────
 
@@ -30,7 +29,7 @@ def validate_new_model(
     new_checkpoint_path: str,
     old_checkpoint_path: str,
     num_samples: int = 100,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Validate a new model checkpoint against the old one.
     
     Checks:
@@ -79,7 +78,7 @@ def validate_new_model(
         # Compute parameter delta magnitude
         total_params = 0
         total_delta = 0.0
-        for key in old_state.keys():
+        for key in old_state:
             delta = (new_state[key] - old_state[key]).abs().sum().item()
             total_delta += delta
             total_params += old_state[key].numel()
@@ -99,7 +98,7 @@ def validate_new_model(
 
 # ── Human Gate ──────────────────────────────────────────────────────
 
-def format_proposal_summary(proposal: Dict) -> str:
+def format_proposal_summary(proposal: dict) -> str:
     """Format a weight change proposal for human review."""
     lines = []
     lines.append("=" * 60)

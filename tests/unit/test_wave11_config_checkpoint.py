@@ -13,11 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Ensure project root is on sys.path
-
-from config import Config, EvolutionSection, load_config
 from checkpoint_manager import CheckpointManager, CheckpointMismatchError
 
+# Ensure project root is on sys.path
+from config import Config, EvolutionSection, load_config
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. TestConfigSummary
@@ -166,7 +165,7 @@ class TestConfigDefaults:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = Config.__new__(Config)
             cfg.evolution = EvolutionSection()
-            from config import RetrainSection, MetaControllerSection, AutonomousRunnerSection
+            from config import AutonomousRunnerSection, MetaControllerSection, RetrainSection
             cfg.retrain = RetrainSection()
             cfg.meta_controller = MetaControllerSection()
             cfg.autonomous_runner = AutonomousRunnerSection()
@@ -244,7 +243,7 @@ class TestCheckpointManagerFunctions:
             mgr = CheckpointManager(base_dir=tmpdir)
             model = self._mock_model()
             mgr.save(model, config_name="medium", val_loss=0.042, cycle=10, archive_size=5)
-            checkpoint, meta = mgr.load()
+            _checkpoint, meta = mgr.load()
             assert meta["val_loss"] == 0.1  # from mock_load
             assert meta["cycle"] == 5  # from mock_load
 

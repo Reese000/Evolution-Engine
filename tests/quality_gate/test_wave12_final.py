@@ -19,18 +19,17 @@ import tempfile
 
 import pytest
 
-# ── Path setup ──────────────────────────────────────────────────────────
+from champion_archive import ChampionArchive
 
+# ── Path setup ──────────────────────────────────────────────────────────
 from config import Config, EvolutionSection, load_config
 from meta_controller import MetaController, TelemetrySnapshot, TuningAction
-from mutation_proposer import DirectedMutator
-from strategy_archive import StrategyArchive
-from champion_archive import ChampionArchive
-from novelty import SparseArchive
-from qd_archive import MAPElitesArchive
 from metrics import MetricsCollector
-from progression_tracker import ProgressionTracker, CycleMetrics
-
+from mutation_proposer import DirectedMutator
+from novelty import SparseArchive
+from progression_tracker import CycleMetrics, ProgressionTracker
+from qd_archive import MAPElitesArchive
+from strategy_archive import StrategyArchive
 
 # ═══════════════════════════════════════════════════════════════════════
 # 1. TestConfigValidationEdgeCases
@@ -478,7 +477,7 @@ class TestQualityPruneFullCycle:
         program = [0x00100073]  # EBREAK as base
         # Add nonce-proportional padding + fitness-proportional data
         for i in range(max(1, (int(fitness) + nonce) % 20)):
-            program.append(((int(fitness * 1000) + nonce * 100 + i) & 0xFFFFFFFF))
+            program.append((int(fitness * 1000) + nonce * 100 + i) & 0xFFFFFFFF)
         program.append(0x00100073)  # EBREAK at end
         archive.add(program, level=level, fitness=fitness, cycle=cycle)
 

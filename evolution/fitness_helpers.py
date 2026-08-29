@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # ------------------------------------------------------------------
 # Pure scoring helpers (no engine state needed)
 # ------------------------------------------------------------------
@@ -611,7 +610,6 @@ def batch_compute_structural_bonuses(
     """Vectorized structural bonuses (loop, mem, div, smc, graduated, level)."""
     import numpy as np
 
-    from tasks_rv32i import LEVELS
 
     lvl = engine.champion_level
     base = np.zeros(n_ok, dtype=np.float64)
@@ -779,7 +777,7 @@ def batch_apply_bonuses(
         ok_traces_for_tc,
         list(expected_regs.keys()),
         (
-            np.array([expected_regs[k] for k in expected_regs.keys()], dtype=np.float64)
+            np.array([expected_regs[k] for k in expected_regs], dtype=np.float64)
             if expected_regs
             else np.array([], dtype=np.float64)
         ),
@@ -808,7 +806,7 @@ def batch_apply_bonuses(
         list(expected_regs.keys()),
         (
             np.array(
-                [expected_regs[k] for k in expected_regs.keys()],
+                [expected_regs[k] for k in expected_regs],
                 dtype=np.float64,
             )
             if expected_regs

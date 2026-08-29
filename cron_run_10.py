@@ -12,21 +12,17 @@ os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "0")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(SCRIPT_DIR)
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
 from logging_config import get_logger
 from run_multi_cycle import (
-    _HAS_BARRIER_TUNER,
     _HAS_META_CONTROLLER,
-    BEST_CHECKPOINT_PATH,
     M1_CHECKPOINTS,
-    M1_RECURRENT,
     META_CONTROLLER_STATE,
     PROJECT_ROOT,
     RESULTS_FILE,
-    has_gpu,
     load_checkpoint,
-    log,
     merge_archive_to_recurrent,
     retrain_model,
     run_evolution,
@@ -53,9 +49,8 @@ def find_latest_state():
                     continue
                 try:
                     r = json.loads(line)
-                    if r.get("archive_state"):
-                        if best is None or r["cycle"] > best["cycle"]:
-                            best = r
+                    if r.get("archive_state") and (best is None or r["cycle"] > best["cycle"]):
+                        best = r
                 except json.JSONDecodeError:
                     pass
     return best

@@ -14,9 +14,8 @@ import sys
 import pytest
 
 # Ensure project root is on sys.path
-
-from evolution_engine import EvolutionEngine, EvolutionConfig, HallOfFame
-from mutation_proposer import make_rv32i, EBREAK
+from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
+from mutation_proposer import EBREAK, make_rv32i
 
 
 def _make_engine(**overrides):

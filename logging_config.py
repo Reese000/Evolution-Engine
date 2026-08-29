@@ -19,7 +19,6 @@ import logging
 import logging.handlers
 import os
 import sys
-from pathlib import Path
 
 # ── Theme-driven color codes for console output ──────────────────────────────
 # Uses the Design System token palette via theme.layer instead of hardcoded

@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 try:
-    import run_evolution_supervised  # noqa: F401
+    import run_evolution_supervised
     _has_supervisor = True
 except ImportError:
     _has_supervisor = False

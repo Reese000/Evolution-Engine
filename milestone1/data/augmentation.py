@@ -201,7 +201,7 @@ def inject_reference_solutions(
         from mutation_proposer import _encode_inst
         from tasks_rv32i import LEVELS, get_task_level
 
-        inject_levels = list(sorted(LEVELS.keys()))  # ALL levels L0-L11
+        inject_levels = sorted(LEVELS.keys())  # ALL levels L0-L11
         for level in inject_levels:
             try:
                 level_cls = get_task_level(level)
@@ -238,7 +238,7 @@ def inject_reference_solutions(
                             for reg_idx, reg_val in sorted(expected.items()):
                                 if reg_val != 0:
                                     # ADDI rd, x0, imm
-                                    synth_words.append((0x00000013 | (reg_idx << 7) | ((reg_val & 0xFFF) << 20)))
+                                    synth_words.append(0x00000013 | (reg_idx << 7) | ((reg_val & 0xFFF) << 20))
                             if synth_words:
                                 synth_words.append(0x00100073)  # EBREAK
                                 synth_dicts = []

@@ -123,8 +123,8 @@ def ansi_style(
 
 def colorize(
     text: str,
-    fg: Optional[str] = None,
-    bg: Optional[str] = None,
+    fg: str | None = None,
+    bg: str | None = None,
     bold: bool = False,
     dim: bool = False,
     italic: bool = False,

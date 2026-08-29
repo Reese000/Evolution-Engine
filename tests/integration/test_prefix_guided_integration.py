@@ -162,6 +162,7 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
     def test_replace_with_model_guided_creates_prefix_generator(self):
         """_replace_with_model_guided lazily initializes PrefixGenerator."""
         import tempfile
+
         from evolution_engine import EvolutionEngine
 
         with tempfile.TemporaryDirectory() as tmpdir:

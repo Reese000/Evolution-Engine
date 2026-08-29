@@ -32,7 +32,7 @@ class ScaleValidator:
         old_model: Any,
         new_model: Any,
         archive: Any,
-        config: Optional[dict] = None,
+        config: dict | None = None,
     ):
         self.old_model = old_model
         self.new_model = new_model

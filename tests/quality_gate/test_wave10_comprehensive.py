@@ -235,8 +235,8 @@ class TestDataRotationFunctions:
 
     def test_rotate_reports_with_custom_keep_n(self):
         """rotate_reports with small keep_n should delete old reports."""
-        from data_rotation import rotate_reports
         import data_rotation
+        from data_rotation import rotate_reports
         with tempfile.TemporaryDirectory() as tmpdir:
             original = data_rotation.PROJECT_ROOT
             data_rotation.PROJECT_ROOT = Path(tmpdir)
@@ -263,8 +263,8 @@ class TestLoggingConfig:
     """Test setup_logging creates logger and configures handlers."""
 
     def test_setup_logging_creates_logger(self):
-        from logging_config import setup_logging, get_logger
         import logging_config
+        from logging_config import get_logger, setup_logging
         logging_config._initialized = False
         tmpdir = tempfile.mkdtemp()
         try:
@@ -365,6 +365,7 @@ class TestCheckpointManager:
     def test_checkpoint_exists_returns_true_after_save(self):
         """Save a raw checkpoint dict (bypassing torch) and verify exists()."""
         import torch
+
         from checkpoint_manager import CheckpointManager
         with tempfile.TemporaryDirectory() as tmpdir:
             mgr = CheckpointManager(base_dir=tmpdir)

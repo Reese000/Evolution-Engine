@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
 
 from evolution_engine import EvolutionConfig
 
@@ -23,7 +22,7 @@ from evolution_engine import EvolutionConfig
 
 # Known mutation strategy labels — must match MutationStrategy enum values
 # in mutation_proposer.py.
-KNOWN_STRATEGIES: Tuple[str, ...] = ("RANDOM", "TASK_AWARE", "DIRECTED", "PERTURBATION_CAPPED")
+KNOWN_STRATEGIES: tuple[str, ...] = ("RANDOM", "TASK_AWARE", "DIRECTED", "PERTURBATION_CAPPED")
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -42,7 +41,7 @@ def _clamp_int(value: float, lo: int, hi: int) -> int:
 # Sentinel fields (retrain_*) use a wide range and are clamped to the range;
 # -1.0 sentinel is preserved when within range (low covers it).
 # R23: Retrain fields added so meta-evolution can optimise them.
-_FIELDS: Tuple[Tuple[str, bool, float, float, float, float], ...] = (
+_FIELDS: tuple[tuple[str, bool, float, float, float, float], ...] = (
     ("mutation_rate", False, 0.3, 0.0, 1.0, 1.0),
     ("crossover_rate", False, 0.2, 0.0, 1.0, 1.0),
     ("elite_ratio", False, 0.1, 0.01, 0.5, 1.0),
@@ -91,7 +90,7 @@ _FIELDS: Tuple[Tuple[str, bool, float, float, float, float], ...] = (
 # R22/R23: Pre-built field tuple for __copy__, derived from _FIELDS.
 # Single source of truth -- adding a field to _FIELDS automatically adds it
 # to copy/mutation/crossover. ~50 __copy__ calls per generation.
-_COPY_FIELDS: Tuple[str, ...] = tuple(f[0] for f in _FIELDS)
+_COPY_FIELDS: tuple[str, ...] = tuple(f[0] for f in _FIELDS)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -131,7 +130,7 @@ class MetaGenome:
 
     mutation_rate: float = 0.3
     crossover_rate: float = 0.2
-    strategy_type_weights: Dict[str, float] = field(
+    strategy_type_weights: dict[str, float] = field(
         default_factory=lambda: {
             "RANDOM": 0.25,
             "TASK_AWARE": 0.25,
@@ -241,7 +240,7 @@ class MetaGenome:
         self,
         std: float = 0.1,
         reset_prob: float = 0.05,
-        rng: Optional[random.Random] = None,
+        rng: random.Random | None = None,
     ) -> MetaGenome:
         """Return a new ``MetaGenome`` obtained by perturbing this one.
 
@@ -301,7 +300,7 @@ class MetaGenome:
 
         return child
 
-    def crossover(self, other: MetaGenome, rng: Optional[random.Random] = None) -> Tuple[MetaGenome, MetaGenome]:
+    def crossover(self, other: MetaGenome, rng: random.Random | None = None) -> tuple[MetaGenome, MetaGenome]:
         """Return two offspring via uniform crossover with *other*.
 
         For each scalar attribute the child inherits from one parent
@@ -441,7 +440,7 @@ class MetaGenome:
                     "retrain_timeout",
                     "retrain_min_examples",
                 ):
-                    setattr(conf, config_field, int(round(val)))
+                    setattr(conf, config_field, round(val))
                 else:
                     setattr(conf, config_field, val)
         return conf
@@ -450,7 +449,7 @@ class MetaGenome:
     # Class methods
     # ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
     @classmethod
-    def random(cls, rng: Optional[random.Random] = None) -> MetaGenome:
+    def random(cls, rng: random.Random | None = None) -> MetaGenome:
         """Create a ``MetaGenome`` with all fields sampled uniformly at
         random from their valid ranges.
 
@@ -606,7 +605,7 @@ class MetaGenome:
             f"archive_elite_reduce_factor={self.archive_elite_reduce_factor:.3f})"
         )
 
-    def __copy__(self) -> "MetaGenome":
+    def __copy__(self) -> MetaGenome:
         """Shallow copy — avoids the 30+ field manual clone in the
         non-crossover path of _evolve_population.  The strategy_type_weights
         dict gets a fresh shallow copy so mutations don't leak between clones.

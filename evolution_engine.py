@@ -9,8 +9,6 @@ champion when a challenger achieves higher fitness.
 
 from __future__ import annotations
 
-import collections
-import concurrent.futures
 import heapq
 import json
 import math
@@ -54,9 +52,8 @@ from logging_config import get_logger
 
 _logger = get_logger("EvolutionEngine")
 
-from paths import MILESTONE0_DIR, MILESTONE1_DIR
+from paths import MILESTONE0_DIR, MILESTONE1_DIR, ensure_project_on_path
 from paths import PROJECT_ROOT as SCRIPT_DIR
-from paths import ensure_project_on_path
 
 ensure_project_on_path()
 
@@ -518,6 +515,56 @@ class HallOfFame:
 # Evolution Engine
 # ----------------------------------------------------------------------
 
+# Module-level default values for EvolutionConfig._set_config_defaults()
+_CONFIG_DEFAULTS: dict[str, object] = {
+    "mutation_rate": 0.3,
+    "crossover_rate": 0.7,
+    "elite_ratio": 0.1,
+    "tournament_size": 3,
+    "population_size": 50,
+    "max_generations": 100,
+    "eval_budget": 500,
+    "checkpoint_interval": 10,
+    "curriculum_level": 0,
+    "auto_curriculum": True,
+    "curriculum_stall_threshold": 20,
+    "use_gpu": False,
+    "seed": 42,
+    "log_dir": "logs",
+    "champion_dir": "",
+    "use_novelty_archive": False,
+    "novelty_weight": 0.1,
+    "novelty_threshold": 0.5,
+    "use_qd_archive": False,
+    "qd_bonus_weight": 0.1,
+    "qd_bins": [10, 10],
+    "max_bonus_fraction": 1.0,
+    "bonus_log_interval": 50,
+    "efficiency_score_weight": 1.0,
+    "secondary_task_weight": 1.0,
+    "use_secondary_tasks": False,
+    "use_mutation_scheduler": False,
+    "mutation_rate_start": 0.5,
+    "mutation_rate_end": 0.1,
+    "mutation_schedule_generations": 50,
+    "use_temperature_annealing": False,
+    "temperature_start": 2.0,
+    "temperature_end": 0.5,
+    "temperature_schedule_generations": 50,
+    "model_guided_ratio": None,
+    "model_guided_ratio_low": 0.1,
+    "model_guided_ratio_mid": 0.2,
+    "model_guided_ratio_high": 0.3,
+    "use_strategy_archive": True,
+    "strategy_archive_path": "",
+    "recurrent_feedback_dir": "",
+    "max_level": 30,
+    "max_consecutive_same_strategy": 30,
+    "perturbation_capped_probability_unsolved": 0.4,
+    "perturbation_capped_unsolved_levels": [9, 10, 11],
+    "champion_crossover_prob": 0.3,
+}
+
 
 @dataclass
 class EvolutionConfig:
@@ -696,55 +743,7 @@ class EvolutionConfig:
 
     def _set_config_defaults(self):
         """Set default values for configuration fields."""
-        defaults = {
-            "mutation_rate": 0.3,
-            "crossover_rate": 0.7,
-            "elite_ratio": 0.1,
-            "tournament_size": 3,
-            "population_size": 50,
-            "max_generations": 100,
-            "eval_budget": 500,
-            "checkpoint_interval": 10,
-            "curriculum_level": 0,
-            "auto_curriculum": True,
-            "curriculum_stall_threshold": 20,
-            "use_gpu": False,
-            "seed": 42,
-            "log_dir": "logs",
-            "champion_dir": "",
-            "use_novelty_archive": False,
-            "novelty_weight": 0.1,
-            "novelty_threshold": 0.5,
-            "use_qd_archive": False,
-            "qd_bonus_weight": 0.1,
-            "qd_bins": [10, 10],
-            "max_bonus_fraction": 1.0,
-            "bonus_log_interval": 50,
-            "efficiency_score_weight": 1.0,
-            "secondary_task_weight": 1.0,
-            "use_secondary_tasks": False,
-            "use_mutation_scheduler": False,
-            "mutation_rate_start": 0.5,
-            "mutation_rate_end": 0.1,
-            "mutation_schedule_generations": 50,
-            "use_temperature_annealing": False,
-            "temperature_start": 2.0,
-            "temperature_end": 0.5,
-            "temperature_schedule_generations": 50,
-            "model_guided_ratio": None,
-            "model_guided_ratio_low": 0.1,
-            "model_guided_ratio_mid": 0.2,
-            "model_guided_ratio_high": 0.3,
-            "use_strategy_archive": True,
-            "strategy_archive_path": "",
-            "recurrent_feedback_dir": "",
-            "max_level": 30,
-            "max_consecutive_same_strategy": 30,
-            "perturbation_capped_probability_unsolved": 0.4,
-            "perturbation_capped_unsolved_levels": [9, 10, 11],
-            "champion_crossover_prob": 0.3,
-        }
-        for key, val in defaults.items():
+        for key, val in _CONFIG_DEFAULTS.items():
             if not hasattr(self, key) or getattr(self, key) is None:
                 setattr(self, key, val)
 
@@ -756,8 +755,17 @@ class EvolutionConfig:
         (the Evolution Engine's design contract).
         """
         self._set_config_defaults()
+        self._validate_config()
+        self._clamp_config()
 
-        # ── Hard rejections (ValueError) ────────────────────────────────
+    def _validate_config(self):
+        """Raise ValueError for invalid config values."""
+        self._validate_general()
+        self._validate_retrain()
+        self._validate_diversity()
+
+    def _validate_general(self):
+        """Validate general config parameters."""
         if self.population_size < 2:
             raise ValueError(f"population_size must be >= 2 for tournament selection, got {self.population_size}")
         if self.max_generations < 1:
@@ -795,7 +803,8 @@ class EvolutionConfig:
         if self.meta_weight_improvement < 0.0:
             raise ValueError(f"meta_weight_improvement must be >= 0, got {self.meta_weight_improvement}")
 
-        # Retrain validations
+    def _validate_retrain(self):
+        """Validate retrain hyperparameter config."""
         if self.retrain_lr <= 0:
             raise ValueError(f"retrain_lr must be > 0, got {self.retrain_lr}")
         if self.retrain_batch_size < 1:
@@ -813,7 +822,8 @@ class EvolutionConfig:
         if not 0.0 <= self.retrain_val_split <= 1.0:
             raise ValueError(f"retrain_val_split must be in [0,1], got {self.retrain_val_split}")
 
-        # Diversity / crossover range checks
+    def _validate_diversity(self):
+        """Validate diversity and crossover range checks."""
         if not 0.0 <= self.diversity_threshold <= 1.0:
             raise ValueError(f"diversity_threshold must be in [0,1], got {self.diversity_threshold}")
         if not 0.0 <= self.diversity_inject_ratio <= 1.0:
@@ -821,11 +831,11 @@ class EvolutionConfig:
         if not 0.0 <= self.champion_crossover_prob <= 1.0:
             raise ValueError(f"champion_crossover_prob must be in [0,1], got {self.champion_crossover_prob}")
 
-        # ── Soft clamping (acceptable range) ─────────────────────────────
+    def _clamp_config(self):
+        """Soft-clamp config to acceptable ranges."""
         self.curriculum_level = max(self.curriculum_level, 0)
         if self.curriculum_level >= self.max_level:
             self.curriculum_level = self.max_level - 1
-
 
 class EvolutionEngine:
     """Main evolutionary loop for RV32I program synthesis.
@@ -1302,59 +1312,97 @@ class EvolutionEngine:
         fitness_history: dict,
     ) -> list[str]:
         """Generate actionable recommendations from diagnostic data."""
-        recommendations = []
+        recs: list[str] = []
+        self._recommend_stall(recs, stall, mbf)
+        self._recommend_diversity(recs, div)
+        self._recommend_norm(recs, lvl, norm_active, champion_raw)
+        self._recommend_graduated(recs, graduated_headroom, current_threshold)
+        self._recommend_qd(recs, qd_cov, qd_w)
+        self._recommend_oscillation(recs, hysteresis_active, osc_count)
+        self._recommend_velocity(recs, vel, stall, population_dynamics)
+        self._recommend_improvement(recs, hist_len, improvement_rate, hof_size, hof_spread)
+        self._recommend_normalization_off(recs, norm_active, hist_len, recent_trend)
+        if not recs:
+            recs.append("No issues detected. Fitness landscape appears healthy.")
+        return recs
+
+    def _recommend_stall(self, recs: list[str], stall: int, mbf: float) -> None:
+        """Add stall-related recommendations."""
         if stall >= 50:
-            recommendations.append(
+            recs.append(
                 f"CRITICAL STALL ({stall} gens): Consider enabling bonus normalization (max_bonus_fraction=0.30) or increasing novelty_weight to break out."
             )
         elif stall >= 20:
-            recommendations.append(
+            recs.append(
                 f"Deep stall ({stall} gens): Bonus normalization could help redistribute selection pressure. Current max_bonus_fraction={mbf:.2f}."
             )
+
+    def _recommend_diversity(self, recs: list[str], div: float) -> None:
+        """Add diversity-related recommendations."""
         if div < 0.1:
-            recommendations.append(
+            recs.append(
                 "CRITICAL LOW DIVERSITY (<0.1): Population nearly converged. Boost novelty_weight, increase mutation rate, or inject Hall of Fame entries."
             )
         elif div < 0.2:
-            recommendations.append(
+            recs.append(
                 f"Low diversity ({div:.3f}): Novelty weight will be adaptively boosted. Consider diversity_inject_ratio > {self.config.diversity_inject_ratio}."
             )
+
+    def _recommend_norm(self, recs: list[str], lvl: int, norm_active: bool, champion_raw: float) -> None:
+        """Add normalization-related recommendations."""
         if not norm_active:
             lvl_bon = lvl * 25.0
             if champion_raw > 0 and lvl_bon > champion_raw * 0.5:
-                recommendations.append(
+                recs.append(
                     f"Level bonus ({lvl_bon:.0f}) dominates base score ({champion_raw:.0f}). Enable max_bonus_fraction to prevent level_bonus from overshadowing task-solving fitness at L{lvl}."
                 )
+
+    def _recommend_graduated(self, recs: list[str], graduated_headroom: float, current_threshold: float) -> None:
+        """Add graduated bonus threshold recommendations."""
         if graduated_headroom < 0.10:
-            recommendations.append(
+            recs.append(
                 f"Graduated bonus threshold ({current_threshold:.3f}) leaves only {graduated_headroom:.3f} headroom. Near-perfect register match is required for any graduated bonus."
             )
+
+    def _recommend_qd(self, recs: list[str], qd_cov: float, qd_w: float) -> None:
+        """Add QD coverage recommendations."""
         if qd_cov < 0.1 and qd_w > 0:
-            recommendations.append(
+            recs.append(
                 f"QD niche coverage is sparse ({qd_cov:.3f}). The stall-scaled QD boost should help, but verify novelty_archive is populated."
             )
+
+    def _recommend_oscillation(self, recs: list[str], hysteresis_active: bool, osc_count: int) -> None:
+        """Add oscillation/hysteresis recommendations."""
         if hysteresis_active:
-            recommendations.append(
+            recs.append(
                 f"Oscillation detected: {osc_count} replacements in last {self._oscillation_window_size} gens (threshold={getattr(self, '_oscillation_threshold', 3)})."
             )
+
+    def _recommend_velocity(self, recs: list[str], vel: float, stall: int, population_dynamics: dict) -> None:
+        """Add velocity and fitness regression recommendations."""
         vel_regime = population_dynamics.get("fitness_velocity_regime", "")
         if vel_regime == "strong_regression":
-            recommendations.append(
+            recs.append(
                 f"Strong fitness regression (velocity={vel:.2f}). Mutation rate will be maximized automatically."
             )
         elif vel_regime == "fast_improvement" and stall > 5:
-            recommendations.append(f"Positive velocity ({vel:.2f}) but still stalled ({stall} gens).")
+            recs.append(f"Positive velocity ({vel:.2f}) but still stalled ({stall} gens).")
+
+    def _recommend_improvement(
+        self, recs: list[str], hist_len: int, improvement_rate: float, hof_size: int, hof_spread: float
+    ) -> None:
+        """Add improvement rate and HoF spread recommendations."""
         if hist_len > 10 and improvement_rate < 0.05:
-            recommendations.append(f"Very low improvement rate ({improvement_rate:.1%}) over {hist_len} generations.")
+            recs.append(f"Very low improvement rate ({improvement_rate:.1%}) over {hist_len} generations.")
         if hof_size >= 2 and hof_spread < 1.0:
-            recommendations.append(f"Hall of Fame fitness spread is narrow ({hof_spread:.2f}).")
+            recs.append(f"Hall of Fame fitness spread is narrow ({hof_spread:.2f}).")
+
+    def _recommend_normalization_off(self, recs: list[str], norm_active: bool, hist_len: int, recent_trend: float) -> None:
+        """Add normalization-off recommendations when fitness is flat."""
         if not norm_active and hist_len > 20 and recent_trend <= 0:
-            recommendations.append(
+            recs.append(
                 "Normalization is off and fitness is flat/declining. Enable bonus normalization (max_bonus_fraction=0.30)."
             )
-        if not recommendations:
-            recommendations.append("No issues detected. Fitness landscape appears healthy.")
-        return recommendations
 
     def get_fitness_diagnostic_summary(self) -> dict[str, Any]:
         """Return a comprehensive diagnostic of the current fitness landscape."""
@@ -1368,18 +1416,8 @@ class EvolutionEngine:
         fitness_history = self._get_fitness_history_stats()
         population_dynamics = self._get_population_dynamics()
         hall_of_fame = self._get_hof_stats()
-        nw = getattr(self, "_novelty_weight_cache", self.config.novelty_weight)
-        div = getattr(self, "_current_diversity", 0.5)
         qd_w = self.config.qd_bonus_weight
-        novelty_qd = {
-            "novelty_weight": nw,
-            "novelty_weight_effective": round(
-                min(nw * (1.0 + (1.0 - div / 0.2)), 0.8) if div < 0.2 and nw > 0 else nw, 4
-            ),
-            "qd_bonus_weight": qd_w,
-            "novelty_archive_size": len(self.novelty_archive) if self.novelty_archive is not None else 0,
-            "qd_archive_occupied": getattr(self.qd_archive, "_occupied_count", 0) if self.qd_archive is not None else 0,
-        }
+        div = getattr(self, "_current_diversity", 0.5)
         recommendations = self._get_recommendations(
             lvl,
             bonus_config["max_bonus_fraction"],
@@ -1415,8 +1453,21 @@ class EvolutionEngine:
             "fitness_history": fitness_history,
             "population_dynamics": population_dynamics,
             "hall_of_fame": hall_of_fame,
-            "novelty_qd": novelty_qd,
+            "novelty_qd": self._build_novelty_qd(div, qd_w),
             "recommendations": recommendations,
+        }
+
+    def _build_novelty_qd(self, div: float, qd_w: float) -> dict[str, Any]:
+        """Build the novelty_qd sub-dict for diagnostic summary."""
+        nw = getattr(self, "_novelty_weight_cache", self.config.novelty_weight)
+        return {
+            "novelty_weight": nw,
+            "novelty_weight_effective": round(
+                min(nw * (1.0 + (1.0 - div / 0.2)), 0.8) if div < 0.2 and nw > 0 else nw, 4
+            ),
+            "qd_bonus_weight": qd_w,
+            "novelty_archive_size": len(self.novelty_archive) if self.novelty_archive is not None else 0,
+            "qd_archive_occupied": getattr(self.qd_archive, "_occupied_count", 0) if self.qd_archive is not None else 0,
         }
 
     def _should_replace_champion(self, candidate_fitness: float) -> bool:
@@ -2804,7 +2855,6 @@ class EvolutionEngine:
 
     def _tournament_select(self, scored, elite_size, n_scored):
         """Fill remaining elite slots via adaptive tournament selection."""
-        import heapq
 
         rng = self.rng
         base_tourney = self.config.tournament_size

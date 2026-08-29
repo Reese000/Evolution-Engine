@@ -20,15 +20,14 @@ import tempfile
 
 import pytest
 
-# Path setup
-
-from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
-from strategy_archive import StrategyArchive
 from champion_archive import ChampionArchive
+
+# Path setup
+from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
 from meta_controller import MetaController, TelemetrySnapshot
 from novelty import SparseArchive
 from qd_archive import MAPElitesArchive
-
+from strategy_archive import StrategyArchive
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEvolutionEngineInit
@@ -432,7 +431,7 @@ class TestNoveltyArchiveEdgeCases:
         desc = {"inst_diversity": 0.5, "reg_pressure": 0.5, "program_length": 0.5,
                 "branch_fraction": 0.5, "alu_fraction": 0.5, "load_store_ratio": 0.5,
                 "unique_regs_used": 0.5}
-        added, score = sa.add_to_archive(desc, check_threshold=True)
+        added, _score = sa.add_to_archive(desc, check_threshold=True)
         assert added is True
         assert sa.size == 1
 

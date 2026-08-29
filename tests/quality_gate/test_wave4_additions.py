@@ -14,18 +14,17 @@ Tests cover:
 from __future__ import annotations
 
 import math
+import os
+import sys
 import time
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
-import sys, os
-
-from strategy_archive import StrategyArchive
 from champion_archive import ChampionArchive, ChampionEntry
-from meta_controller import MetaController, TelemetrySnapshot, TuningAction, StagnationResult
+from meta_controller import MetaController, StagnationResult, TelemetrySnapshot, TuningAction
 from novelty import SparseArchive
-
+from strategy_archive import StrategyArchive
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. TestTimeWeightedSuccessRate
@@ -381,8 +380,8 @@ class TestPipelineAdaptiveExploration:
 
     def test_calls_adaptive_exploration_bonus(self):
         """Verify adaptive_exploration_bonus is called during strategy selection."""
-        from tests.conftest import make_engine
         from mutation_proposer import MutationStrategy
+        from tests.conftest import make_engine
 
         engine = make_engine(with_archive=True)
         engine.config.use_strategy_archive = True

@@ -1,17 +1,31 @@
 #!/usr/bin/env python3
 """Verify all curriculum reference solutions L0-L16 through the RV32I VM."""
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gpu_vm_farm import _execute_vm, EBREAK
+from gpu_vm_farm import EBREAK, _execute_vm
 from milestone1.rv32i_mask import encode
 from tasks_rv32i import (
-    Level0, Level1, Level2, Level3, Level4, Level5, Level6, Level7,
-    Level8, Level9, Level10, Level11, Level12, Level13, Level14,
-    Level15, Level16,
+    Level0,
+    Level1,
+    Level2,
+    Level3,
+    Level4,
+    Level5,
+    Level6,
+    Level7,
+    Level8,
+    Level9,
+    Level10,
+    Level11,
+    Level12,
+    Level13,
+    Level14,
+    Level15,
+    Level16,
 )
 
 LEVEL_CLASSES = [
@@ -180,11 +194,11 @@ def main():
             if r.get("error"):
                 print(f"    VM error: {r['error']}")
             if r.get("jalr_failed"):
-                print(f"    -> Self-modifying code: JALR targets data memory")
-                print(f"       which is not part of the VM's instruction array.")
-                print(f"       This is a known limitation for L12/L13.")
+                print("    -> Self-modifying code: JALR targets data memory")
+                print("       which is not part of the VM's instruction array.")
+                print("       This is a known limitation for L12/L13.")
             if r.get("mismatches"):
-                print(f"    Register mismatches:")
+                print("    Register mismatches:")
                 for reg, m in r["mismatches"].items():
                     print(f"      x{reg}: expected={m['expected']}, actual={m['actual']}")
 

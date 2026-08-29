@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 
 try:
-    import log_rotation  # noqa: F401
+    import log_rotation
     _has_log_rotation = True
 except ImportError:
     _has_log_rotation = False

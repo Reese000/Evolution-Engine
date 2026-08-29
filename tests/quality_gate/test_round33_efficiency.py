@@ -17,7 +17,6 @@ import random
 import sys
 import tempfile
 
-
 import pytest
 
 from evolution_engine import (

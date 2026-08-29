@@ -14,19 +14,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
-import shutil
 
 import pytest
 
 # Path setup
-
 from metrics import MetricsCollector
-from mutation_proposer import DirectedMutator
 from monitoring_alerts import AlertManager
-
+from mutation_proposer import DirectedMutator
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. TestDetectAnomalies

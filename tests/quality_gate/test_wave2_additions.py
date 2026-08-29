@@ -21,14 +21,13 @@ import tempfile
 
 import pytest
 
-# Path setup — add project root to sys.path
-
-from meta_controller import MetaController, TelemetrySnapshot, StagnationResult
-from strategy_archive import StrategyArchive
 from champion_archive import ChampionArchive, ChampionEntry
+
+# Path setup — add project root to sys.path
+from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from novelty import SparseArchive
 from qd_archive import MAPElitesArchive
-
+from strategy_archive import StrategyArchive
 
 # ═══════════════════════════════════════════════════════════════════════
 # Helpers

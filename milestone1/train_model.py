@@ -22,8 +22,8 @@ from paths import ensure_project_on_path
 
 ensure_project_on_path()
 
-from training.loop import train
 from data.augmentation import register_rename_augment
 from data.packing import pack_sequences
+from training.loop import train
 
-__all__ = ["train", "register_rename_augment", "pack_sequences"]
+__all__ = ["pack_sequences", "register_rename_augment", "train"]

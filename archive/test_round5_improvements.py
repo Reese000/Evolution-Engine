@@ -22,7 +22,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 try:
-    import log_rotation  # noqa: F401
+    import log_rotation
     _has_log_rotation = True
 except ImportError:
     _has_log_rotation = False
@@ -520,7 +520,7 @@ class TestTaskLevelCrashFirst:
         )
 
         rng = random.Random(42)
-        result_prog, desc = DirectedMutator.mutate(prog, [], analysis, rng, task_level=0)
+        result_prog, _desc = DirectedMutator.mutate(prog, [], analysis, rng, task_level=0)
 
         # The illegal instruction should have been replaced with NOP
         assert 0xFFFFFFFF not in result_prog, (
@@ -546,7 +546,7 @@ class TestTaskLevelCrashFirst:
         )
 
         rng = random.Random(42)
-        result_prog, desc = DirectedMutator.mutate(prog, [], analysis, rng, task_level=0)
+        result_prog, _desc = DirectedMutator.mutate(prog, [], analysis, rng, task_level=0)
 
         # The crashing instruction should have been fixed
         assert result_prog != [0xFE00006F, EBREAK], "PC out of bounds instruction should have been fixed"

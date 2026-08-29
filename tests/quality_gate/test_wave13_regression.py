@@ -16,14 +16,15 @@ from __future__ import annotations
 import json
 import os
 import random
+
+# Path setup
+import sys
 import tempfile
 from typing import Any
 
 import pytest
 
-# Path setup
-import sys
-
+from champion_archive import ChampionArchive, ChampionEntry, _hash_program
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from mutation_proposer import (
@@ -34,14 +35,12 @@ from mutation_proposer import (
     TraceAnalyzer,
     find_ebreak_index,
     has_ebreak,
-    make_rv32i,
     make_random_rv32i,
+    make_rv32i,
     trim_dead_code,
 )
-from strategy_archive import StrategyArchive
-from champion_archive import ChampionArchive, ChampionEntry, _hash_program
 from qd_archive import MAPElitesArchive
-
+from strategy_archive import StrategyArchive
 
 # ═══════════════════════════════════════════════════════════════════════
 # Shared fixtures
@@ -347,7 +346,7 @@ class TestMutationProposerUnchanged:
             rng=rng,
         )
         assert isinstance(result, tuple)
-        mutated, desc = result
+        mutated, _desc = result
         assert len(mutated) >= 2
         assert mutated[-1] == EBREAK
 

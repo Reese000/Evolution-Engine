@@ -27,8 +27,8 @@ from typing import Any
 
 # ── Path setup ──────────────────────────────────────────────────────────
 # Ensure project root is on sys.path before any project imports.
-
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
 _BENCHMARKS_DIR = Path(__file__).resolve().parent
@@ -45,7 +45,7 @@ class _TimeoutError(Exception):
     """Raised when a benchmark run exceeds the time limit."""
 
 
-def _timeout_handler(signum: int, frame: Any) -> None:  # noqa: ARG001
+def _timeout_handler(signum: int, frame: Any) -> None:
     raise _TimeoutError("Benchmark run exceeded time limit")
 
 

@@ -395,7 +395,7 @@ class TestEndToEndIntegration:
         # per_level_effectiveness
         ple = sa.per_level_effectiveness("RANDOM")
         assert isinstance(ple, dict)
-        for lev, score in ple.items():
+        for score in ple.values():
             assert 0.0 <= score <= 1.0
 
         # dominance_report
@@ -410,7 +410,7 @@ class TestEndToEndIntegration:
         assert sm["total_records"] == 100
         assert "strategies" in sm
         assert "dominance" in sm
-        for strat_name, info in sm["strategies"].items():
+        for info in sm["strategies"].values():
             assert "count" in info
             assert "rate" in info
             assert 0.0 <= info["rate"] <= 1.0
@@ -570,9 +570,14 @@ class TestFinalStats:
     def test_wave_files_exist(self):
         """All expected wave test files exist on disk."""
         tests_dir = os.path.join(_ROOT, "tests")
+        # Search recursively across subdirectories
+        all_py_files = set()
+        for root, dirs, files in os.walk(tests_dir):
+            for fname in files:
+                if fname.endswith(".py"):
+                    all_py_files.add(fname)
         for fname in _EXPECTED_WAVE_FILES:
-            fpath = os.path.join(tests_dir, fname)
-            assert os.path.isfile(fpath), f"Missing wave test file: {fname}"
+            assert fname in all_py_files, f"Missing wave test file: {fname}"
 
     def test_all_26_methods_exist(self):
         """All 26 new methods exist on their respective classes/modules."""
@@ -627,20 +632,21 @@ class TestFinalStats:
         """Total test count across all test files > 2000."""
         tests_dir = os.path.join(_ROOT, "tests")
         total_tests = 0
-        for fname in os.listdir(tests_dir):
-            if not fname.startswith("test_") or not fname.endswith(".py"):
-                continue
-            fpath = os.path.join(tests_dir, fname)
-            try:
-                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read()
-                # Count test functions/methods
-                import re
+        for root, dirs, files in os.walk(tests_dir):
+            for fname in files:
+                if not fname.startswith("test_") or not fname.endswith(".py"):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                    # Count test functions/methods
+                    import re
 
-                test_funcs = re.findall(r"def (test_\w+)", content)
-                total_tests += len(test_funcs)
-            except Exception:
-                pass
+                    test_funcs = re.findall(r"def (test_\w+)", content)
+                    total_tests += len(test_funcs)
+                except Exception:
+                    pass
         assert total_tests > 2000, f"Total test count {total_tests} is not above 2000"
 
     def test_conftest_fixtures_exist(self):
@@ -664,5 +670,9 @@ class TestFinalStats:
     def test_all_expected_wave_files_count(self):
         """We expect at least 18 wave test files."""
         tests_dir = os.path.join(_ROOT, "tests")
-        wave_files = [f for f in os.listdir(tests_dir) if f.startswith("test_wave") and f.endswith(".py")]
+        wave_files = []
+        for root, dirs, files in os.walk(tests_dir):
+            for f in files:
+                if f.startswith("test_wave") and f.endswith(".py"):
+                    wave_files.append(f)
         assert len(wave_files) >= 18, f"Expected >= 18 wave test files, found {len(wave_files)}: {wave_files}"

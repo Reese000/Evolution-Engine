@@ -14,7 +14,6 @@ import pytest
 import torch
 
 # Path setup
-
 from milestone1.rv32i_model import RV32IVocab
 from prefix_generator import PrefixGenerator
 

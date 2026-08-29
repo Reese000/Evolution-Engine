@@ -8,9 +8,8 @@ import tempfile
 
 import pytest
 
-from progression_tracker import CycleMetrics, ProgressionTracker
 from metrics import MetricsCollector
-
+from progression_tracker import CycleMetrics, ProgressionTracker
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -18,18 +17,18 @@ from metrics import MetricsCollector
 
 def _make_cycle(cycle: int, fitness: float, **overrides) -> CycleMetrics:
     """Shorthand to build a CycleMetrics with sensible defaults."""
-    defaults = dict(
-        cycle=cycle,
-        level=cycle,
-        fitness=fitness,
-        words=100 + cycle * 10,
-        archive_size=cycle,
-        val_loss=None,
-        time_s=1.0,
-        mg_count=cycle % 3,
-        total_challengers=10,
-        champion_improvements=0,
-    )
+    defaults = {
+        "cycle": cycle,
+        "level": cycle,
+        "fitness": fitness,
+        "words": 100 + cycle * 10,
+        "archive_size": cycle,
+        "val_loss": None,
+        "time_s": 1.0,
+        "mg_count": cycle % 3,
+        "total_challengers": 10,
+        "champion_improvements": 0,
+    }
     defaults.update(overrides)
     return CycleMetrics(**defaults)
 

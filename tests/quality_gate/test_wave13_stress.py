@@ -21,14 +21,13 @@ import time
 
 import pytest
 
-# Path setup
-
-from meta_controller import MetaController, TelemetrySnapshot
-from strategy_archive import StrategyArchive
 from champion_archive import ChampionArchive
+
+# Path setup
+from meta_controller import MetaController, TelemetrySnapshot
 from metrics import MetricsCollector
 from novelty import SparseArchive
-
+from strategy_archive import StrategyArchive
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Test 1: MetaController Stress
@@ -227,7 +226,7 @@ class TestStrategyArchiveStress:
         for strat in self.STRATEGIES:
             eff = sa.per_level_effectiveness(strat)
             assert isinstance(eff, dict)
-            for level, score in eff.items():
+            for score in eff.values():
                 assert 0.0 <= score <= 1.0
 
     def test_best_for_level(self):
@@ -402,7 +401,7 @@ class TestChampionArchiveStress:
 
     def test_add_100_champions(self, populated_archive):
         """Add multiple unique champions without crashing."""
-        ca, added = populated_archive
+        _ca, added = populated_archive
         assert added >= 20  # Some may collide but most should be unique
 
     def test_diversity_aware_select(self, populated_archive):
@@ -426,7 +425,7 @@ class TestChampionArchiveStress:
 
     def test_quality_weighted_prune(self, tmp_path):
         """quality_weighted_prune removes low-quality champions when over capacity."""
-        ca, added = self._populate(n=100, max_size=80, tmp_path=tmp_path)
+        ca, _added = self._populate(n=100, max_size=80, tmp_path=tmp_path)
         initial_size = ca.size
         removed = ca.quality_weighted_prune()
         assert isinstance(removed, int)
@@ -686,7 +685,7 @@ class TestNoveltyArchiveStress:
         for i in range(n):
             desc = self._make_descriptor(rng)
             program = [rng.randint(0, 0xFFFFFFFF) for _ in range(rng.randint(3, 15))]
-            was_added, score = archive.add_to_archive(
+            was_added, _score = archive.add_to_archive(
                 desc,
                 metadata={"program": program, "generation": i},
                 check_threshold=True,
@@ -712,7 +711,7 @@ class TestNoveltyArchiveStress:
 
     def test_manage_capacity(self):
         """manage_capacity trims archive to max_size."""
-        archive, added = self._populate(n=50, threshold=0.01)
+        archive, _added = self._populate(n=50, threshold=0.01)
         max_size = max(10, archive.size // 2)
         removed = archive.manage_capacity(max_size=max_size)
         assert isinstance(removed, int)
@@ -755,7 +754,7 @@ class TestNoveltyArchiveStress:
 
     def test_trim_archive(self):
         """trim_archive removes excess entries."""
-        archive, added = self._populate(n=50, threshold=0.01)
+        archive, _added = self._populate(n=50, threshold=0.01)
         target = max(5, archive.size // 3)
         removed = archive.trim_archive(max_entries=target)
         assert isinstance(removed, int)

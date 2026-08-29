@@ -20,7 +20,6 @@ import pytest
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth — engine creation, attributes, callable methods
 # ══════════════════════════════════════════════════════════════════════════════

@@ -22,13 +22,12 @@ _tests_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _tests_dir not in sys.path:
     sys.path.insert(0, _tests_dir)
 
-from meta_controller import MetaController, TelemetrySnapshot, StagnationResult
-from strategy_archive import StrategyArchive
-from metrics import MetricsCollector
-
 # We'll import the engine factory from conftest
 from conftest import make_engine_with_task, make_random_programs
 
+from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
+from metrics import MetricsCollector
+from strategy_archive import StrategyArchive
 
 # ═══════════════════════════════════════════════════════════════════════
 # Helpers

@@ -20,7 +20,6 @@ import os
 import random
 import sys
 
-
 import pytest
 
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, compute_qd_axes

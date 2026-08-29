@@ -51,8 +51,8 @@ class ScaleEvent:
     new_config: dict
     state: ScaleState
     timestamp: float = 0.0
-    result: Optional[str] = None  # "committed", "rolled_back", "extended"
-    reason: Optional[str] = None
+    result: str | None = None  # "committed", "rolled_back", "extended"
+    reason: str | None = None
 
 
 class ScaleCoordinator:
@@ -100,7 +100,7 @@ class ScaleCoordinator:
         self.gate_cycles = gate_cycles
 
         self.events: list[ScaleEvent] = []
-        self.current_event: Optional[ScaleEvent] = None
+        self.current_event: ScaleEvent | None = None
         self._load_state()
 
     def _load_state(self) -> None:
@@ -138,7 +138,7 @@ class ScaleCoordinator:
             except OSError:
                 pass
 
-    def maybe_scale(self, snapshot: Any, engine: Any = None) -> Optional[str]:
+    def maybe_scale(self, snapshot: Any, engine: Any = None) -> str | None:
         """Main entry point — called each cycle.
 
         Returns None if no action needed, or a description of the action taken.
@@ -161,7 +161,7 @@ class ScaleCoordinator:
 
         return None
 
-    def _attempt_scale(self, snapshot: Any, engine: Any) -> Optional[str]:
+    def _attempt_scale(self, snapshot: Any, engine: Any) -> str | None:
         """Attempt a scaling operation."""
         # Plan migration
         decision = self.planner.plan(self.current_stage, snapshot)

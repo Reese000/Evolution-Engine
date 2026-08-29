@@ -19,8 +19,8 @@ import json
 import math
 import os
 import random
-from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from dataclasses import asdict, dataclass
+from typing import Any
 
 # ──────────────────────────────────────────────────────────────────────
 # Tier constants for preventing catastrophic forgetting / mode collapse
@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 TIER_RECENT_SIZE = 20  # last N entries added
 TIER_ELITE_SIZE = 15  # top N by fitness
 TIER_DIVERSE_SIZE = 15  # top N by instruction pattern uniqueness
-FOUNDATIONAL_LEVELS: Set[int] = set(range(7))  # L0-L6 never evicted
+FOUNDATIONAL_LEVELS: set[int] = set(range(7))  # L0-L6 never evicted
 
 TIER_QUOTAS = {
     "recent": 0.40,
@@ -42,8 +42,8 @@ TIER_QUOTAS = {
 class ChampionEntry:
     """A single champion program with metadata."""
 
-    program: List[int]  # instruction words
-    program_hex: List[str]  # hex strings for training pipeline
+    program: list[int]  # instruction words
+    program_hex: list[str]  # hex strings for training pipeline
     level: int  # curriculum level achieved
     fitness: float  # fitness score
     cycle: int  # which evolution cycle produced this
@@ -58,11 +58,11 @@ class ChampionEntry:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ChampionEntry":
+    def from_dict(cls, d: dict) -> ChampionEntry:
         return cls(**{k: d[k] for k in cls.__dataclass_fields__ if k in d})
 
 
-def _hash_program(program: List[int]) -> str:
+def _hash_program(program: list[int]) -> str:
     """Fast hash of instruction sequence for deduplication.
 
     Handles 32-bit instruction words by converting to 4-byte big-endian chunks.
@@ -100,9 +100,9 @@ class ChampionArchive:
         self.recent_weight = recent_weight
         self.high_fitness_weight = high_fitness_weight
         self.stale_threshold_generations = stale_threshold_generations
-        self.entries: List[ChampionEntry] = []
+        self.entries: list[ChampionEntry] = []
         self._seen_hashes: set = set()
-        self.tiers: Dict[str, List[int]] = {
+        self.tiers: dict[str, list[int]] = {
             "recent": [],
             "elite": [],
             "diverse": [],
@@ -134,7 +134,7 @@ class ChampionArchive:
 
     def add(
         self,
-        program: List[int],
+        program: list[int],
         level: int,
         fitness: float,
         cycle: int,
@@ -210,8 +210,8 @@ class ChampionArchive:
     def sample_training_batch(
         self,
         batch_size: int = 512,
-        rng: Optional[random.Random] = None,
-    ) -> List[ChampionEntry]:
+        rng: random.Random | None = None,
+    ) -> list[ChampionEntry]:
         """Weighted sample of champions for training.
 
         Weights combine:
@@ -301,17 +301,17 @@ class ChampionArchive:
         return min_dist if min_dist != float("inf") else 0.0
 
     @staticmethod
-    def _hamming_distance(prog1: List[int], prog2: List[int]) -> int:
+    def _hamming_distance(prog1: list[int], prog2: list[int]) -> int:
         """Count total differing bits between two instruction sequences."""
         total = 0
         max_len = max(len(prog1), len(prog2))
         for i in range(max_len):
             w1 = prog1[i] if i < len(prog1) else 0
             w2 = prog2[i] if i < len(prog2) else 0
-            total += bin(w1 ^ w2).count("1")
+            total += (w1 ^ w2).bit_count()
         return total
 
-    def _compute_diversity_scores(self, candidates: List[ChampionEntry]) -> List[float]:
+    def _compute_diversity_scores(self, candidates: list[ChampionEntry]) -> list[float]:
         """Compute diversity scores for a list of candidates.
 
         Combines two signals:
@@ -347,7 +347,7 @@ class ChampionArchive:
         level: int,
         n: int = 1,
         diversity_weight: float = 0.3,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Select n champions at *level* while balancing quality and diversity.
 
         Combined score per candidate:
@@ -388,7 +388,7 @@ class ChampionArchive:
         diversity_scores = self._compute_diversity_scores(candidates)
 
         # --- Combined scores ---
-        combined: List[tuple] = []
+        combined: list[tuple] = []
         for i, e in enumerate(candidates):
             norm_fit = (e.fitness - min_fit) / max(fit_range, 1e-10)
             score = (1 - diversity_weight) * norm_fit + diversity_weight * diversity_scores[i]
@@ -400,7 +400,7 @@ class ChampionArchive:
         pool = list(combined[:pool_size])
 
         tournament_size = max(2, pool_size // n) if n > 0 else 2
-        selected: List[Dict] = []
+        selected: list[dict] = []
         available = list(pool)
 
         for _ in range(n):
@@ -417,8 +417,8 @@ class ChampionArchive:
     def sample_tiered_batch(
         self,
         batch_size: int = 512,
-        rng: Optional[random.Random] = None,
-    ) -> List[ChampionEntry]:
+        rng: random.Random | None = None,
+    ) -> list[ChampionEntry]:
         """Tiered sampling with quotas to prevent catastrophic forgetting.
 
         Quotas (default):
@@ -445,7 +445,7 @@ class ChampionArchive:
         remainder = batch_size - sum(quotas.values())
         quotas["recent"] += remainder
 
-        result: List[ChampionEntry] = []
+        result: list[ChampionEntry] = []
         used: set = set()
 
         for tier_name, count in quotas.items():
@@ -467,8 +467,7 @@ class ChampionArchive:
         """Persist archive to disk (JSONL)."""
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         with open(self.path, "w") as f:
-            for entry in self.entries:
-                f.write(json.dumps(entry.to_dict()) + "\n")
+            f.writelines(json.dumps(entry.to_dict()) + "\n" for entry in self.entries)
 
     def save_recurrent_data(
         self,
@@ -513,7 +512,7 @@ class ChampionArchive:
 
             # --- Top performers (by fitness) ---
             sorted_by_fitness = sorted(eligible, key=lambda e: e.fitness, reverse=True)
-            top_set = set(id(e) for e in sorted_by_fitness[:top_count])
+            top_set = {id(e) for e in sorted_by_fitness[:top_count]}
             top_selected = sorted_by_fitness[:top_count]
 
             # --- Recent entries (by insertion order = position in self.entries) ---
@@ -531,14 +530,14 @@ class ChampionArchive:
             # Build a reference set from top + recent already selected
             reference_progs = [e.program for e in top_selected + recent_selected]
 
-            def _min_hamming(prog: List[int]) -> int:
+            def _min_hamming(prog: list[int]) -> int:
                 """Minimum Hamming distance from any reference program."""
                 if not reference_progs:
                     return 0
                 return min(self._hamming_distance(prog, ref) for ref in reference_progs)
 
             remaining = [
-                e for e in eligible if id(e) not in top_set and id(e) not in set(id(r) for r in recent_selected)
+                e for e in eligible if id(e) not in top_set and id(e) not in {id(r) for r in recent_selected}
             ]
             remaining_with_diversity = [(e, _min_hamming(e.program)) for e in remaining]
             remaining_with_diversity.sort(key=lambda x: x[1], reverse=True)
@@ -582,7 +581,7 @@ class ChampionArchive:
             return 0
         return max(e.cycle for e in self.entries)
 
-    def get_quality_distribution(self) -> Dict[str, Any]:
+    def get_quality_distribution(self) -> dict[str, Any]:
         """Return a distribution of fitness values across entries.
 
         Returns a dict with:
@@ -609,7 +608,7 @@ class ChampionArchive:
         variance = sum((f - mean) ** 2 for f in fitnesses) / len(fitnesses)
         return {"fitness_buckets": buckets, "mean": mean, "median": median, "stddev": variance**0.5}
 
-    def get_recency_distribution(self) -> Dict[str, Any]:
+    def get_recency_distribution(self) -> dict[str, Any]:
         """Return a distribution of cycle numbers across entries.
 
         Returns a dict with:
@@ -622,7 +621,7 @@ class ChampionArchive:
         cycles = [e.cycle for e in self.entries]
         max_c = max(cycles)
         min_c = min(cycles)
-        cycle_counts: Dict[int, int] = {}
+        cycle_counts: dict[int, int] = {}
         for c in cycles:
             cycle_counts[c] = cycle_counts.get(c, 0) + 1
         buckets = [{"cycle": c, "count": cycle_counts[c]} for c in sorted(cycle_counts)]
@@ -647,7 +646,7 @@ class ChampionArchive:
         self._update_tiers()
         return before - len(self.entries)
 
-    def get_coverage_stats(self) -> Dict[str, Any]:
+    def get_coverage_stats(self) -> dict[str, Any]:
         """Return coverage statistics across cycles and levels.
 
         Returns:
@@ -667,8 +666,8 @@ class ChampionArchive:
                 "level_range": [0, 0],
                 "foundational_count": 0,
             }
-        cycles = sorted(set(e.cycle for e in self.entries))
-        levels = sorted(set(e.level for e in self.entries))
+        cycles = sorted({e.cycle for e in self.entries})
+        levels = sorted({e.level for e in self.entries})
         foundational = sum(1 for e in self.entries if e.level in FOUNDATIONAL_LEVELS)
         return {
             "total_entries": len(self.entries),
@@ -679,7 +678,7 @@ class ChampionArchive:
             "foundational_count": foundational,
         }
 
-    def compute_sample_weights(self, entries: Optional[List[ChampionEntry]] = None) -> List[float]:
+    def compute_sample_weights(self, entries: list[ChampionEntry] | None = None) -> list[float]:
         """Compute normalized sample weights for the given entries (or all).
 
         Weights combine recency, fitness, and level — same formula as
@@ -708,12 +707,12 @@ class ChampionArchive:
     def size(self) -> int:
         return len(self.entries)
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Return summary statistics."""
         if not self.entries:
             return {"size": 0}
-        cycles = set(e.cycle for e in self.entries)
-        levels = set(e.level for e in self.entries)
+        cycles = {e.cycle for e in self.entries}
+        levels = {e.level for e in self.entries}
         return {
             "size": len(self.entries),
             "cycles": sorted(cycles),
@@ -785,7 +784,7 @@ class ChampionArchive:
 
         return remove_count
 
-    def get_diversity_report(self) -> Dict[str, Any]:
+    def get_diversity_report(self) -> dict[str, Any]:
         """Analyze champion population diversity.
 
         Returns a dict with:
@@ -809,10 +808,10 @@ class ChampionArchive:
         total = len(self.entries)
 
         # Unique levels
-        unique_levels = sorted(set(e.level for e in self.entries))
+        unique_levels = sorted({e.level for e in self.entries})
 
         # Average fitness by level
-        level_fitness: Dict[int, List[float]] = {}
+        level_fitness: dict[int, list[float]] = {}
         for e in self.entries:
             level_fitness.setdefault(e.level, []).append(e.fitness)
         avg_fitness_by_level = {lvl: sum(fits) / len(fits) for lvl, fits in level_fitness.items()}
@@ -823,7 +822,7 @@ class ChampionArchive:
         program_length_variance = sum((l - mean_len) ** 2 for l in lengths) / total
 
         # Instruction diversity: fraction of unique opcodes across all champions
-        all_opcodes: Set[int] = set()
+        all_opcodes: set[int] = set()
         for e in self.entries:
             all_opcodes.update(e.program)
         total_unique_opcodes = len(all_opcodes)

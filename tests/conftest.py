@@ -18,6 +18,7 @@ import pytest
 
 # Path setup -- add parent directory to sys.path
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, compute_qd_axes
@@ -30,7 +31,7 @@ from mutation_proposer import EBREAK, NOP, generate_seed_program, make_rv32i
 
 
 def make_engine(
-    expected_regs: Optional[dict[int, int]] = None,
+    expected_regs: dict[int, int] | None = None,
     champion_fitness: float = 100.0,
     champion_level: int = 0,
     diversity: float = 0.5,
@@ -134,7 +135,7 @@ def make_engine(
     return engine
 
 
-def make_engine_with_task(expected_regs: Optional[dict[int, int]] = None) -> EvolutionEngine:
+def make_engine_with_task(expected_regs: dict[int, int] | None = None) -> EvolutionEngine:
     """Create engine with minimal task instance (for fitness computation)."""
     if expected_regs is None:
         expected_regs = {10: 42, 11: 7}
@@ -180,7 +181,7 @@ def make_snapshot(
     fitness: float = 1.0,
     level: int = 0,
     champion_words: int = 10,
-    val_loss: Optional[float] = None,
+    val_loss: float | None = None,
     diversity: float = 0.5,
     novelty_size: int = 0,
     qd_occupied: int = 0,

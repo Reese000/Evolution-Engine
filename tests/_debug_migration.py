@@ -9,8 +9,8 @@ from rv32i_model import RV32ITransformer
 
 from milestone1.training.scaling.model_migrator import ModelMigrator
 
-OLD = dict(d_model=256, n_layers=8, n_heads=8, d_ff=1024)
-NEW = dict(d_model=512, n_layers=14, n_heads=8, d_ff=1365)
+OLD = {"d_model": 256, "n_layers": 8, "n_heads": 8, "d_ff": 1024}
+NEW = {"d_model": 512, "n_layers": 14, "n_heads": 8, "d_ff": 1365}
 
 torch.manual_seed(42)
 old = RV32ITransformer(vocab_size=2048, d_model=256, n_layers=8, n_heads=8, d_ff=1024, max_seq_len=256, dropout=0.0)

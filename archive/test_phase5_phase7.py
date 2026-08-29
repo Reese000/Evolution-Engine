@@ -24,7 +24,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 try:
-    import v11_dashboard  # noqa: F401
+    import v11_dashboard
     _has_v11_dashboard = True
 except ImportError:
     _has_v11_dashboard = False
@@ -47,7 +47,7 @@ class TestCycleState(unittest.TestCase):
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_import_cycle_state(self):
-        from cycle_state import CycleState, default_cycle_state, SCHEMA_VERSION
+        from cycle_state import SCHEMA_VERSION, CycleState, default_cycle_state
         self.assertTrue(callable(CycleState))
         self.assertTrue(callable(default_cycle_state))
         self.assertEqual(SCHEMA_VERSION, 2)
@@ -371,8 +371,7 @@ class TestDashboardHealthMetrics(unittest.TestCase):
     """Tests for v11_dashboard.py health.json and metrics reading."""
 
     def test_import_dashboard_functions(self):
-        from v11_dashboard import (read_health_json, read_metrics_jsonl,
-                                   compute_metrics_trend, read_progress_report)
+        from v11_dashboard import compute_metrics_trend, read_health_json, read_metrics_jsonl, read_progress_report
         self.assertTrue(callable(read_health_json))
         self.assertTrue(callable(read_metrics_jsonl))
         self.assertTrue(callable(compute_metrics_trend))

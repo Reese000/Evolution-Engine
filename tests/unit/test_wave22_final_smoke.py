@@ -12,10 +12,8 @@ import sys
 import pytest
 
 # Ensure project root is on sys.path
-
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
-
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. TestEngineInstantiation

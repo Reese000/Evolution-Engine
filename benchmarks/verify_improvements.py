@@ -16,6 +16,7 @@ from pathlib import Path
 
 # Ensure project root is on path
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
 from config import Config

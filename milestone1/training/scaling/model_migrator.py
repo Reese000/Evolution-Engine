@@ -21,7 +21,7 @@ import logging
 from typing import Dict, Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from .types import MigrationResult
 
@@ -50,8 +50,8 @@ class ModelMigrator:
         self,
         old_model: nn.Module,
         new_model: nn.Module,
-        old_config: Dict,
-        new_config: Dict,
+        old_config: dict,
+        new_config: dict,
     ) -> MigrationResult:
         """Transfer weights from old_model to new_model.
 
@@ -162,7 +162,7 @@ class ModelMigrator:
             pad_output: "zero" for zero-padding, "small" for small-init on new rows.
         """
         old_out, old_in = old_linear.weight.data.shape
-        new_out, new_in = new_linear.weight.data.shape
+        _new_out, _new_in = new_linear.weight.data.shape
 
         # Zero out the entire new weight matrix
         new_linear.weight.data.zero_()

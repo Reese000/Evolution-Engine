@@ -19,7 +19,6 @@ import os
 import random
 import sys
 
-
 import pytest
 
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, compute_qd_axes
@@ -186,7 +185,7 @@ class TestNicheSharingIntegration:
     def test_niche_penalty_linear_decay(self):
         """Penalty should decrease linearly from dist=0 to dist=2."""
         prev_penalty = None
-        for dist_x10 in range(0, 21):
+        for dist_x10 in range(21):
             dist = dist_x10 / 10.0
             if dist < 2.0:
                 penalty = 0.10 * (1.0 - dist / 2.0)

@@ -80,7 +80,7 @@ class SaturationDetector:
             x = np.arange(len(fitness_history), dtype=float)
             y = np.array(fitness_history, dtype=float)
 
-            slope, intercept, r_value, p_value, std_err = _linregress(x, y)
+            slope, _intercept, _r_value, _p_value, _std_err = _linregress(x, y)
 
             # Relative slope: slope / mean(abs(y))
             mean_abs_fitness = np.mean(np.abs(y))
@@ -112,7 +112,7 @@ class SaturationDetector:
             x = np.arange(len(val_loss_history), dtype=float)
             y = np.array(val_loss_history, dtype=float)
 
-            slope, intercept, r_value, p_value, std_err = _linregress(x, y)
+            slope, _intercept, _r_value, _p_value, _std_err = _linregress(x, y)
 
             # If slope is above threshold, loss is not decreasing
             return slope > self.VAL_LOSS_SLOPE_THRESHOLD

@@ -575,16 +575,14 @@ class TestFailureArchiveEviction:
         jsonl_path = os.path.join(str(tmp_path), "failure_archive.jsonl")
         num_entries, keep = 100, 30
         with open(jsonl_path, "w") as f:
-            for i in range(num_entries):
-                f.write(json.dumps({"iteration": i}) + "\n")
+            f.writelines(json.dumps({"iteration": i}) + "\n" for i in range(num_entries))
 
         with open(jsonl_path) as f:
             lines = f.readlines()
         assert len(lines) == num_entries
 
         with open(jsonl_path, "w") as f:
-            for line in lines[-keep:]:
-                f.write(line)
+            f.writelines(lines[-keep:])
 
         with open(jsonl_path) as f:
             remaining = [json.loads(line) for line in f if line.strip()]
@@ -595,8 +593,7 @@ class TestFailureArchiveEviction:
     def test_no_eviction_needed(self, tmp_path):
         jsonl_path = os.path.join(str(tmp_path), "failure_archive.jsonl")
         with open(jsonl_path, "w") as f:
-            for i in range(5):
-                f.write(json.dumps({"iteration": i}) + "\n")
+            f.writelines(json.dumps({"iteration": i}) + "\n" for i in range(5))
         with open(jsonl_path) as f:
             lines = [l for l in f if l.strip()]
         assert len(lines) == 5
@@ -872,7 +869,7 @@ class TestComprehensiveState:
     """Test EvolutionEngine.get_comprehensive_state returns expected structure."""
 
     def _engine(self, **kw):
-        defaults = dict(champion=[0x00100073] * 5, level=3, fitness=150.0, generation=42)
+        defaults = {"champion": [0x00100073] * 5, "level": 3, "fitness": 150.0, "generation": 42}
         defaults.update(kw)
         return _make_engine(**defaults)
 
@@ -915,7 +912,7 @@ class TestEvolutionState:
     """Test EvolutionEngine.get_evolution_state returns expected structure."""
 
     def _engine(self, **kw):
-        defaults = dict(champion=[0x00100073] * 5, level=3, fitness=150.0, generation=42)
+        defaults = {"champion": [0x00100073] * 5, "level": 3, "fitness": 150.0, "generation": 42}
         defaults.update(kw)
         return _make_engine(**defaults)
 
@@ -1008,7 +1005,7 @@ class TestSaveStateToFile:
     """Test EvolutionEngine.save_state_to_file creates a valid JSON file."""
 
     def _engine(self, **kw):
-        defaults = dict(champion=[0x00100073] * 5, level=3, fitness=150.0, generation=42)
+        defaults = {"champion": [0x00100073] * 5, "level": 3, "fitness": 150.0, "generation": 42}
         defaults.update(kw)
         return _make_engine(**defaults)
 
@@ -1287,7 +1284,7 @@ class TestLogComprehensiveDiagnostics:
 
     def _make_recording_engine(self, **kw):
         """Engine with _log that records every call for inspection."""
-        defaults = dict(champion=[0x00100073] * 5, level=3, fitness=150.0, generation=42)
+        defaults = {"champion": [0x00100073] * 5, "level": 3, "fitness": 150.0, "generation": 42}
         defaults.update(kw)
         engine = _make_engine(**defaults)
         calls = []
@@ -1346,7 +1343,7 @@ class TestEvolutionStateConfig:
     """Test get_evolution_state config sub-dict has all expected keys."""
 
     def _engine(self, **kw):
-        defaults = dict(champion=[0x00100073] * 5, level=3, fitness=150.0, generation=42)
+        defaults = {"champion": [0x00100073] * 5, "level": 3, "fitness": 150.0, "generation": 42}
         defaults.update(kw)
         return _make_engine(**defaults)
 
@@ -1403,7 +1400,7 @@ class TestRunSummaryStructure:
     """Test get_run_summary returns all 5 expected top-level keys."""
 
     def _engine(self, **kw):
-        defaults = dict(champion=[0x00100073] * 5, level=3, fitness=150.0, generation=42)
+        defaults = {"champion": [0x00100073] * 5, "level": 3, "fitness": 150.0, "generation": 42}
         defaults.update(kw)
         return _make_engine(**defaults)
 

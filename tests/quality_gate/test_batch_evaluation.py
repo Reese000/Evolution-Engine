@@ -101,7 +101,7 @@ class TestBatchVsIndividualCorrectness:
             _make_trace(status="crash", trap_cause="illegal instruction"),
         ]
 
-        batch_fit, batch_raw = engine.batch_compute_fitness(programs, traces)
+        batch_fit, _batch_raw = engine.batch_compute_fitness(programs, traces)
 
         # Crash with illegal -> -100
         assert batch_fit[2] == -100.0
@@ -182,7 +182,7 @@ class TestBatchVsIndividualCorrectness:
                     )
                 )
 
-        batch_fit, batch_raw = engine.batch_compute_fitness(programs, traces)
+        batch_fit, _batch_raw = engine.batch_compute_fitness(programs, traces)
 
         for i in range(n):
             individual = _reference_compute_fitness(engine, programs[i], traces[i])
@@ -207,7 +207,7 @@ class TestVectorizedScoringComponents:
         )
         trace = _make_trace(final_regs={10: 42, 11: 7}, instructions_count=3)
 
-        batch_fit, batch_raw = engine.batch_compute_fitness([program], [trace])
+        batch_fit, _batch_raw = engine.batch_compute_fitness([program], [trace])
         # reg_match=1.0 -> 100 - bloat(0) + exec_credit + solved_bonus(50)
         assert batch_fit[0] > 100.0  # at least 100 from register match
 
@@ -221,7 +221,7 @@ class TestVectorizedScoringComponents:
         )
         trace = _make_trace(final_regs={10: 42}, instructions_count=2)
 
-        batch_fit, batch_raw = engine.batch_compute_fitness([program], [trace])
+        batch_fit, _batch_raw = engine.batch_compute_fitness([program], [trace])
         # Only one of two registers matches -> reg_match ~ 0.5
         # base = 0.5 * 100 = 50, minus bloat, plus credit
         assert 0.0 < batch_fit[0] < 150.0
@@ -553,7 +553,7 @@ class TestBatchPerformance:
                     )
                 )
 
-        batch_fit, batch_raw = engine.batch_compute_fitness(programs, traces)
+        batch_fit, _batch_raw = engine.batch_compute_fitness(programs, traces)
 
         for i in range(n):
             individual = _reference_compute_fitness(engine, programs[i], traces[i])

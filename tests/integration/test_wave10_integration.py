@@ -17,13 +17,11 @@ from typing import Dict, List
 
 import pytest
 
-
-from meta_controller import MetaController, TelemetrySnapshot, TuningAction, StagnationResult
-from strategy_archive import StrategyArchive
 from champion_archive import ChampionArchive
+from meta_controller import MetaController, StagnationResult, TelemetrySnapshot, TuningAction
 from metrics import MetricsCollector
 from progression_tracker import CycleMetrics, ProgressionTracker
-
+from strategy_archive import StrategyArchive
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -39,20 +37,20 @@ def _make_snapshot(
     **overrides,
 ) -> TelemetrySnapshot:
     """Build a TelemetrySnapshot with sensible defaults."""
-    defaults = dict(
-        cycle=cycle,
-        fitness=fitness,
-        level=level,
-        champion_words=champion_words,
-        val_loss=val_loss,
-        diversity=diversity,
-        novelty_size=100,
-        qd_occupied=50,
-        qd_total=200,
-        traces_count=20,
-        retrained=True,
-        generations_completed=5,
-    )
+    defaults = {
+        "cycle": cycle,
+        "fitness": fitness,
+        "level": level,
+        "champion_words": champion_words,
+        "val_loss": val_loss,
+        "diversity": diversity,
+        "novelty_size": 100,
+        "qd_occupied": 50,
+        "qd_total": 200,
+        "traces_count": 20,
+        "retrained": True,
+        "generations_completed": 5,
+    }
     defaults.update(overrides)
     return TelemetrySnapshot(**defaults)
 
@@ -66,23 +64,23 @@ def _make_cycle_metrics(
     **overrides,
 ) -> CycleMetrics:
     """Build a CycleMetrics with sensible defaults."""
-    defaults = dict(
-        cycle=cycle,
-        level=level,
-        fitness=fitness,
-        words=words,
-        archive_size=cycle,
-        val_loss=val_loss,
-        time_s=1.0,
-        mg_count=cycle % 3,
-        total_challengers=10,
-        champion_improvements=1,
-    )
+    defaults = {
+        "cycle": cycle,
+        "level": level,
+        "fitness": fitness,
+        "words": words,
+        "archive_size": cycle,
+        "val_loss": val_loss,
+        "time_s": 1.0,
+        "mg_count": cycle % 3,
+        "total_challengers": 10,
+        "champion_improvements": 1,
+    }
     defaults.update(overrides)
     return CycleMetrics(**defaults)
 
 
-def _make_champion_program(seed: int, length: int = 8) -> List[int]:
+def _make_champion_program(seed: int, length: int = 8) -> list[int]:
     """Generate a deterministic instruction list for a champion."""
     return [seed * 0x1000 + i for i in range(length)]
 

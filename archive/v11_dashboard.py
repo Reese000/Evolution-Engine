@@ -31,7 +31,7 @@ _METRICS_PATH = os.path.join(_PROJECT_ROOT, "metrics", "cycles.jsonl")
 _PROGRESS_REPORT_PATH = os.path.join(_PROJECT_ROOT, "progress_report.json")
 
 
-def find_latest_log() -> Optional[str]:
+def find_latest_log() -> str | None:
     log_dir = os.path.join(_PROJECT_ROOT, "continuous_iteration")
     patterns = [
         "run_mc_v11_*.log",
@@ -56,7 +56,7 @@ def find_latest_log() -> Optional[str]:
 # ══════════════════════════════════════════════════════════════════════
 
 
-def read_health_json(path: str = _HEALTH_PATH) -> Optional[Dict[str, Any]]:
+def read_health_json(path: str = _HEALTH_PATH) -> dict[str, Any] | None:
     """Read health.json if it exists. Returns None if not found."""
     if not os.path.isfile(path):
         return None
@@ -67,9 +67,9 @@ def read_health_json(path: str = _HEALTH_PATH) -> Optional[Dict[str, Any]]:
         return None
 
 
-def read_metrics_jsonl(path: str = _METRICS_PATH, last_n: Optional[int] = None) -> List[Dict[str, Any]]:
+def read_metrics_jsonl(path: str = _METRICS_PATH, last_n: int | None = None) -> list[dict[str, Any]]:
     """Read metrics/cycles.jsonl and return list of cycle records."""
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     if not os.path.isfile(path):
         return records
     try:
@@ -89,7 +89,7 @@ def read_metrics_jsonl(path: str = _METRICS_PATH, last_n: Optional[int] = None) 
     return records
 
 
-def compute_metrics_trend(records: List[Dict[str, Any]], metric: str = "fitness", window: int = 10) -> Dict[str, Any]:
+def compute_metrics_trend(records: list[dict[str, Any]], metric: str = "fitness", window: int = 10) -> dict[str, Any]:
     """Compute rolling trend from metrics records."""
     values = []
     for r in records:
@@ -127,7 +127,7 @@ def compute_metrics_trend(records: List[Dict[str, Any]], metric: str = "fitness"
     }
 
 
-def read_progress_report(path: str = _PROGRESS_REPORT_PATH) -> Optional[Dict[str, Any]]:
+def read_progress_report(path: str = _PROGRESS_REPORT_PATH) -> dict[str, Any] | None:
     """Read progress_report.json if it exists."""
     if not os.path.isfile(path):
         return None
@@ -236,7 +236,7 @@ def show_progress_report() -> None:
     print("=" * 60)
 
 
-def parse_log(log_path: str) -> Dict[str, Any]:
+def parse_log(log_path: str) -> dict[str, Any]:
     if not os.path.isfile(log_path):
         return {"error": "log not found"}
     with open(log_path) as f:
@@ -304,7 +304,7 @@ def parse_log(log_path: str) -> Dict[str, Any]:
     return result
 
 
-def format_val_loss_trajectory(mc_entries: List[Dict], width: int = 25) -> str:
+def format_val_loss_trajectory(mc_entries: list[dict], width: int = 25) -> str:
     valid = [e for e in mc_entries if e["val_loss"] is not None]
     if len(valid) < 2:
         return "(insufficient data)"
@@ -520,7 +520,7 @@ def _draw_live(log_path: str) -> None:
         print("\nDashboard closed.")
 
 
-def oneshot(log_path: Optional[str] = None) -> None:
+def oneshot(log_path: str | None = None) -> None:
     if log_path is None:
         log_path = find_latest_log()
     if log_path is None:

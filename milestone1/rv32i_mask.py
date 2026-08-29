@@ -141,7 +141,7 @@ class RV32IEncoding(NamedTuple):
 # =====================================================================
 
 
-def get_valid_combinations() -> List[Tuple[int, int, int, str, str]]:
+def get_valid_combinations() -> list[tuple[int, int, int, str, str]]:
     """Return list of (opcode, funct3, funct7, name, format) for all
     valid RV32I instruction encodings.
 
@@ -151,7 +151,7 @@ def get_valid_combinations() -> List[Tuple[int, int, int, str, str]]:
     return list(_INSTRUCTIONS)
 
 
-def get_encodings() -> Dict[str, RV32IEncoding]:
+def get_encodings() -> dict[str, RV32IEncoding]:
     """Return a dict mapping instruction name -> RV32IEncoding metadata."""
     result = {}
     for opcode, funct3, funct7, name, fmt in _INSTRUCTIONS:
@@ -174,7 +174,7 @@ def _sign_extend(value: int, bits: int) -> int:
     return value
 
 
-def _split_imm_s(imm: int) -> Tuple[int, int]:
+def _split_imm_s(imm: int) -> tuple[int, int]:
     """Split a 12-bit signed immediate into S-type fields:
     imm[11:5] and imm[4:0].
     """
@@ -182,7 +182,7 @@ def _split_imm_s(imm: int) -> Tuple[int, int]:
     return (imm >> 5) & 0x7F, imm & 0x1F
 
 
-def _split_imm_b(imm: int) -> Tuple[int, int, int, int]:
+def _split_imm_b(imm: int) -> tuple[int, int, int, int]:
     """Split a 13-bit signed immediate (must be even) into B-type fields:
     imm[12], imm[10:5], imm[4:1], imm[11].
 
@@ -196,7 +196,7 @@ def _split_imm_b(imm: int) -> Tuple[int, int, int, int]:
     return bit12, bits_10_5, bits_4_1, bit11
 
 
-def _split_imm_j(imm: int) -> Tuple[int, int, int, int]:
+def _split_imm_j(imm: int) -> tuple[int, int, int, int]:
     """Split a 21-bit signed immediate into J-type fields:
     imm[20], imm[10:1], imm[11], imm[19:12].
 
@@ -316,7 +316,7 @@ def encode(name: str, rd: int = 0, rs1: int = 0, rs2: int = 0, imm: int = 0, val
     return word
 
 
-def decode(word: int, validate: bool = True) -> Optional[Dict]:
+def decode(word: int, validate: bool = True) -> dict | None:
     """Decode a 32-bit word into an instruction dictionary.
 
     Args:

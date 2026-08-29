@@ -13,7 +13,6 @@ import pytest
 
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # TestEngineHealth
 # ══════════════════════════════════════════════════════════════════════════════
@@ -121,13 +120,13 @@ class TestConfigHealth:
         assert summary["max_generations"] == 200
 
     def test_validate_config_rejects_invalid_values(self) -> None:
-        """Invalid config values are clamped to safe defaults in __post_init__."""
-        cfg = EvolutionConfig(population_size=0)
-        assert cfg.population_size == 4  # clamped to min 4
-        cfg = EvolutionConfig(mutation_rate=1.5)
-        assert cfg.mutation_rate == 1.0  # clamped to max 1.0
-        cfg = EvolutionConfig(elite_ratio=1.0)
-        assert cfg.elite_ratio == 1.0  # allowed at boundary
+        """Invalid config values raise ValueError in __post_init__."""
+        with pytest.raises(ValueError, match="population_size"):
+            EvolutionConfig(population_size=0)
+        with pytest.raises(ValueError, match="mutation_rate"):
+            EvolutionConfig(mutation_rate=1.5)
+        with pytest.raises(ValueError, match="elite_ratio"):
+            EvolutionConfig(elite_ratio=1.5)
 
     def test_no_warnings_on_default_config(self) -> None:
         """Creating a default EvolutionConfig emits no warnings."""
