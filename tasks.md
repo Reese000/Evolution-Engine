@@ -114,3 +114,23 @@ the two deterministic unit-test failures found during environment setup.
   `{cycle:1, retrained:true, requested_max_epochs:1, effective_max_epochs:1,
   retrain_lr:0.0003, retrain_freeze_layers:0, val_loss:4.3517,
   gate_accepted:true}`.
+
+### Follow-up: test-integrity coverage + sustained-improvement validation
+- Verified audit HIGH-5 (fitness_benchmark "wrong constructor call") is already
+  fixed in the current code, and added `tests/test_fitness_benchmark.py`
+  (config builder kwarg-validity + full tiny run) so it can't silently regress.
+- Added `tests/test_val_loss_parser.py` (6 edge cases for the gate's
+  val_loss parser: legacy `Val Loss:` format, min-across-formats,
+  integer-no-match, malformed/binary robustness) -- this parser silently
+  degrades gating when it fails, the original root cause of null val_loss.
+- Added `tests/test_init_checkpoint.py` (3 tests) guarding the new bootstrap
+  entry point against model-API drift (structure/arch + state_dict round-trip).
+- **Full suite: 1420 passed / 0 failed** (+12 new regression tests).
+- **Sustained-improvement validation**: a clean 6-cycle run
+  (`--cycles 6 --gens 20 --retrain-max-epochs 1`, CPU) completed cleanly and
+  showed val_loss decreasing EVERY cycle -- the compounding self-improvement
+  the audit said never occurred in ~1,534 historical cycles:
+    C1 L6  val=4.3459 | C2 L10 val=4.0176 | C3 L10 val=3.8121
+    C4 L10 val=3.7475 | C5 L10 val=3.6909 | C6 L10 val=3.6397
+  Fitness saturates at L10/412.2 by C3 while the model keeps refining
+  (val_loss keeps dropping); every checkpoint accepted at threshold=best*1.05.
