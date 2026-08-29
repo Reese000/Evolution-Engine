@@ -308,3 +308,14 @@ longer horizon.
   `milestone1/train_model_engine.py` (argparse; verified --help). Updated both
   docs to point to it and clarify train_model.py is a library facade (retrain
   normally runs in-process via the runners).
+
+### Bug fix: status.sh --json produced invalid output
+- `./status.sh --json` (documented "JSON status output") had two bugs:
+  (1) it printed the decorative box header BEFORE the JSON, so output was not
+  parseable; (2) its embedded Python used the shell-substituted lowercase
+  `false` (invalid Python) -> `NameError: name 'false' is not defined`, exit 1.
+- Fix: emit the JSON block before the header and use Python `True`/`False`.
+  Verified `status.sh --json` now yields clean parseable JSON (keys
+  process_running/pid/health). Added `tests/test_status_sh.py`.
+- Syntax-checked all shell scripts (bash -n): all OK.
+- Full suite: 1498 passed / 0 failed.
