@@ -4066,7 +4066,13 @@ class EvolutionEngine:
 
         cp_dir = self._cached_checkpoint_dir
         if cp_dir is None:
-            cp_dir = os.path.join(SCRIPT_DIR, "..", "milestone1", "checkpoints")
+            # Default to <repo>/milestone1/checkpoints. Previously this used
+            # os.path.join(SCRIPT_DIR, "..", "milestone1", ...), a stale path
+            # from when evolution_engine.py lived under milestone2/; now that it
+            # sits at the repo root that resolved to <repo>/../milestone1 (e.g.
+            # /milestone1), causing a PermissionError whenever the engine ran
+            # without an explicit log_dir. Use the canonical MILESTONE1_DIR.
+            cp_dir = os.path.join(MILESTONE1_DIR, "checkpoints")
             if self.config.log_dir:
                 cp_dir = os.path.join(self.config.log_dir, "checkpoints")
             os.makedirs(cp_dir, exist_ok=True)
