@@ -48,7 +48,7 @@ ensure_project_on_path()
 # ── Structured Logging ───────────────────────────────────────────────
 
 from data_rotation import run_all_rotations
-from logging_config import get_logger
+from logging_config import get_logger, setup_logging
 
 _logger = get_logger("Runner")
 
@@ -1292,6 +1292,12 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Validate config without running")
     parser.add_argument("--status", action="store_true", help="Show current health status")
     args = parser.parse_args()
+
+    # Initialise logging so console output is visible. Without this the root
+    # logger has no handlers and Python drops all INFO records, so every
+    # _logger.info(...) below -- including --dry-run's config dump and
+    # --status's health report -- produced no output at all.
+    setup_logging()
 
     # Status mode
     if args.status:

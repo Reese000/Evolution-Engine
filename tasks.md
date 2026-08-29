@@ -284,3 +284,14 @@ longer horizon.
     decision-log helper, analysis utils, augmentation subprocess).
   - HIGH-5 (benchmark constructor): already fixed; locked with tests.
 - Full suite: 1494 passed / 0 failed.
+
+### Bug fix: autonomous_runner produced no console output
+- `autonomous_runner.py` logs via `_logger.info(...)` but never called
+  `setup_logging()`, so the root logger had no handler and Python dropped all
+  INFO records. Effect: the documented `--dry-run` (config dump) and `--status`
+  (health report) commands printed NOTHING, and the run loop showed no console
+  logs -- poor UX for the recommended production entry point.
+- Fix: call `setup_logging()` at the start of `main()`. Verified `--dry-run`
+  now prints "Config validated OK" + config, and `--status` prints the health
+  report. Added `tests/test_autonomous_runner_cli.py`.
+- Full suite: 1496 passed / 0 failed.
