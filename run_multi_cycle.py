@@ -2612,6 +2612,15 @@ def compute_forgetting_curve(
     significantly lower, the model may have forgotten that capability.
 
     Returns a dict mapping level -> raw_score (0.0 = complete failure).
+
+    NOTE (unwired + interface mismatch): this helper is not currently called
+    anywhere. It expects ``vm_farm.evaluate(program, inputs, budget=...)`` to
+    return an object with ``.success``/``.registers``/``.cycles`` attributes,
+    but the actual VM farm (gpu_vm_farm.VMFarm) exposes ``evaluate_single(...)``
+    returning a ``dict``. Wiring this into the retrain loop therefore requires an
+    adapter (or updating the calls to ``evaluate_single`` + dict access) — the
+    accompanying test (tests/test_forgetting_curve.py) covers the scoring logic
+    via a mock that matches the attribute interface above.
     """
     from tasks_rv32i import get_task_level
 
