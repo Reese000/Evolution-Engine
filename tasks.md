@@ -295,3 +295,8 @@ longer horizon.
   now prints "Config validated OK" + config, and `--status` prints the health
   report. Added `tests/test_autonomous_runner_cli.py`.
 - Full suite: 1496 passed / 0 failed.
+- Same silent-output bug in `run_multi_cycle.py` (log() -> _logger_rmc, no
+  setup_logging): its progress and FATAL validation messages were dropped too.
+  Fixed by calling setup_logging() at the start of main(); verified
+  `--cycles 0` now prints "FATAL: --cycles must be >= 1" and exits 1. Added
+  `tests/test_run_multi_cycle_cli.py`. Full suite: 1497 passed / 0 failed.

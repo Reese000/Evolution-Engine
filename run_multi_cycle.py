@@ -58,6 +58,7 @@ RESULTS_FILE = os.path.join(PROJECT_ROOT, "multi_cycle_results.jsonl")
 
 # Structured logging
 from logging_config import get_logger as _get_logger
+from logging_config import setup_logging as _setup_logging
 
 _logger_rmc = _get_logger("RunMultiCycle")
 
@@ -1408,6 +1409,12 @@ def _build_retrain_config(args: argparse.Namespace) -> Any:
 def main() -> None:
     parser = _make_parser()
     args = parser.parse_args()
+
+    # Initialise logging so this runner's progress (log(...) -> _logger_rmc)
+    # is visible on the console. Without it the root logger has no handler and
+    # all INFO records -- including the FATAL validation messages below -- were
+    # silently dropped.
+    _setup_logging()
 
     # Input validation
     if args.cycles < 1:
