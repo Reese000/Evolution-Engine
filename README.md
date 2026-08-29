@@ -97,7 +97,8 @@ Evolution Engine/
 | Feature benchmarks | **5/5 passed** | `benchmarks/verify_v13_features.py` — MG scheduler, temperature annealing, tournament selection with elitism, MG ratio, full evolution cycle |
 | Average fitness/generation vs baseline | **5.3× faster** | `benchmarks/verify_improvements.py` |
 | Per-generation speed | **1.6× faster** | `benchmarks/verify_improvements.py` |
-| Test suite | **1321/1321 passing** | `python -m pytest tests/ -v` (Jul 17 adversarial audit: 1373 passed) |
+| Test suite | **1498 passing / 0 failing** | `python -m pytest tests/` (Aug 2026; was 1321 in Jul 2026) |
+| Retrain loop (evolve→retrain) | **Verified — real, decreasing `val_loss`** | 6-cycle CPU run: `val_loss` 4.35→3.64 monotonically (see Honest Caveats) |
 
 ### Verified-But-Not-Yet-Activated Fixes
 
@@ -115,7 +116,7 @@ The following fixes have been **verified as correct in isolation** but require a
 
 ### Honest Caveats
 
-- The adversarial audit (Jul 17, 2026) found that `val_loss` has been null across all 1,534 cycles — the retrain loop's training signal was never realized. The data path fixes (merged but not yet cycled) should resolve this on next restart.
+- **(Resolved, Aug 2026)** The Jul 17 adversarial audit found that `val_loss` had been null across all 1,534 historical cycles — the retrain loop's training signal was never realized. This is now fixed and verified end-to-end: after bootstrapping a seed checkpoint (`python init_checkpoint.py`), a multi-cycle run produces a real, monotonically-decreasing `val_loss` (6-cycle CPU run: 4.35 → 3.64), and the checkpoint gate accepts each improved model. Root causes addressed: the retrain now runs in-process (the subprocess path was broken because `milestone1/train_model.py` has no CLI), the `checkpoint_acceptance_tolerance` default was aligned to config (1.05), and an epoch-cap bug that ignored `--retrain-max-epochs` for L5+ champions was fixed.
 - Many test files in `tests/test_round*.py` are round-specific regression tests that may pass trivially. The core integration tests (`test_integration.py`, `test_e2e_smoke.py`, `test_phase8_production.py`) provide the real regression safety net.
 - GPU acceleration requires CUDA (CuPy + RTX 4070 Ti); CPU mode works but is significantly slower for batch evaluation.
 
@@ -159,11 +160,14 @@ python run_multi_cycle.py --resume           # Resume from last completed cycle
 python v11_dashboard.py --log engine_run.log # Launch live dashboard
 
 # Training
-python milestone1/train_model.py             # Train model on accumulated traces
+# Retrain normally runs in-process via the runners above. For standalone
+# training use train_model_engine.py; milestone1/train_model.py is an
+# import-only facade (no CLI) and does nothing if run directly.
+python milestone1/train_model_engine.py      # Standalone training CLI (see --help)
 python milestone1/build_recurrent_dataset.py # Build dataset from champion traces
 
 # Testing
-python -m pytest tests/ -v                   # Run full test suite (1400+ tests)
+python -m pytest tests/ -v                   # Run full test suite (~1500 tests)
 
 # Deployment
 ./deploy.sh                                  # Deploy via Docker

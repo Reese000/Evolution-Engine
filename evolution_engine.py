@@ -1298,33 +1298,42 @@ class EvolutionEngine:
             except ImportError:
                 pass
 
-        # Initialise task for current level
-        self._refresh_task_instance()
+        # Champion initialisation lazily opens the log handle via self._log().
+        # If any step here raises, close the handle before the exception
+        # propagates -- these errors are intentionally NOT converted into a
+        # partial summary (unlike errors inside the generation loop below),
+        # but the log handle must still be released to avoid fd leaks.
+        try:
+            # Initialise task for current level
+            self._refresh_task_instance()
 
-        # Generate initial champion
-        if self.champion is None:
-            self.champion = self._generate_initial_champion()
-            # R45: Validate champion before expensive evaluation
-            is_valid, reason = self.validate_program(self.champion)
-            if not is_valid:
-                self._log(f"  Initial champion invalid ({reason}), generating replacement")
-                for _retry in range(5):
-                    self.champion = self._generate_initial_champion()
-                    is_valid, reason = self.validate_program(self.champion)
-                    if is_valid:
-                        break
+            # Generate initial champion
+            if self.champion is None:
+                self.champion = self._generate_initial_champion()
+                # R45: Validate champion before expensive evaluation
+                is_valid, reason = self.validate_program(self.champion)
                 if not is_valid:
-                    self._log("  WARNING: Could not generate valid champion after 5 retries")
-            self.champion_trace = self._evaluate(self.champion)
-            if self.config.use_secondary_tasks:
-                self._secondary_task_results = self._evaluate_secondary_tasks(self.champion)
-            else:
-                self._secondary_task_results = None
-            self.champion_fitness = self._compute_fitness(self.champion, self.champion_trace)
-            # R50: Run verify() on initial champion (uses initial task instance)
-            verified, verify_score = self._verify_champion()
-            self._champion_verified = verified
-            self._champion_verify_score = verify_score
+                    self._log(f"  Initial champion invalid ({reason}), generating replacement")
+                    for _retry in range(5):
+                        self.champion = self._generate_initial_champion()
+                        is_valid, reason = self.validate_program(self.champion)
+                        if is_valid:
+                            break
+                    if not is_valid:
+                        self._log("  WARNING: Could not generate valid champion after 5 retries")
+                self.champion_trace = self._evaluate(self.champion)
+                if self.config.use_secondary_tasks:
+                    self._secondary_task_results = self._evaluate_secondary_tasks(self.champion)
+                else:
+                    self._secondary_task_results = None
+                self.champion_fitness = self._compute_fitness(self.champion, self.champion_trace)
+                # R50: Run verify() on initial champion (uses initial task instance)
+                verified, verify_score = self._verify_champion()
+                self._champion_verified = verified
+                self._champion_verify_score = verify_score
+        except Exception:
+            self._close_log_handle()
+            raise
 
         summary = {
             "generations_completed": 0,
@@ -4057,7 +4066,13 @@ class EvolutionEngine:
 
         cp_dir = self._cached_checkpoint_dir
         if cp_dir is None:
-            cp_dir = os.path.join(SCRIPT_DIR, "..", "milestone1", "checkpoints")
+            # Default to <repo>/milestone1/checkpoints. Previously this used
+            # os.path.join(SCRIPT_DIR, "..", "milestone1", ...), a stale path
+            # from when evolution_engine.py lived under milestone2/; now that it
+            # sits at the repo root that resolved to <repo>/../milestone1 (e.g.
+            # /milestone1), causing a PermissionError whenever the engine ran
+            # without an explicit log_dir. Use the canonical MILESTONE1_DIR.
+            cp_dir = os.path.join(MILESTONE1_DIR, "checkpoints")
             if self.config.log_dir:
                 cp_dir = os.path.join(self.config.log_dir, "checkpoints")
             os.makedirs(cp_dir, exist_ok=True)

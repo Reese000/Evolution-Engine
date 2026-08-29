@@ -129,17 +129,14 @@ for a in history[-5:]:
     exit 0
 fi
 
-# ── Main status output ──────────────────────────────────────────────
-echo ""
-echo -e "${BOLD}═══════════════════════════════════════════════════════${NC}"
-echo -e "${BOLD}  Evolution Engine — Status${NC}"
-echo -e "${BOLD}═══════════════════════════════════════════════════════${NC}"
-
+# ── JSON output ─────────────────────────────────────────────────────
+# Emit pure JSON BEFORE any decorative header so `--json` output is parseable.
+# Note: use Python True/False (the shell substitutes the literal), not the
+# lowercase JSON true/false, which is invalid Python and raised NameError.
 if [ "$JSON_MODE" = true ]; then
-    # Raw JSON output
     python3 -c "
 import json, os
-result = {'process_running': $([ "$PROCESS_RUNNING" = true ] && echo 'true' || echo 'false')}
+result = {'process_running': $([ "$PROCESS_RUNNING" = true ] && echo 'True' || echo 'False')}
 result['pid'] = '$RUNNER_PID'
 if os.path.isfile('health.json'):
     with open('health.json') as f:
@@ -150,6 +147,12 @@ print(json.dumps(result, indent=2))
 "
     exit 0
 fi
+
+# ── Main status output ──────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}═══════════════════════════════════════════════════════${NC}"
+echo -e "${BOLD}  Evolution Engine — Status${NC}"
+echo -e "${BOLD}═══════════════════════════════════════════════════════${NC}"
 
 # Process status (systemd or manual)
 if [ "$SERVICE_ACTIVE" = true ]; then

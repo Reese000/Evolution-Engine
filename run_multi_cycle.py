@@ -58,6 +58,7 @@ RESULTS_FILE = os.path.join(PROJECT_ROOT, "multi_cycle_results.jsonl")
 
 # Structured logging
 from logging_config import get_logger as _get_logger
+from logging_config import setup_logging as _setup_logging
 
 _logger_rmc = _get_logger("RunMultiCycle")
 
@@ -462,6 +463,82 @@ def merge_archive_to_recurrent(cycle: int) -> int:
     return added
 
 
+def _effective_max_epochs(requested_max_epochs: int | None, best_level: int) -> int | None:
+    """Compute the effective retrain epoch budget.
+
+    L5+ champions target a floor of 8 epochs so the model gets enough gradient
+    updates to learn higher-level instruction patterns. However, an explicit
+    cap (``--retrain-max-epochs`` / ``config.retrain_max_epochs``) is an UPPER
+    bound and must always win -- previously the L5+ branch hard-set 8 and
+    silently ignored a lower requested cap, so short/fast retrains were
+    impossible once the champion reached L5+.
+
+    Args:
+        requested_max_epochs: The requested cap (from CLI/config/MetaController),
+            or ``None`` when unspecified.
+        best_level: The champion's best curriculum level this cycle.
+
+    Returns:
+        The effective max-epochs value, or ``None`` when unspecified and not
+        boosted (caller then omits the flag and the trainer uses its default).
+    """
+    if best_level >= 5:
+        return 8 if requested_max_epochs is None else min(8, requested_max_epochs)
+    return requested_max_epochs
+
+
+def build_retrain_decision(
+    cycle: int,
+    retrain_result: dict[str, Any],
+    *,
+    fitness: float = 0.0,
+    level: int = 0,
+    words: int = 0,
+    cycles_since_last_retrain: int = 0,
+    champion_traces: int = 0,
+) -> dict[str, Any]:
+    """Build one retrain-decision record from a retrain_result.
+
+    Shared by run_multi_cycle's main loop and autonomous_runner so both entry
+    points emit the same `retrain_decisions.jsonl` schema. Budget/gate fields
+    (requested/effective epochs, lr, freeze, val_loss, gate_accepted) are read
+    from retrain_result via .get(); callers should populate them so the record
+    reflects what actually ran (see _effective_max_epochs).
+    """
+    import datetime as _dt
+
+    return {
+        "cycle": cycle,
+        "decision": "attempted" if retrain_result.get("retrained") else "skipped",
+        "reason": retrain_result.get("reason", "unknown"),
+        "retrained": retrain_result.get("retrained", False),
+        "fitness": fitness,
+        "level": level,
+        "words": words,
+        "cycles_since_last_retrain": cycles_since_last_retrain,
+        "champion_traces": champion_traces,
+        "requested_max_epochs": retrain_result.get("requested_max_epochs"),
+        "effective_max_epochs": retrain_result.get("effective_max_epochs"),
+        "retrain_lr": retrain_result.get("retrain_lr"),
+        "retrain_freeze_layers": retrain_result.get("retrain_freeze_layers"),
+        "val_loss": retrain_result.get("val_loss"),
+        "gate_accepted": retrain_result.get("gate_accepted"),
+        "timestamp": _dt.datetime.now().isoformat(),
+    }
+
+
+def write_retrain_decision(cycle: int, retrain_result: dict[str, Any], *, path: str | None = None, **fields: Any) -> dict[str, Any]:
+    """Append a retrain-decision record to retrain_decisions.jsonl. Best-effort."""
+    rec = build_retrain_decision(cycle, retrain_result, **fields)
+    p = path or os.path.join(PROJECT_ROOT, "retrain_decisions.jsonl")
+    try:
+        with open(p, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+    return rec
+
+
 def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_level: int = 0) -> dict[str, Any]:
     """Retrain the seed model on accumulated recurrent data.
 
@@ -655,18 +732,20 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     cmd.extend(["--batch-size", str(effective_bs)])
 
     # -- Max epochs --
-    me = getattr(config, "retrain_max_epochs", None) if config is not None else None
+    requested_me = getattr(config, "retrain_max_epochs", None) if config is not None else None
 
-    # -- Level-based epoch boost for L5+ champions --\n    # When champion reached L5+, increase max_epochs to ensure the model\n    # has enough gradient updates to learn higher-level instruction patterns.
-    # Overrides MetaController budget to ensure sufficient training for L5+ tasks.
-    # NOTE: Applied to BOTH cmd (CLI fallback) AND train_kwargs (actual path).
-    # v19: Capped at 55 total — prevents overfitting from excessive epochs.
+    # -- Level-based epoch setting for L5+ champions --
+    # L5+ tasks target a floor of 8 epochs for more gradient updates, but an
+    # explicit requested cap is an upper bound that always wins (see
+    # _effective_max_epochs). Applied to BOTH cmd (CLI fallback) AND
+    # train_kwargs (the actual in-process path further below, which reads `me`).
+    me = _effective_max_epochs(requested_me, best_level)
     if best_level >= 5:
-        boosted_epochs = 8  # Cap at 8 regardless of level
-        me = boosted_epochs
-        cmd.extend(["--max-epochs", str(boosted_epochs)])
-        log(f"  Cycle {cycle}: Level-based epoch boost: capped at {boosted_epochs} (best_level={best_level})")
-    elif me is not None:
+        log(
+            f"  Cycle {cycle}: Level-based epoch setting: {me} "
+            f"(best_level={best_level}, requested_cap={requested_me})"
+        )
+    if me is not None:
         cmd.extend(["--max-epochs", str(me)])
 
     # -- Validation split --
@@ -1331,6 +1410,12 @@ def main() -> None:
     parser = _make_parser()
     args = parser.parse_args()
 
+    # Initialise logging so this runner's progress (log(...) -> _logger_rmc)
+    # is visible on the console. Without it the root logger has no handler and
+    # all INFO records -- including the FATAL validation messages below -- were
+    # silently dropped.
+    _setup_logging()
+
     # Input validation
     if args.cycles < 1:
         log("FATAL: --cycles must be >= 1")
@@ -1955,6 +2040,24 @@ def main() -> None:
                 retrain_result = retrain_model(
                     cycle, checkpoint, config=merged_retrain_config, best_level=current_level
                 )
+                # Capture the effective retrain budget for decision-log telemetry.
+                # The requested cap (from CLI/config/MetaController) can differ from
+                # what actually runs once the L5+ floor/cap is applied, so record both.
+                _requested_epochs = (
+                    getattr(merged_retrain_config, "retrain_max_epochs", None)
+                    if merged_retrain_config is not None
+                    else None
+                )
+                retrain_result["requested_max_epochs"] = _requested_epochs
+                retrain_result["effective_max_epochs"] = _effective_max_epochs(_requested_epochs, current_level)
+                retrain_result["retrain_lr"] = (
+                    getattr(merged_retrain_config, "retrain_lr", None) if merged_retrain_config is not None else None
+                )
+                retrain_result["retrain_freeze_layers"] = (
+                    getattr(merged_retrain_config, "retrain_freeze_layers", None)
+                    if merged_retrain_config is not None
+                    else None
+                )
                 # Reset force-retrain timer on any retrain attempt
                 cycles_since_last_retrain = 0
                 # Track mtime for --skip-retrain-if-no-new-data
@@ -1983,6 +2086,8 @@ def main() -> None:
                         accepted = meta_controller.accept_checkpoint(val_loss, new_ck)
                         # v13: Persist val_loss in results for cross-cycle analysis
                         retrain_result["val_loss"] = val_loss
+                        # Record the gate outcome for the retrain-decision log.
+                        retrain_result["gate_accepted"] = accepted
                         if accepted:
                             log(f"  Cycle {cycle}: Checkpoint ACCEPTED (val_loss={val_loss:.4f})")
                             # v24 Pivot 5: Reset consecutive rejection counter on acceptance
@@ -2459,23 +2564,17 @@ def main() -> None:
         except (OSError, PermissionError) as e:
             log(f"  Cycle {cycle}: Failed to write results: {e}")
 
-        # -- Retrain decision logging (audit v2 fix) ---------------------
+        # -- Retrain decision logging (audit v2 fix; shared helper) ------
         try:
-            _retrain_decision = {
-                "cycle": cycle,
-                "decision": "attempted" if retrain_result.get("retrained") else "skipped",
-                "reason": retrain_result.get("reason", "unknown"),
-                "retrained": retrain_result.get("retrained", False),
-                "fitness": current_fitness,
-                "level": current_level,
-                "words": current_words,
-                "cycles_since_last_retrain": cycles_since_last_retrain,
-                "champion_traces": evo_result.get("champion_traces", 0),
-                "timestamp": __import__("datetime").datetime.now().isoformat(),
-            }
-            _retrain_log_path = os.path.join(PROJECT_ROOT, "retrain_decisions.jsonl")
-            with open(_retrain_log_path, "a") as _f:
-                _f.write(json.dumps(_retrain_decision) + "\n")
+            write_retrain_decision(
+                cycle,
+                retrain_result,
+                fitness=current_fitness,
+                level=current_level,
+                words=current_words,
+                cycles_since_last_retrain=cycles_since_last_retrain,
+                champion_traces=evo_result.get("champion_traces", 0),
+            )
         except Exception as _e:
             log(f"  Cycle {cycle}: Failed to write retrain decision log: {_e}")
 
@@ -2520,6 +2619,15 @@ def compute_forgetting_curve(
     significantly lower, the model may have forgotten that capability.
 
     Returns a dict mapping level -> raw_score (0.0 = complete failure).
+
+    NOTE (unwired + interface mismatch): this helper is not currently called
+    anywhere. It expects ``vm_farm.evaluate(program, inputs, budget=...)`` to
+    return an object with ``.success``/``.registers``/``.cycles`` attributes,
+    but the actual VM farm (gpu_vm_farm.VMFarm) exposes ``evaluate_single(...)``
+    returning a ``dict``. Wiring this into the retrain loop therefore requires an
+    adapter (or updating the calls to ``evaluate_single`` + dict access) — the
+    accompanying test (tests/test_forgetting_curve.py) covers the scoring logic
+    via a mock that matches the attribute interface above.
     """
     from tasks_rv32i import get_task_level
 
