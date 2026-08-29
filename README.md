@@ -97,7 +97,7 @@ Evolution Engine/
 | Feature benchmarks | **5/5 passed** | `benchmarks/verify_v13_features.py` — MG scheduler, temperature annealing, tournament selection with elitism, MG ratio, full evolution cycle |
 | Average fitness/generation vs baseline | **5.3× faster** | `benchmarks/verify_improvements.py` |
 | Per-generation speed | **1.6× faster** | `benchmarks/verify_improvements.py` |
-| Test suite | **1450 passing / 0 failing** | `python -m pytest tests/` (Aug 2026; was 1321 in Jul 2026) |
+| Test suite | **1498 passing / 0 failing** | `python -m pytest tests/` (Aug 2026; was 1321 in Jul 2026) |
 | Retrain loop (evolve→retrain) | **Verified — real, decreasing `val_loss`** | 6-cycle CPU run: `val_loss` 4.35→3.64 monotonically (see Honest Caveats) |
 
 ### Verified-But-Not-Yet-Activated Fixes
@@ -167,7 +167,7 @@ python milestone1/train_model_engine.py      # Standalone training CLI (see --he
 python milestone1/build_recurrent_dataset.py # Build dataset from champion traces
 
 # Testing
-python -m pytest tests/ -v                   # Run full test suite (1400+ tests)
+python -m pytest tests/ -v                   # Run full test suite (~1500 tests)
 
 # Deployment
 ./deploy.sh                                  # Deploy via Docker
