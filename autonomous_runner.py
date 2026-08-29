@@ -708,6 +708,21 @@ class AutonomousRunner:
         result = {**evo_result, **retrain_result, "cycle": cycle}
         self._record_result(result)
 
+        # Retrain-decision log (observability parity with run_multi_cycle).
+        try:
+            from run_multi_cycle import write_retrain_decision
+
+            write_retrain_decision(
+                cycle,
+                retrain_result,
+                fitness=fitness,
+                level=level,
+                words=evo_result.get("champion_words", 0),
+                champion_traces=evo_result.get("champion_traces", 0),
+            )
+        except Exception as e:
+            log(f"  Failed to write retrain decision log: {e}")
+
         # Phase 7.2: Record metrics and generate progress report
         cycle_time = time.time() - cycle_start
         cycle_metrics = {
@@ -753,11 +768,26 @@ class AutonomousRunner:
         """Run retrain after evolution (with gating)."""
         from run_multi_cycle import retrain_model
 
+        best_level = evo_result.get("final_level", 0)
         retrain_result = retrain_model(
             cycle=cycle,
             checkpoint_path=self._checkpoint,
             config=self._retrain_config,
-            best_level=evo_result.get("final_level", 0),
+            best_level=best_level,
+        )
+
+        # Populate effective/requested retrain budget for the decision log so
+        # autonomous_runner emits the same retrain_decisions.jsonl schema as
+        # run_multi_cycle (the caps are applied inside retrain_model).
+        from run_multi_cycle import _effective_max_epochs
+
+        rc = self._retrain_config
+        _req = getattr(rc, "retrain_max_epochs", None) if rc is not None else None
+        retrain_result.setdefault("requested_max_epochs", _req)
+        retrain_result.setdefault("effective_max_epochs", _effective_max_epochs(_req, best_level))
+        retrain_result.setdefault("retrain_lr", getattr(rc, "retrain_lr", None) if rc is not None else None)
+        retrain_result.setdefault(
+            "retrain_freeze_layers", getattr(rc, "retrain_freeze_layers", None) if rc is not None else None
         )
 
         # Checkpoint gating via persistent MetaController
@@ -780,6 +810,7 @@ class AutonomousRunner:
                     new_ck = retrain_result.get("checkpoint", "")
                     if new_ck and os.path.isfile(new_ck):
                         accepted = mc.accept_checkpoint(val_loss, new_ck)
+                        retrain_result["gate_accepted"] = accepted
                         if accepted:
                             self._checkpoint = new_ck
                             log(f"  Checkpoint accepted (val_loss={val_loss:.4f})")

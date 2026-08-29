@@ -486,6 +486,58 @@ def _effective_max_epochs(requested_max_epochs: int | None, best_level: int) -> 
     return requested_max_epochs
 
 
+def build_retrain_decision(
+    cycle: int,
+    retrain_result: dict[str, Any],
+    *,
+    fitness: float = 0.0,
+    level: int = 0,
+    words: int = 0,
+    cycles_since_last_retrain: int = 0,
+    champion_traces: int = 0,
+) -> dict[str, Any]:
+    """Build one retrain-decision record from a retrain_result.
+
+    Shared by run_multi_cycle's main loop and autonomous_runner so both entry
+    points emit the same `retrain_decisions.jsonl` schema. Budget/gate fields
+    (requested/effective epochs, lr, freeze, val_loss, gate_accepted) are read
+    from retrain_result via .get(); callers should populate them so the record
+    reflects what actually ran (see _effective_max_epochs).
+    """
+    import datetime as _dt
+
+    return {
+        "cycle": cycle,
+        "decision": "attempted" if retrain_result.get("retrained") else "skipped",
+        "reason": retrain_result.get("reason", "unknown"),
+        "retrained": retrain_result.get("retrained", False),
+        "fitness": fitness,
+        "level": level,
+        "words": words,
+        "cycles_since_last_retrain": cycles_since_last_retrain,
+        "champion_traces": champion_traces,
+        "requested_max_epochs": retrain_result.get("requested_max_epochs"),
+        "effective_max_epochs": retrain_result.get("effective_max_epochs"),
+        "retrain_lr": retrain_result.get("retrain_lr"),
+        "retrain_freeze_layers": retrain_result.get("retrain_freeze_layers"),
+        "val_loss": retrain_result.get("val_loss"),
+        "gate_accepted": retrain_result.get("gate_accepted"),
+        "timestamp": _dt.datetime.now().isoformat(),
+    }
+
+
+def write_retrain_decision(cycle: int, retrain_result: dict[str, Any], *, path: str | None = None, **fields: Any) -> dict[str, Any]:
+    """Append a retrain-decision record to retrain_decisions.jsonl. Best-effort."""
+    rec = build_retrain_decision(cycle, retrain_result, **fields)
+    p = path or os.path.join(PROJECT_ROOT, "retrain_decisions.jsonl")
+    try:
+        with open(p, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+    return rec
+
+
 def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_level: int = 0) -> dict[str, Any]:
     """Retrain the seed model on accumulated recurrent data.
 
@@ -2505,31 +2557,17 @@ def main() -> None:
         except (OSError, PermissionError) as e:
             log(f"  Cycle {cycle}: Failed to write results: {e}")
 
-        # -- Retrain decision logging (audit v2 fix) ---------------------
+        # -- Retrain decision logging (audit v2 fix; shared helper) ------
         try:
-            _retrain_decision = {
-                "cycle": cycle,
-                "decision": "attempted" if retrain_result.get("retrained") else "skipped",
-                "reason": retrain_result.get("reason", "unknown"),
-                "retrained": retrain_result.get("retrained", False),
-                "fitness": current_fitness,
-                "level": current_level,
-                "words": current_words,
-                "cycles_since_last_retrain": cycles_since_last_retrain,
-                "champion_traces": evo_result.get("champion_traces", 0),
-                # Effective vs requested retrain budget + gate outcome so the
-                # decision log reflects what actually ran (see _effective_max_epochs).
-                "requested_max_epochs": retrain_result.get("requested_max_epochs"),
-                "effective_max_epochs": retrain_result.get("effective_max_epochs"),
-                "retrain_lr": retrain_result.get("retrain_lr"),
-                "retrain_freeze_layers": retrain_result.get("retrain_freeze_layers"),
-                "val_loss": retrain_result.get("val_loss"),
-                "gate_accepted": retrain_result.get("gate_accepted"),
-                "timestamp": __import__("datetime").datetime.now().isoformat(),
-            }
-            _retrain_log_path = os.path.join(PROJECT_ROOT, "retrain_decisions.jsonl")
-            with open(_retrain_log_path, "a") as _f:
-                _f.write(json.dumps(_retrain_decision) + "\n")
+            write_retrain_decision(
+                cycle,
+                retrain_result,
+                fitness=current_fitness,
+                level=current_level,
+                words=current_words,
+                cycles_since_last_retrain=cycles_since_last_retrain,
+                champion_traces=evo_result.get("champion_traces", 0),
+            )
         except Exception as _e:
             log(f"  Cycle {cycle}: Failed to write retrain decision log: {_e}")
 
