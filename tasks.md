@@ -250,3 +250,19 @@ longer horizon.
 - Documented a latent interface mismatch in unwired `compute_forgetting_curve`
   (expects vm_farm.evaluate(...)->obj; real VMFarm has evaluate_single->dict).
 - Full suite: 1486 passed / 0 failed.
+
+### Bug fix: augmentation_subprocess stdout JSON contract violated
+- Found by functionally smoke-testing `augmentation_subprocess.py` (untested):
+  it guarantees "outputs augmented sequences as JSON on stdout", but
+  `data.augmentation.inject_*` print "[Train] ..." progress to STDOUT, so the
+  emitted stream was `[Train] ...\n{json}` -- not parseable.
+- Impact: the caller `milestone1/training/loop.py` does
+  `json.loads(result.stdout)`, which raised, so it caught the error and fell
+  back to IN-PROCESS augmentation on every retrain. This silently defeated R51
+  (augmentation was isolated in a subprocess precisely to avoid CUDA
+  ACCESS_VIOLATION crashes) and did the augmentation work twice per retrain.
+- Fix: redirect stdout->stderr for the duration of the work in
+  augmentation_subprocess.main(), emitting only the final JSON on real stdout.
+  Verified: stdout now parses cleanly (count=430), "[Train]" lines go to stderr.
+- Added `tests/test_augmentation_subprocess.py` (mirrors loop.py's json.loads
+  contract). Full suite: 1487 passed / 0 failed.
