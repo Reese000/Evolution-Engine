@@ -200,3 +200,17 @@ longer horizon.
   and instead records val_loss/retrained in metrics/cycles.jsonl +
   progress_report.json. (Wiring the decision log into autonomous_runner is a
   possible follow-up for observability parity.)
+
+### Follow-up: retrain-decision log observability parity
+- Extracted `build_retrain_decision` / `write_retrain_decision` in
+  run_multi_cycle.py and refactored the inline loop write to use them
+  (behavior-preserving). Wired the same helper into
+  `autonomous_runner.run_cycle`, and enriched autonomous_runner's
+  retrain_result with requested/effective epochs, lr, freeze, and
+  `gate_accepted`. The recommended production entry point now emits the same
+  `retrain_decisions.jsonl` schema as run_multi_cycle.
+- Added `tests/test_retrain_decision_log.py` (3 tests). Suite: 1463 passed / 1
+  skipped.
+- Verified end-to-end: a 1-cycle autonomous_runner produced a fully-populated
+  decision record (requested/effective_max_epochs, retrain_lr,
+  retrain_freeze_layers, val_loss, gate_accepted).
