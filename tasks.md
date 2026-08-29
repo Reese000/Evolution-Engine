@@ -227,3 +227,14 @@ longer horizon.
     contract; confirmed correct, no latent bug.
   - `tests/test_forgetting_curve.py` (4 tests): per-level re-scoring branches
     (perfect/partial/crash) via a mock VM + patched task.
+
+### Long-horizon validation (20-cycle request) + auto-termination confirmed
+- `run_multi_cycle.py --cycles 20 --gens 20 --retrain-max-epochs 1` (CPU) exited
+  cleanly (EXIT=0) after ~17 cycles. It stopped before 20 BY DESIGN:
+  `barrier_tuner.should_terminate()` fired ("no meaningful progress for extended
+  period") after champion fitness plateaued at L10 for ~14 cycles.
+- val_loss decreased MONOTONICALLY across all 17 cycles: 4.4395 -> 3.2813. The
+  model keeps refining from champion traces even after fitness saturates, and
+  the orchestrator's auto-termination works correctly. My epoch/gate enrichment
+  now also appears in multi_cycle_results.jsonl (effective_max_epochs,
+  gate_accepted). Full suite: 1473 passed / 0 failed.
