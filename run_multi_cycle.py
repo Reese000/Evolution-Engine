@@ -373,6 +373,12 @@ def run_evolution(
         "diversity": engine._current_diversity,
     }
 
+    # EE-W5: additive per-generation phase split (VM eval vs orchestration).
+    # Copied verbatim from the engine run summary; existing keys untouched.
+    for _k, _v in result.items():
+        if isinstance(_k, str) and _k.startswith("gen_phase_"):
+            metrics[_k] = _v
+
     # Serialize archive state for cross-cycle persistence
     try:
         archive_state = engine.save_archive_state()
@@ -2415,26 +2421,17 @@ def main() -> None:
         if retrain_result.get("retrained") and champion_int and champion_level > 0:
             try:
                 from evolution_engine import VMFarm as _DiagVMFarm
+
                 _diag_vm = _DiagVMFarm(num_workers=1, use_gpu=False)
-                forgetting_scores = compute_forgetting_curve(
-                    champion_int, champion_level, _diag_vm
-                )
+                forgetting_scores = compute_forgetting_curve(champion_int, champion_level, _diag_vm)
                 _fc_perfect = sum(1 for s in forgetting_scores.values() if s >= 140.0)
                 _fc_total = len(forgetting_scores)
-                log(
-                    f"  Cycle {cycle}: [ForgettingCurve] "
-                    f"{_fc_perfect}/{_fc_total} levels still perfect"
-                )
+                log(f"  Cycle {cycle}: [ForgettingCurve] " f"{_fc_perfect}/{_fc_total} levels still perfect")
             except Exception as e:
                 log(f"  Cycle {cycle}: Forgetting curve failed: {e}")
 
             backup_ckpt = retrain_result.get("backup_checkpoint")
-            if (
-                backup_ckpt
-                and os.path.isfile(backup_ckpt)
-                and retrain_ckpt
-                and os.path.isfile(retrain_ckpt)
-            ):
+            if backup_ckpt and os.path.isfile(backup_ckpt) and retrain_ckpt and os.path.isfile(retrain_ckpt):
                 try:
                     weight_deltas = compute_weight_delta(backup_ckpt, retrain_ckpt)
                     if weight_deltas:

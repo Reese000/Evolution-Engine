@@ -15,6 +15,7 @@ import math
 import os
 import random
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,8 +53,9 @@ from logging_config import get_logger
 
 _logger = get_logger("EvolutionEngine")
 
-from paths import MILESTONE0_DIR, MILESTONE1_DIR, ensure_project_on_path
+from paths import MILESTONE0_DIR, MILESTONE1_DIR
 from paths import PROJECT_ROOT as SCRIPT_DIR
+from paths import ensure_project_on_path
 
 ensure_project_on_path()
 
@@ -61,6 +63,10 @@ ensure_project_on_path()
 # Imports from the real vm_farm module
 # ----------------------------------------------------------------------
 
+# EE-W5: per-generation phase timing -- splits generation wall time into
+# VM-farm fitness evaluation vs Python orchestration so the
+# phase_evolution_seconds band can be attributed to a dominant phase.
+from evolution.phase_timing import PhaseTimer, default_log_path, timed_vm_eval, timers_enabled
 from vm_farm import EvalResult, _run_one_evaluation  # type: ignore
 
 
@@ -169,13 +175,14 @@ class VMFarm:
     def evaluate(self, program: list[int], inputs: dict[str, Any], budget: int = 10000) -> EvalResult:
         init_regs = inputs.get("registers", {})
         init_mem = inputs.get("memory", {})
-        return _run_one_evaluation(
-            kernel_path=self.kernel_path,
-            program=program,
-            budget=budget,
-            init_regs=init_regs,
-            init_mem=init_mem,
-        )
+        with timed_vm_eval():
+            return _run_one_evaluation(
+                kernel_path=self.kernel_path,
+                program=program,
+                budget=budget,
+                init_regs=init_regs,
+                init_mem=init_mem,
+            )
 
     def _eval_single_worker(self, program, task, budget):
         """Evaluate a single program on a single worker."""
@@ -186,7 +193,16 @@ class VMFarm:
             return {"status": "error", "error": str(e), "instructions_count": 0}
 
     def evaluate_batch(self, programs, task, budget=None):
-        """Evaluate a batch of programs using the VM farm."""
+        """Evaluate a batch of programs using the VM farm.
+
+        Wall time is recorded here, at the outermost call, so a batch that
+        fans out to :meth:`evaluate` is counted exactly once (EE-W5).
+        """
+        with timed_vm_eval():
+            return self._evaluate_batch_untimed(programs, task, budget)
+
+    def _evaluate_batch_untimed(self, programs, task, budget=None):
+        """Batch body; wall time is accounted by the evaluate_batch wrapper."""
         if not programs:
             return []
         budget = budget or self.config.eval_budget
@@ -837,6 +853,7 @@ class EvolutionConfig:
         if self.curriculum_level >= self.max_level:
             self.curriculum_level = self.max_level - 1
 
+
 class EvolutionEngine:
     """Main evolutionary loop for RV32I program synthesis.
 
@@ -1397,7 +1414,9 @@ class EvolutionEngine:
         if hof_size >= 2 and hof_spread < 1.0:
             recs.append(f"Hall of Fame fitness spread is narrow ({hof_spread:.2f}).")
 
-    def _recommend_normalization_off(self, recs: list[str], norm_active: bool, hist_len: int, recent_trend: float) -> None:
+    def _recommend_normalization_off(
+        self, recs: list[str], norm_active: bool, hist_len: int, recent_trend: float
+    ) -> None:
         """Add normalization-off recommendations when fitness is flat."""
         if not norm_active and hist_len > 20 and recent_trend <= 0:
             recs.append(
@@ -1652,13 +1671,19 @@ class EvolutionEngine:
 
     def _run_generation_evaluate(self) -> tuple:
         """Generate challengers, evaluate, select elite."""
-        challengers = self._generate_challengers()
-        self._current_diversity = self._compute_population_diversity(challengers)
-        results = self._evaluate_batch(challengers)
-        self._last_challengers = challengers
-        self._last_results = results
-        elite, elite_fitnesses, _ = self._select_elite(challengers, results)
-        detailed_results = self._evaluate_batch_detailed(elite)
+        with self._pt("mutation_propagation"):
+            challengers = self._generate_challengers()
+        with self._pt("diagnostics_logging"):
+            self._current_diversity = self._compute_population_diversity(challengers)
+        with self._pt("vm_eval"):
+            results = self._evaluate_batch(challengers)
+        with self._pt("diagnostics_logging"):
+            self._last_challengers = challengers
+            self._last_results = results
+        with self._pt("selection_archives"):
+            elite, elite_fitnesses, _ = self._select_elite(challengers, results)
+        with self._pt("vm_eval"):
+            detailed_results = self._evaluate_batch_detailed(elite)
         return challengers, results, elite, elite_fitnesses, detailed_results
 
     def _run_generation_update(
@@ -1758,6 +1783,13 @@ class EvolutionEngine:
             except Exception:
                 pass
 
+    def _pt(self, name: str):
+        """Return the phase-timing context for ``name`` (no-op when idle)."""
+        _timer = getattr(self, "_phase_timer", None)
+        if _timer is None or not _timer.enabled:
+            return nullcontext()
+        return _timer.phase(name)
+
     def _run_one_generation(
         self,
         gen: int,
@@ -1770,26 +1802,45 @@ class EvolutionEngine:
     ) -> None:
         """Execute a single generation of the evolution loop."""
         gen_start = time.time()
-        self._run_generation_init(gen, n_levels)
+        timer = getattr(self, "_phase_timer", None)
+        if timer is not None:
+            timer.begin_generation(gen)
+        with self._pt("mutation_propagation"):
+            self._run_generation_init(gen, n_levels)
         _, _, elite, elite_fitnesses, detailed_results = self._run_generation_evaluate()
-        improved = self._run_generation_update(
-            gen, elite, detailed_results, elite_fitnesses, False, checkpoint_interval, auto_curriculum
-        )
-        self._log_generation(gen, gen_start)
-        self._run_generation_maintenance(
-            gen,
-            improved,
-            task_refresh_interval,
-            cuda_cleanup_interval,
-            _cuda_cleanup,
-            checkpoint_interval,
-            auto_curriculum,
-        )
+        with self._pt("selection_archives"):
+            improved = self._run_generation_update(
+                gen, elite, detailed_results, elite_fitnesses, False, checkpoint_interval, auto_curriculum
+            )
+        with self._pt("diagnostics_logging"):
+            self._log_generation(gen, gen_start)
+        with self._pt("selection_archives"):
+            self._run_generation_maintenance(
+                gen,
+                improved,
+                task_refresh_interval,
+                cuda_cleanup_interval,
+                _cuda_cleanup,
+                checkpoint_interval,
+                auto_curriculum,
+            )
+        if timer is not None:
+            timer.end_generation(
+                {
+                    "generations_stalled": int(self.generations_stalled),
+                    "champion_level": int(self.champion_level),
+                }
+            )
 
     def run(self, num_generations: int | None = None) -> dict[str, Any]:
         """Run the evolution loop for num_generations (default: config)."""
         ng = num_generations if num_generations is not None else self.config.max_generations
         start_time = time.time()
+        timer = PhaseTimer(enabled=timers_enabled())
+        timer.set_cycle(int(getattr(self, "_cycle_number", 0)))
+        timer.set_log_path(default_log_path(os.path.dirname(os.path.abspath(__file__))))
+        self._phase_timer = timer
+        run_perf_start = time.perf_counter()
         checkpoint_interval = self.config.checkpoint_interval
         auto_curriculum = self.config.auto_curriculum
         task_refresh_interval = 25
@@ -1810,7 +1861,9 @@ class EvolutionEngine:
 
             except ImportError:
                 pass
+        _init_perf = time.perf_counter()
         summary = self._initialize_run(ng)
+        timer.run_init_seconds = time.perf_counter() - _init_perf
         n_levels = len(_levels_ref)
         try:
             if hasattr(self, "_raw_task_score"):
@@ -1831,6 +1884,7 @@ class EvolutionEngine:
         finally:
             self._close_log_handle()
         # Final checkpoint after all generations complete
+        _fin_perf = time.perf_counter()
         if checkpoint_interval:
             try:
                 self._checkpoint()
@@ -1841,6 +1895,9 @@ class EvolutionEngine:
         summary["final_level"] = self.champion_level
         summary["champion_words"] = len(self.champion) if self.champion else 0
         summary["elapsed_seconds"] = time.time() - start_time
+        timer.run_finalize_seconds = time.perf_counter() - _fin_perf
+        for _key, _value in timer.summary(time.perf_counter() - run_perf_start).items():
+            summary[_key] = _value
         return summary
 
     def _refresh_task_instance(self) -> None:
