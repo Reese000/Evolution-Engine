@@ -26,24 +26,25 @@ import sys
 
 try:
     from theme.manager import ThemeManager as _ThemeManager
+
     _theme = _ThemeManager.instance()
     COLORS = {
-        "DEBUG":    _theme.color_for_level("DEBUG"),
-        "INFO":     _theme.color_for_level("INFO"),
-        "WARNING":  _theme.color_for_level("WARNING"),
-        "ERROR":    _theme.color_for_level("ERROR"),
+        "DEBUG": _theme.color_for_level("DEBUG"),
+        "INFO": _theme.color_for_level("INFO"),
+        "WARNING": _theme.color_for_level("WARNING"),
+        "ERROR": _theme.color_for_level("ERROR"),
         "CRITICAL": _theme.color_for_level("CRITICAL"),
-        "RESET":    "\033[0m",
+        "RESET": "\033[0m",
     }
 except ImportError:
     # Fallback: standard ANSI if theme module unavailable
     COLORS = {
-        "DEBUG":    "\033[36m",   # Cyan
-        "INFO":     "\033[32m",   # Green
-        "WARNING":  "\033[33m",   # Yellow
-        "ERROR":    "\033[31m",   # Red
-        "CRITICAL": "\033[35m",   # Magenta
-        "RESET":    "\033[0m",    # Reset
+        "DEBUG": "\033[36m",  # Cyan
+        "INFO": "\033[32m",  # Green
+        "WARNING": "\033[33m",  # Yellow
+        "ERROR": "\033[31m",  # Red
+        "CRITICAL": "\033[35m",  # Magenta
+        "RESET": "\033[0m",  # Reset
     }
 
 
@@ -104,6 +105,7 @@ def setup_logging(
     if log_dir is None:
         try:
             from paths import PROJECT_ROOT
+
             log_dir = str(PROJECT_ROOT)
         except ImportError:
             log_dir = os.path.dirname(os.path.abspath(__file__))
@@ -136,8 +138,10 @@ def setup_logging(
 
     # Log initialization
     logger = get_logger("LoggingConfig")
-    logger.info(f"Logging initialized: console={logging.getLevelName(console_level)}, "
-                f"file={logging.getLevelName(file_level)} ({log_path})")
+    logger.info(
+        f"Logging initialized: console={logging.getLevelName(console_level)}, "
+        f"file={logging.getLevelName(file_level)} ({log_path})"
+    )
 
 
 def get_logger(name: str) -> logging.Logger:

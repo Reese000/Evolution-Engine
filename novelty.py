@@ -38,17 +38,34 @@ SparseArchive(k_neighbors, novelty_threshold)
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from scipy.spatial import KDTree
-from scipy.stats import pearsonr, spearmanr
+from scipy.stats import pearsonr
 
 # Default k for k-nearest-neighbour novelty scoring.
 _DEFAULT_K: int = 5
 
 # Default novelty threshold below which descriptors are rejected.
 _DEFAULT_THRESHOLD: float = 0.15
+
+
+def _safe_spearmanr(x: np.ndarray, y: np.ndarray) -> tuple[float | None, float | None]:
+    """Rank correlation without scipy.stats.spearmanr (MKL abort on Windows)."""
+    if len(x) < 2 or np.std(x) == 0 or np.std(y) == 0:
+        return None, None
+    rx = np.argsort(np.argsort(x, kind="mergesort")).astype(np.float64)
+    ry = np.argsort(np.argsort(y, kind="mergesort")).astype(np.float64)
+    if np.std(rx) == 0 or np.std(ry) == 0:
+        return None, None
+    dx = rx - rx.mean()
+    dy = ry - ry.mean()
+    denom = np.sqrt(np.dot(dx, dx) * np.dot(dy, dy))
+    if denom == 0:
+        return None, None
+    return float(np.dot(dx, dy) / denom), None
+
 
 # Opcode categories matching evolution_engine.py's OPCODE_CATEGORY_MAP.
 # RV32I base instructions grouped by functional unit.
@@ -127,6 +144,34 @@ def _opcode_category_bits(program: list[int]) -> int:
     return seen
 
 
+def _count_instruction_categories(
+    program: list[int],
+) -> tuple[int, int, int, int, set[int]]:
+    """Count instruction categories and registers written in *program*."""
+    branch_count = 0
+    load_count = 0
+    store_count = 0
+    total_ops = 0
+    regs_written: set[int] = set()
+    if program:
+        for word in program:
+            if not isinstance(word, int):
+                continue
+            low7 = word & 0x7F
+            total_ops += 1
+            if low7 == 0x63:
+                branch_count += 1
+            elif low7 == 0x03:
+                load_count += 1
+            elif low7 == 0x23:
+                store_count += 1
+            # Extract rd (bits 7-11) for unique regs written
+            rd = (word >> 7) & 0x1F
+            if 1 <= rd <= 31:
+                regs_written.add(rd)
+    return branch_count, load_count, store_count, total_ops, regs_written
+
+
 def extract_behavioral_descriptor(
     trace: dict[str, Any],
     program: list[int],
@@ -158,32 +203,9 @@ def extract_behavioral_descriptor(
     # Program length (normalised by budget)
     program_length = min(n_words / n_budget, 1.0)
 
-    # Branch fraction
-    branch_count = 0
-    load_count = 0
-    store_count = 0
-    total_ops = 0
-    regs_written: set[int] = set()
-    if program:
-        for word in program:
-            if not isinstance(word, int):
-                continue
-            low7 = word & 0x7F
-            total_ops += 1
-            if low7 == 0x63:
-                branch_count += 1
-            elif low7 == 0x03:
-                load_count += 1
-            elif low7 == 0x23:
-                store_count += 1
-            # Extract rd (bits 7-11) for unique regs written
-            rd = (word >> 7) & 0x1F
-            if 1 <= rd <= 31:
-                regs_written.add(rd)
-
+    branch_count, load_count, store_count, total_ops, regs_written = _count_instruction_categories(program)
     branch_fraction = branch_count / max(1, total_ops)
     alu_count = total_ops - branch_count - load_count - store_count
-    # Remove system/jump from alu count for a rough fraction
     alu_fraction = max(0, alu_count) / max(1, total_ops)
     load_store_ratio = (load_count + store_count) / max(1, total_ops)
     unique_regs_used = len(regs_written) / 31.0
@@ -293,7 +315,7 @@ class SparseArchive:
                 else:
                     total_dist += float(np.mean(dists))
                 count += 1
-            except Exception:
+            except (ValueError, TypeError, KeyError):
                 continue
 
         if count == 0:
@@ -483,6 +505,33 @@ class SparseArchive:
             "avg_novelty": sum(recent) / len(recent) if recent else 0.0,
         }
 
+    def _lookup_single_program(
+        self,
+        program: list[int],
+        current_generation: int | None,
+        half_life: int,
+    ) -> tuple[int, float]:
+        """Look up novelty score for a single program via hash index."""
+        prog_id = id(program)
+        _prog_hash = hash(tuple(program))
+        indices = self._prog_hash_index.get(_prog_hash, [])
+        for idx in indices:
+            if idx < len(self._entries):
+                entry = self._entries[idx]
+                meta = entry[2]
+                stored_prog = meta.get("program") if isinstance(meta, dict) else None
+                if stored_prog is not None and stored_prog == program:
+                    flat_descriptor = entry[0]
+                    base_novelty = self._k_nn_distance(flat_descriptor)
+                    if current_generation is not None:
+                        program_generation = meta.get("generation") if isinstance(meta, dict) else None
+                        if program_generation is not None:
+                            age = current_generation - int(program_generation)
+                            decay = math.exp(-0.693 * age / half_life)
+                            base_novelty *= decay
+                    return prog_id, base_novelty
+        return prog_id, 0.0
+
     def batch_lookup(
         self,
         programs: list[list[int]],
@@ -514,29 +563,8 @@ class SparseArchive:
         """
         results: dict[int, float] = {}
         for program in programs:
-            prog_id = id(program)
-            _prog_hash = hash(tuple(program))
-            indices = self._prog_hash_index.get(_prog_hash, [])
-            found = False
-            for idx in indices:
-                if idx < len(self._entries):
-                    entry = self._entries[idx]
-                    meta = entry[2]
-                    stored_prog = meta.get("program") if isinstance(meta, dict) else None
-                    if stored_prog is not None and stored_prog == program:
-                        flat_descriptor = entry[0]
-                        base_novelty = self._k_nn_distance(flat_descriptor)
-                        if current_generation is not None:
-                            program_generation = meta.get("generation") if isinstance(meta, dict) else None
-                            if program_generation is not None:
-                                age = current_generation - int(program_generation)
-                                decay = math.exp(-0.693 * age / half_life)
-                                base_novelty *= decay
-                        results[prog_id] = base_novelty
-                        found = True
-                        break
-            if not found:
-                results[prog_id] = 0.0
+            prog_id, score = self._lookup_single_program(program, current_generation, half_life)
+            results[prog_id] = score
         return results
 
     def get_novelty_stats(self) -> dict[str, float]:
@@ -671,18 +699,19 @@ class SparseArchive:
     # Metrics contributing to composite score: (key, weight, direction).
     # direction=+1 means upward slope is "improving"; -1 means upward
     # slope is "declining".
-    _EVOLUTION_METRICS: list[tuple[str, float, int]] = [
-        ("mean",     0.30, +1),
-        ("median",   0.20, +1),
-        ("std",      0.15, +1),
-        ("cv",       0.15, -1),
-        ("iqr",      0.10, +1),
+    _EVOLUTION_METRICS: ClassVar[list[tuple[str, float, int]]] = [
+        ("mean", 0.30, +1),
+        ("median", 0.20, +1),
+        ("std", 0.15, +1),
+        ("cv", 0.15, -1),
+        ("iqr", 0.10, +1),
         ("skewness", 0.10, -1),
     ]
 
     @staticmethod
     def _metric_slope(
-        values: list[float], gens: np.ndarray,
+        values: list[float],
+        gens: np.ndarray,
     ) -> tuple[float, str]:
         """Normalised linear slope of *values* over *gens*.
 
@@ -702,6 +731,71 @@ class SparseArchive:
         ns = raw_slope / y_range if y_range > 0 else 0.0
         d = "increasing" if ns > 0.05 else ("decreasing" if ns < -0.05 else "flat")
         return ns, d
+
+    def _compute_metric_trends(
+        self,
+        populated: list[dict[str, Any]],
+        gens: np.ndarray,
+    ) -> tuple[dict[str, dict[str, Any]], float]:
+        """Compute per-metric slopes and composite score."""
+        metric_trends: dict[str, dict[str, Any]] = {}
+        weighted_slopes: list[float] = []
+        total_weight = 0.0
+        for key, weight, direction in self._EVOLUTION_METRICS:
+            vals = [float(s.get(key, float("nan"))) for s in populated]
+            ns, d = self._metric_slope(vals, gens)
+            adj = ns * direction
+            metric_trends[key] = {
+                "slope": round(ns, 6),
+                "direction": d,
+                "adjusted_slope": round(adj, 6),
+            }
+            weighted_slopes.append(weight * adj)
+            total_weight += weight
+        composite = sum(weighted_slopes) / total_weight if total_weight else 0.0
+        composite = max(-1.0, min(1.0, composite))
+        return metric_trends, composite
+
+    @staticmethod
+    def _build_evolution_interpretation(
+        trend: str,
+        composite: float,
+        n: int,
+        gen_span: int,
+        improving: list[str],
+        declining: list[str],
+    ) -> str:
+        """Build human-readable interpretation of evolution trend."""
+        interp = (
+            f"Novelty distribution trend is {trend} (composite score: "
+            f"{composite:+.3f}) across {n} snapshots spanning {gen_span} generations."
+        )
+        if improving:
+            interp += f" Improving metrics: {', '.join(improving)}."
+        if declining:
+            interp += f" Declining metrics: {', '.join(declining)}."
+        return interp
+
+    @staticmethod
+    def _get_evolution_recommendation(trend: str) -> str:
+        """Return recommendation string for the given trend."""
+        recs = {
+            "improving": (
+                "Novelty pressure is effective -- continue current strategy. "
+                "Monitor for diminishing returns as the archive matures."
+            ),
+            "declining": (
+                "Novelty scores are falling. Consider increasing mutation "
+                "rate, widening the behavioural descriptor space, or "
+                "adjusting the novelty threshold to maintain exploration."
+            ),
+            "stable": (
+                "Novelty pressure is stable. No immediate action needed. "
+                "If diversity stagnates, consider periodic resets or "
+                "adaptive threshold adjustments."
+            ),
+        }
+        return recs[trend]
 
     def track_distribution_evolution(
         self,
@@ -738,59 +832,25 @@ class SparseArchive:
         gens = np.array([s["generation"] for s in populated], dtype=float)
         gen_span = int(gens[-1] - gens[0])
 
-        # Per-metric slope analysis
-        metric_trends: dict[str, dict[str, Any]] = {}
-        weighted_slopes: list[float] = []
-        total_weight = 0.0
-        for key, weight, direction in self._EVOLUTION_METRICS:
-            vals = [float(s.get(key, float("nan"))) for s in populated]
-            ns, d = self._metric_slope(vals, gens)
-            adj = ns * direction
-            metric_trends[key] = {
-                "slope": round(ns, 6), "direction": d,
-                "adjusted_slope": round(adj, 6),
-            }
-            weighted_slopes.append(weight * adj)
-            total_weight += weight
-
-        composite = sum(weighted_slopes) / total_weight if total_weight else 0.0
-        composite = max(-1.0, min(1.0, composite))
-        trend = "improving" if composite > 0.15 else ("declining" if composite < -0.15 else "stable")
-
+        metric_trends, composite = self._compute_metric_trends(populated, gens)
         n = len(populated)
         confidence = "high" if n >= 10 and gen_span >= 10 else ("medium" if n >= 5 else "low")
 
         improving = [k for k, v in metric_trends.items() if v["adjusted_slope"] > 0.05]
         declining = [k for k, v in metric_trends.items() if v["adjusted_slope"] < -0.05]
 
-        interp = (
-            f"Novelty distribution trend is {trend} (composite score: "
-            f"{composite:+.3f}) across {n} snapshots spanning {gen_span} generations."
-        )
-        if improving:
-            interp += f" Improving metrics: {', '.join(improving)}."
-        if declining:
-            interp += f" Declining metrics: {', '.join(declining)}."
-
-        recs = {
-            "improving": (
-                "Novelty pressure is effective -- continue current strategy. "
-                "Monitor for diminishing returns as the archive matures."),
-            "declining": (
-                "Novelty scores are falling. Consider increasing mutation "
-                "rate, widening the behavioural descriptor space, or "
-                "adjusting the novelty threshold to maintain exploration."),
-            "stable": (
-                "Novelty pressure is stable. No immediate action needed. "
-                "If diversity stagnates, consider periodic resets or "
-                "adaptive threshold adjustments."),
-        }
+        trend = "improving" if composite > 0.15 else ("declining" if composite < -0.15 else "stable")
+        interp = self._build_evolution_interpretation(trend, composite, n, gen_span, improving, declining)
 
         return {
-            "trend": trend, "composite_score": round(composite, 4),
-            "confidence": confidence, "n_snapshots": n,
-            "n_generations": gen_span, "metrics": metric_trends,
-            "interpretation": interp, "recommendation": recs[trend],
+            "trend": trend,
+            "composite_score": round(composite, 4),
+            "confidence": confidence,
+            "n_snapshots": n,
+            "n_generations": gen_span,
+            "metrics": metric_trends,
+            "interpretation": interp,
+            "recommendation": self._get_evolution_recommendation(trend),
         }
 
     # ------------------------------------------------------------------
@@ -835,6 +895,31 @@ class SparseArchive:
         self._rebuild_prog_hash_index()
         return n_remove
 
+    def _compute_adaptive_decay(
+        self,
+        flat_descriptor: list[float],
+        program_generation: Any,
+        current_generation: int,
+        half_life: int,
+        meta: dict[str, Any],
+    ) -> float:
+        """Compute decayed novelty score with fitness and diversity weighting."""
+        base_novelty = self._k_nn_distance(flat_descriptor)
+        age = current_generation - int(program_generation)
+        fitness = meta.get("fitness") if isinstance(meta, dict) else None
+        if fitness is not None and isinstance(fitness, (int, float)):
+            clamped = max(0.0, min(1.0, float(fitness)))
+            fitness_multiplier = 0.25 + 1.75 * clamped
+        else:
+            fitness_multiplier = 1.0
+        effective_half_life = half_life * fitness_multiplier
+        novelty_multiplier = self._relative_novelty_multiplier(base_novelty)
+        effective_half_life *= novelty_multiplier
+        decay = math.exp(-0.693 * age / effective_half_life)
+        diversity = self.get_diversity_score()
+        diversity_weight = max(0.1, 1.0 - diversity)
+        return base_novelty * decay * diversity_weight
+
     def decayed_novelty(
         self,
         program: list[int],
@@ -876,40 +961,7 @@ class SparseArchive:
                     program_generation = meta.get("generation") if isinstance(meta, dict) else None
                     flat_descriptor = entry[0]
                     if program_generation is not None and flat_descriptor is not None:
-                        base_novelty = self._k_nn_distance(flat_descriptor)
-                        age = current_generation - int(program_generation)
-
-                        # Adaptive decay: fitness modulates the effective half-life.
-                        # fitness=0 -> multiplier=0.25  (fast decay)
-                        # fitness=1 -> multiplier=2.0   (slow decay)
-                        fitness = meta.get("fitness") if isinstance(meta, dict) else None
-                        if fitness is not None and isinstance(fitness, (int, float)):
-                            clamped = max(0.0, min(1.0, float(fitness)))
-                            fitness_multiplier = 0.25 + 1.75 * clamped
-                        else:
-                            fitness_multiplier = 1.0  # no fitness data -> unchanged decay
-
-                        effective_half_life = half_life * fitness_multiplier
-
-                        # Relative novelty weighting: compare this program's novelty
-                        # to the archive average to modulate decay rate.
-                        # Programs more novel than average decay slower (more valuable
-                        # as they explore new behaviour regions). Programs less novel
-                        # decay faster (they are less distinctive).
-                        novelty_multiplier = self._relative_novelty_multiplier(base_novelty)
-                        effective_half_life *= novelty_multiplier
-
-                        decay = math.exp(-0.693 * age / effective_half_life)
-
-                        # Archive-diversity weighting.
-                        # get_diversity_score() returns Shannon entropy in [0, 1].
-                        # diversity_weight maps entropy → novelty importance:
-                        #   entropy=0 (homogeneous) → weight=1.0 (max pressure)
-                        #   entropy=1 (diverse)    → weight=0.1 (floor, never zero)
-                        diversity = self.get_diversity_score()
-                        diversity_weight = max(0.1, 1.0 - diversity)
-
-                        return base_novelty * decay * diversity_weight
+                        return self._compute_adaptive_decay(flat_descriptor, program_generation, current_generation, half_life, meta)
         return 0.0
 
     # ------------------------------------------------------------------
@@ -964,11 +1016,13 @@ class SparseArchive:
             score = float(dists) if k == 1 else float(np.mean(dists))
 
             generation = meta.get("generation") if isinstance(meta, dict) else None
-            trajectory.append({
-                "generation": generation,
-                "novelty_score": score,
-                "metadata": meta,
-            })
+            trajectory.append(
+                {
+                    "generation": generation,
+                    "novelty_score": score,
+                    "metadata": meta,
+                }
+            )
 
         # Sort by generation (entries without generation go last).
         trajectory.sort(key=lambda d: (d["generation"] is None, d["generation"] or 0))
@@ -1038,9 +1092,9 @@ class SparseArchive:
 
         # Heuristic novelty pressure label
         if cv < 0.3:
-            pressure = "high"     # Low variance → scores cluster → strong pressure
+            pressure = "high"  # Low variance → scores cluster → strong pressure
         elif cv > 0.8:
-            pressure = "low"      # High variance → scores scattered → weak pressure
+            pressure = "low"  # High variance → scores scattered → weak pressure
         else:
             pressure = "moderate"
 
@@ -1063,6 +1117,111 @@ class SparseArchive:
     # ------------------------------------------------------------------
     # Novelty-impact correlation analysis
     # ------------------------------------------------------------------
+
+    def _compute_cross_sectional_correlations(self) -> tuple[dict[str, Any], np.ndarray]:
+        """Compute per-metric correlations between novelty scores and descriptors."""
+        k = min(self.k_neighbors, self.size)
+        novelty_scores: list[float] = []
+        descriptor_values: dict[str, list[float]] = {}
+        for entry in self._entries:
+            flat = entry[0]
+            desc = entry[1]
+            dists, _ = self._tree.query(np.array(flat), k=k)
+            score = float(dists) if k == 1 else float(np.mean(dists))
+            novelty_scores.append(score)
+            for metric, val in desc.items():
+                if isinstance(val, (int, float)):
+                    descriptor_values.setdefault(metric, []).append(float(val))
+        novelty_arr = np.array(novelty_scores)
+        cross_sectional: dict[str, Any] = {}
+        for metric, vals in sorted(descriptor_values.items()):
+            metric_arr = np.array(vals)
+            if np.std(metric_arr) == 0.0 or np.std(novelty_arr) == 0.0:
+                cross_sectional[f"{metric}_pearson"] = None
+                cross_sectional[f"{metric}_spearman"] = None
+                continue
+            pr, pp = pearsonr(novelty_arr, metric_arr)
+            sr, sp = _safe_spearmanr(novelty_arr, metric_arr)
+            cross_sectional[f"{metric}_pearson"] = float(pr)
+            cross_sectional[f"{metric}_pearson_p"] = float(pp)
+            cross_sectional[f"{metric}_spearman"] = float(sr) if sr is not None else None
+            cross_sectional[f"{metric}_spearman_p"] = float(sp) if sp is not None else None
+        return cross_sectional, novelty_arr
+
+    def _compute_longitudinal_correlations(self) -> Any:
+        """Compute longitudinal correlation between novelty pressure and diversity."""
+        populated = [s for s in self._distribution_history if s.get("populated", False)]
+        if len(populated) < 3:
+            return None
+        pressures: list[float] = []
+        diversities: list[float] = []
+        for snap in populated:
+            cv = snap.get("cv")
+            div_proxy = min(cv / 2.0, 1.0) if cv is not None and cv > 0 else 0.0
+            pressure_val = max(0.0, 1.0 - min(cv, 2.0) / 2.0) if cv is not None else 0.0
+            pressures.append(pressure_val)
+            diversities.append(div_proxy)
+        if len(pressures) < 3:
+            return None
+        p_arr = np.array(pressures)
+        d_arr = np.array(diversities)
+        if np.std(p_arr) > 0 and np.std(d_arr) > 0:
+            pr, pp = pearsonr(p_arr, d_arr)
+            sr, sp = _safe_spearmanr(p_arr, d_arr)
+        else:
+            pr, pp, sr, sp = 0.0, 1.0, 0.0, 1.0
+        return {
+            "pearson_r": float(pr),
+            "pearson_p": float(pp),
+            "spearman_r": float(sr) if sr is not None else 0.0,
+            "spearman_p": float(sp) if sp is not None else 1.0,
+            "n_generations": len(populated),
+            "mean_pressure": float(np.mean(p_arr)),
+            "mean_diversity_proxy": float(np.mean(d_arr)),
+        }
+
+    @staticmethod
+    def _build_correlation_summary(
+        cross_sectional: dict[str, Any],
+        longitudinal: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build summary interpretation from correlation results."""
+        pearson_rs = [v for k, v in cross_sectional.items() if k.endswith("_pearson") and v is not None]
+        if pearson_rs:
+            median_r = float(np.median(pearson_rs))
+            if median_r > 0.1:
+                cs_effect = "positive"
+            elif median_r < -0.1:
+                cs_effect = "negative"
+            else:
+                cs_effect = "neutral"
+        else:
+            median_r = 0.0
+            cs_effect = "neutral"
+        if longitudinal is not None:
+            lr = longitudinal.get("pearson_r", 0.0)
+            if lr > 0.1:
+                lg_effect = "positive"
+            elif lr < -0.1:
+                lg_effect = "negative"
+            else:
+                lg_effect = "neutral"
+        else:
+            lg_effect = "insufficient_data"
+        if cs_effect == "positive" and lg_effect in ("positive", "neutral"):
+            interp = f"Novelty pressure shows positive cross-sectional correlation (median r={median_r:.3f}) with diversity metrics, suggesting it is increasing program diversity."
+        elif cs_effect == "negative":
+            interp = f"Novelty pressure shows negative cross-sectional correlation (median r={median_r:.3f}) with diversity metrics — higher novelty scores may concentrate rather than diversify."
+        else:
+            interp = f"Cross-sectional correlation is weak (median r={median_r:.3f}). Novelty pressure has neutral impact on diversity."
+        if longitudinal:
+            lr = longitudinal.get("pearson_r", 0.0)
+            lp = longitudinal.get("pearson_p", 1.0)
+            sig = " (p<0.05)" if lp < 0.05 else ""
+            interp += f" Longitudinal r={lr:.3f}{sig} across {longitudinal['n_generations']} generations."
+        elif lg_effect == "insufficient_data":
+            interp += " Insufficient longitudinal data (<3 generations) for temporal analysis."
+        return {"cross_sectional_effect": cs_effect, "longitudinal_effect": lg_effect, "overall_interpretation": interp, "median_pearson_r": median_r, "n_metrics_correlated": len(pearson_rs)}
 
     def get_novelty_impact_correlation(self) -> dict[str, Any]:
         """Analyze whether novelty pressure is increasing program diversity.
@@ -1114,165 +1273,13 @@ class SparseArchive:
         """
         if self.size < 3:
             return {}
-
-        # --- Cross-sectional analysis: novelty score × descriptor values ---
         if self._tree_dirty:
             self._rebuild_tree()
         if self._tree is None:
             return {}
-
-        k = min(self.k_neighbors, self.size)
-
-        novelty_scores: list[float] = []
-        descriptor_values: dict[str, list[float]] = {}
-
-        for entry in self._entries:
-            flat = entry[0]
-            desc = entry[1]  # original descriptor dict
-            dists, _ = self._tree.query(np.array(flat), k=k)
-            score = float(dists) if k == 1 else float(np.mean(dists))
-            novelty_scores.append(score)
-
-            for metric, val in desc.items():
-                if isinstance(val, (int, float)):
-                    descriptor_values.setdefault(metric, []).append(float(val))
-
-        novelty_arr = np.array(novelty_scores)
-        cross_sectional: dict[str, Any] = {}
-
-        for metric, vals in sorted(descriptor_values.items()):
-            metric_arr = np.array(vals)
-            # Skip constant metrics (std == 0 → undefined correlation)
-            if np.std(metric_arr) == 0.0 or np.std(novelty_arr) == 0.0:
-                cross_sectional[f"{metric}_pearson"] = None
-                cross_sectional[f"{metric}_spearman"] = None
-                continue
-
-            pr, pp = pearsonr(novelty_arr, metric_arr)
-            sr, sp = spearmanr(novelty_arr, metric_arr)
-            cross_sectional[f"{metric}_pearson"] = float(pr)
-            cross_sectional[f"{metric}_pearson_p"] = float(pp)
-            cross_sectional[f"{metric}_spearman"] = float(sr)
-            cross_sectional[f"{metric}_spearman_p"] = float(sp)
-
-        # --- Longitudinal analysis: novelty pressure × diversity over time ---
-        longitudinal: dict[str, Any] | None = None
-        populated = [s for s in self._distribution_history if s.get("populated", False)]
-
-        if len(populated) >= 3:
-            pressures: list[float] = []
-            diversities: list[float] = []
-            for snap in populated:
-                cv = snap.get("cv")
-                # Recompute diversity_score from archive size at snapshot time
-                # We approximate: use the entropy-like metric from the snapshot
-                # if available, otherwise use the current diversity as a proxy.
-                # For a more accurate longitudinal diversity, we'd need to store
-                # diversity_score in each snapshot (which record_distribution_snapshot
-                # does not currently do).  So we use cv as the diversity proxy:
-                # high cv → scattered scores → more diversity.
-                # Instead, let's compute a diversity proxy from the snapshot stats.
-                if cv is not None and cv > 0:
-                    # Normalise cv to [0, 1] as a diversity proxy
-                    div_proxy = min(cv / 2.0, 1.0)
-                else:
-                    div_proxy = 0.0
-
-                # For pressure, lower cv means stronger novelty pressure
-                # (scores cluster tightly).  Map cv to pressure: cv→0 = high.
-                if cv is not None:
-                    pressure_val = max(0.0, 1.0 - min(cv, 2.0) / 2.0)
-                else:
-                    pressure_val = 0.0
-
-                pressures.append(pressure_val)
-                diversities.append(div_proxy)
-
-            if len(pressures) >= 3:
-                p_arr = np.array(pressures)
-                d_arr = np.array(diversities)
-                # Guard: if either array is constant, correlation is undefined.
-                if np.std(p_arr) > 0 and np.std(d_arr) > 0:
-                    pr, pp = pearsonr(p_arr, d_arr)
-                    sr, sp = spearmanr(p_arr, d_arr)
-                else:
-                    pr, pp, sr, sp = 0.0, 1.0, 0.0, 1.0
-                longitudinal = {
-                    "pearson_r": float(pr),
-                    "pearson_p": float(pp),
-                    "spearman_r": float(sr),
-                    "spearman_p": float(sp),
-                    "n_generations": len(populated),
-                    "mean_pressure": float(np.mean(p_arr)),
-                    "mean_diversity_proxy": float(np.mean(d_arr)),
-                }
-
-        # --- Summary / interpretation ---
-        pearson_rs = [
-            v for k, v in cross_sectional.items()
-            if k.endswith("_pearson") and v is not None
-        ]
-        if pearson_rs:
-            median_r = float(np.median(pearson_rs))
-            if median_r > 0.1:
-                cs_effect = "positive"
-            elif median_r < -0.1:
-                cs_effect = "negative"
-            else:
-                cs_effect = "neutral"
-        else:
-            median_r = 0.0
-            cs_effect = "neutral"
-
-        if longitudinal is not None:
-            lr = longitudinal.get("pearson_r", 0.0)
-            if lr > 0.1:
-                lg_effect = "positive"
-            elif lr < -0.1:
-                lg_effect = "negative"
-            else:
-                lg_effect = "neutral"
-        else:
-            lg_effect = "insufficient_data"
-
-        # Build interpretation
-        if cs_effect == "positive" and lg_effect in ("positive", "neutral"):
-            interp = (
-                f"Novelty pressure shows positive cross-sectional correlation "
-                f"(median r={median_r:.3f}) with diversity metrics, "
-                f"suggesting it is increasing program diversity."
-            )
-        elif cs_effect == "negative":
-            interp = (
-                f"Novelty pressure shows negative cross-sectional correlation "
-                f"(median r={median_r:.3f}) with diversity metrics — "
-                f"higher novelty scores may concentrate rather than diversify."
-            )
-        else:
-            interp = (
-                f"Cross-sectional correlation is weak (median r={median_r:.3f}). "
-                f"Novelty pressure has neutral impact on diversity."
-            )
-
-        if longitudinal:
-            lr = longitudinal.get("pearson_r", 0.0)
-            lp = longitudinal.get("pearson_p", 1.0)
-            sig = " (p<0.05)" if lp < 0.05 else ""
-            interp += (
-                f" Longitudinal r={lr:.3f}{sig} across "
-                f"{longitudinal['n_generations']} generations."
-            )
-        elif lg_effect == "insufficient_data":
-            interp += " Insufficient longitudinal data (<3 generations) for temporal analysis."
-
-        summary = {
-            "cross_sectional_effect": cs_effect,
-            "longitudinal_effect": lg_effect,
-            "overall_interpretation": interp,
-            "median_pearson_r": median_r,
-            "n_metrics_correlated": len(pearson_rs),
-        }
-
+        cross_sectional, _novelty_arr = self._compute_cross_sectional_correlations()
+        longitudinal = self._compute_longitudinal_correlations()
+        summary = self._build_correlation_summary(cross_sectional, longitudinal)
         return {
             "cross_sectional": cross_sectional,
             "longitudinal": longitudinal,

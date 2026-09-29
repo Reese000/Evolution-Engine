@@ -27,6 +27,7 @@ EvalResult.__new__.__defaults__ = (False, {}, {}, [], 0, None, [])
 #  Delegation to gpu_vm_farm._execute_vm
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _run_one_evaluation(
     kernel_path: str,
     program: bytes,

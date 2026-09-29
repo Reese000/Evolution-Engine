@@ -27,7 +27,14 @@ class StrategyArchive:
     in success_rate(), avoiding full-record-list scans.
     """
 
-    def __init__(self, max_records: int = 10000):
+    def __init__(self, max_records: int | None = None):
+        if max_records is None:
+            max_records = int(
+                os.environ.get(
+                    "EE_STRATEGY_ARCHIVE_MAX_RECORDS",
+                    os.environ.get("EE_TERMINAL_STRATEGY_ARCHIVE_CAP", "3200"),
+                )
+            )
         self.max_records = max_records
         self._records: list[dict[str, Any]] = []
         self._loaded_from: str | None = None
@@ -37,7 +44,8 @@ class StrategyArchive:
         self._global_total: int = 0
         # Per-strategy record index: strategy -> set of record positions.
         # Enables O(1) filtered access in success_rate instead of O(N) scan.
-        self._strategy_record_idx: dict[str, set] = {}
+        self._strategy_record_idx: dict[str, list[int]] = {}
+        self._query_cache: dict[tuple, Any] = {}
         # R13: Level-to-strategies index: level -> set of strategy names.
         # Avoids O(K) scan of _level_strategy_counts keys in best_for_level.
         self._level_strategies: dict[int, set] = {}
@@ -98,11 +106,12 @@ class StrategyArchive:
         # Update per-strategy total count
         self._strategy_total[strategy] = self._strategy_total.get(strategy, 0) + 1
         # Update per-strategy record index
-        strat_set = self._strategy_record_idx.get(strategy)
-        if strat_set is None:
-            self._strategy_record_idx[strategy] = {new_idx}
+        strat_idx = self._strategy_record_idx.get(strategy)
+        if strat_idx is None:
+            self._strategy_record_idx[strategy] = [new_idx]
         else:
-            strat_set.add(new_idx)
+            strat_idx.append(new_idx)
+        self._query_cache.clear()
         # Update level-to-strategies index
         ls = self._level_strategies.get(level)
         if ls is None:
@@ -164,11 +173,12 @@ class StrategyArchive:
             self._global_total += 1
             _st[strat] = _st.get(strat, 0) + 1
             # R25: Update per-strategy record index for O(1) filtered access
-            strat_set = _sri.get(strat)
-            if strat_set is None:
-                _sri[strat] = {new_idx}
+            self._global_strategy_set.add(strat)
+            strat_idx = _sri.get(strat)
+            if strat_idx is None:
+                _sri[strat] = [new_idx]
             else:
-                strat_set.add(new_idx)
+                strat_idx.append(new_idx)
             # R25: Update level-to-strategies index
             ls = _ls.get(lev)
             if ls is None:
@@ -176,17 +186,69 @@ class StrategyArchive:
             else:
                 ls.add(strat)
 
-        # R22: Rebuild global strategy set from level_strategies after bulk append
-        self._global_strategy_set = set()
-        for strats in self._level_strategies.values():
-            self._global_strategy_set.update(strats)
-        # R25: Single trim -- slice records FIRST, THEN rebuild indices
-        # so indices are consistent with the final record set.
-        if len(self._records) > self.max_records:
-            self._records = self._records[-self.max_records :]
-            self._rebuild_indices()
+        if records:
+            if len(self._records) > self.max_records:
+                self._records = self._records[-self.max_records :]
+                self._rebuild_indices()
+            else:
+                self._query_cache.clear()
 
     # ── Query ─────────────────────────────────────────────────────────
+
+    def _score_level_filtered(
+        self,
+        records: list[dict[str, Any]],
+        idx_list: list[int],
+        n_records: int,
+        level: int,
+        window: int,
+    ) -> tuple[int, float, float]:
+        """Score records filtered by level. Returns (n, total_weight, weighted_success)."""
+        picked: list[dict[str, Any]] = []
+        for i in range(len(idx_list) - 1, -1, -1):
+            idx = idx_list[i]
+            if idx >= n_records:
+                continue
+            r = records[idx]
+            if r["level"] == level:
+                picked.append(r)
+                if len(picked) >= window:
+                    break
+        if not picked:
+            return 0, 0.0, 0.0
+        picked.reverse()
+        count = 0
+        total_weight = 0.0
+        weighted_success = 0.0
+        for r in picked:
+            count += 1
+            w = count
+            total_weight += w
+            if r["success"]:
+                weighted_success += w
+        return count, total_weight, weighted_success
+
+    def _score_unfiltered(
+        self,
+        records: list[dict[str, Any]],
+        sorted_indices: list[int],
+        n_records: int,
+        window: int,
+    ) -> tuple[int, float, float]:
+        """Score records without level filter. Returns (n, total_weight, weighted_success)."""
+        start = max(0, len(sorted_indices) - window)
+        n = 0
+        total_weight = 0.0
+        weighted_success = 0.0
+        for i in sorted_indices[start:]:
+            if i >= n_records:
+                continue
+            n += 1
+            w = n
+            total_weight += w
+            if records[i]["success"]:
+                weighted_success += w
+        return n, total_weight, weighted_success
 
     def success_rate(
         self,
@@ -221,77 +283,39 @@ class StrategyArchive:
             Float in [0.0, 1.0] representing weighted success rate,
             or 0.0 if no records in window.
         """
-        # Filter using per-strategy index for O(K) where K = records of
-        # this strategy (much smaller than full N).
         strat_indices = self._strategy_record_idx.get(strategy)
         if strat_indices is None or not strat_indices:
             return 0.0
 
+        cache_key = ("sr", strategy, window, level, use_laplace)
+        cached = self._query_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         records = self._records
         n_records = len(records)
 
-        # R21: For level=None, iterate indices directly without list alloc.
-        # For level!=None, collect+score in one pass (R24: eliminated the
-        # previous two-pass count-then-skip pattern).
         if level is not None:
-            # R24: Single pass -- collect all matching records, trim to
-            # window, then score. Eliminates the O(N) count pass that
-            # preceded the scoring loop in the old implementation.
-            idx_list = sorted(strat_indices)
-            matches = []
-            append = matches.append
-            for i in idx_list:
-                if i >= n_records:
-                    continue
-                r = records[i]
-                if r["level"] == level:
-                    append(r)
-            if not matches:
-                return 0.0
-            # Keep only the last `window` entries (most recent)
-            start = max(0, len(matches) - window)
-            matches = matches[start:]
-
-            # Score in a single pass over the (up to window-sized) list
-            count = 0
-            total_weight = 0.0
-            weighted_success = 0.0
-            for r in matches:
-                count += 1
-                w = count  # linear weight: 1..n
-                total_weight += w
-                if r["success"]:
-                    weighted_success += w
-            n = count
+            n, total_weight, weighted_success = self._score_level_filtered(
+                records, strat_indices, n_records, level, window
+            )
         else:
-            # R21: For no level filter, iterate indices sorted (which
-            # preserves recency order since indices are appended in order).
-            sorted_indices = sorted(strat_indices)
-            # Take only the last *window* indices (most recent)
-            start = max(0, len(sorted_indices) - window)
-            n = 0
-            total_weight = 0.0
-            weighted_success = 0.0
-            for i in sorted_indices[start:]:
-                if i >= n_records:
-                    continue
-                n += 1
-                w = n
-                total_weight += w
-                if records[i]["success"]:
-                    weighted_success += w
+            n, total_weight, weighted_success = self._score_unfiltered(
+                records, strat_indices, n_records, window
+            )
 
         if total_weight <= 0:
+            self._query_cache[cache_key] = 0.0
             return 0.0
 
         raw_rate = weighted_success / total_weight
 
         if use_laplace and n > 0:
-            # Laplace smoothing: (successes + 1) / (attempts + 2)
-            # Pulls low-count strategies toward 0.5, preventing extreme bias
             smoothed = (weighted_success + 1.0) / (total_weight + 2.0)
+            self._query_cache[cache_key] = smoothed
             return smoothed
 
+        self._query_cache[cache_key] = raw_rate
         return raw_rate
 
     def time_weighted_success_rate(self, strategy: str, decay_halflife: int = 100) -> float:
@@ -323,7 +347,7 @@ class StrategyArchive:
 
         total_weight = 0.0
         weighted_success = 0.0
-        for i in sorted(strat_indices):
+        for i in strat_indices:
             if i >= n_records:
                 continue
             age = n_records - 1 - i
@@ -633,6 +657,31 @@ class StrategyArchive:
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return False
 
+    def serialize(self) -> dict[str, Any]:
+        """Return JSON-compatible archive state for cross-cycle persistence."""
+
+        return {
+            "version": 1,
+            "max_records": self.max_records,
+            "records": self._records,
+        }
+
+    @classmethod
+    def deserialize(cls, data: dict[str, Any]) -> StrategyArchive:
+        """Restore archive from serialized state."""
+
+        cap = int(
+            os.environ.get(
+                "EE_STRATEGY_ARCHIVE_MAX_RECORDS",
+                os.environ.get("EE_TERMINAL_STRATEGY_ARCHIVE_CAP", "3200"),
+            )
+        )
+        requested = int(data.get("max_records", cap))
+        archive = cls(max_records=min(requested, cap) if requested > 0 else cap)
+        archive._records = list(data.get("records", []))[-archive.max_records :]
+        archive._rebuild_indices()
+        return archive
+
     def _rebuild_indices(self) -> None:
         """Rebuild all indices from scratch.
 
@@ -644,6 +693,7 @@ class StrategyArchive:
         self._strategy_record_idx.clear()
         self._level_strategies.clear()
         self._strategy_total.clear()
+        self._query_cache.clear()
         self._global_total = len(self._records)
         for i, r in enumerate(self._records):
             lev = r["level"]
@@ -652,11 +702,11 @@ class StrategyArchive:
             self._level_strategy_counts[key] = self._level_strategy_counts.get(key, 0) + 1
             self._level_total[lev] = self._level_total.get(lev, 0) + 1
             self._strategy_total[strat] = self._strategy_total.get(strat, 0) + 1
-            strat_set = self._strategy_record_idx.get(strat)
-            if strat_set is None:
-                self._strategy_record_idx[strat] = {i}
+            strat_idx = self._strategy_record_idx.get(strat)
+            if strat_idx is None:
+                self._strategy_record_idx[strat] = [i]
             else:
-                strat_set.add(i)
+                strat_idx.append(i)
             # Rebuild level-to-strategies index
             ls = self._level_strategies.get(lev)
             if ls is None:
@@ -715,10 +765,9 @@ class StrategyArchive:
             if not indices:
                 continue
             for i in indices:
-                if i < len(records) and records[i]["level"] == level and records[i]["success"]:
-                    if rng_local.random() > factor:
-                        records[i]["success"] = False
-                        modified += 1
+                if i < len(records) and records[i]["level"] == level and records[i]["success"] and rng_local.random() > factor:
+                    records[i]["success"] = False
+                    modified += 1
         return modified
 
     def clear(self) -> None:
@@ -732,6 +781,7 @@ class StrategyArchive:
         self._global_total = 0
         self._global_strategy_set.clear()
         self._champion_deltas.clear()
+        self._query_cache.clear()
 
     # ── Delta tracking ──────────────────────────────────────────────
 

@@ -129,7 +129,7 @@ class ChampionArchive:
                             self._seen_hashes.add(entry.sha256)
                     except (json.JSONDecodeError, KeyError):
                         continue
-        except Exception:
+        except OSError:  # Intentional: file may not exist yet or be corrupted; skip gracefully
             pass
 
     def add(
@@ -342,6 +342,42 @@ class ChampionArchive:
 
         return scores
 
+    def _compute_combined_scores(
+        self, candidates: list, diversity_weight: float
+    ) -> list[tuple[float, object]]:
+        """Compute combined fitness+diversity scores for candidates."""
+        fitnesses = [e.fitness for e in candidates]
+        min_fit = min(fitnesses)
+        max_fit = max(fitnesses)
+        fit_range = max_fit - min_fit
+        diversity_scores = self._compute_diversity_scores(candidates)
+        combined: list[tuple[float, object]] = []
+        for i, e in enumerate(candidates):
+            norm_fit = (e.fitness - min_fit) / max(fit_range, 1e-10)
+            score = (1 - diversity_weight) * norm_fit + diversity_weight * diversity_scores[i]
+            combined.append((score, e))
+        return combined
+
+    def _tournament_select(
+        self, combined: list[tuple[float, object]], n: int
+    ) -> list[dict]:
+        """Select n champions via tournament selection from combined scores."""
+        pool_size = min(2 * n, len(combined))
+        combined.sort(key=lambda x: x[0], reverse=True)
+        pool = list(combined[:pool_size])
+        tournament_size = max(2, pool_size // n) if n > 0 else 2
+        selected: list[dict] = []
+        available = list(pool)
+        for _ in range(n):
+            if not available:
+                break
+            t_size = min(tournament_size, len(available))
+            contestants = random.sample(available, t_size)
+            winner = max(contestants, key=lambda x: x[0])
+            selected.append(winner[1].to_dict())
+            available.remove(winner)
+        return selected
+
     def diversity_aware_select(
         self,
         level: int,
@@ -373,46 +409,11 @@ class ChampionArchive:
         candidates = [e for e in self.entries if e.level == level]
         if not candidates:
             return []
-
         n = min(n, len(candidates))
         if n == 0:
             return []
-
-        # --- Normalized fitness (0-1) ---
-        fitnesses = [e.fitness for e in candidates]
-        min_fit = min(fitnesses)
-        max_fit = max(fitnesses)
-        fit_range = max_fit - min_fit
-
-        # --- Diversity scores ---
-        diversity_scores = self._compute_diversity_scores(candidates)
-
-        # --- Combined scores ---
-        combined: list[tuple] = []
-        for i, e in enumerate(candidates):
-            norm_fit = (e.fitness - min_fit) / max(fit_range, 1e-10)
-            score = (1 - diversity_weight) * norm_fit + diversity_weight * diversity_scores[i]
-            combined.append((score, e))
-
-        # --- Tournament selection among top candidates ---
-        pool_size = min(2 * n, len(combined))
-        combined.sort(key=lambda x: x[0], reverse=True)
-        pool = list(combined[:pool_size])
-
-        tournament_size = max(2, pool_size // n) if n > 0 else 2
-        selected: list[dict] = []
-        available = list(pool)
-
-        for _ in range(n):
-            if not available:
-                break
-            t_size = min(tournament_size, len(available))
-            contestants = random.sample(available, t_size)
-            winner = max(contestants, key=lambda x: x[0])
-            selected.append(winner[1].to_dict())
-            available.remove(winner)
-
-        return selected
+        combined = self._compute_combined_scores(candidates, diversity_weight)
+        return self._tournament_select(combined, n)
 
     def sample_tiered_batch(
         self,
@@ -469,6 +470,68 @@ class ChampionArchive:
         with open(self.path, "w") as f:
             f.writelines(json.dumps(entry.to_dict()) + "\n" for entry in self.entries)
 
+    def _select_recurrent_entries(
+        self, eligible: list[ChampionEntry], max_entries: int
+    ) -> list[ChampionEntry]:
+        """Select entries using weighted mix: 50% top, 30% recent, 20% diverse."""
+        if len(eligible) <= max_entries:
+            return eligible
+        top_count = int(max_entries * 0.50)
+        recent_count = int(max_entries * 0.30)
+        diverse_count = max_entries - top_count - recent_count
+        sorted_by_fitness = sorted(eligible, key=lambda e: e.fitness, reverse=True)
+        top_set = {id(e) for e in sorted_by_fitness[:top_count]}
+        top_selected = sorted_by_fitness[:top_count]
+        entry_order = {id(e): idx for idx, e in enumerate(self.entries)}
+        sorted_by_recency = sorted(eligible, key=lambda e: entry_order.get(id(e), 0), reverse=True)
+        recent_selected = []
+        for e in sorted_by_recency:
+            if len(recent_selected) >= recent_count:
+                break
+            if id(e) not in top_set:
+                recent_selected.append(e)
+        reference_progs = [e.program for e in top_selected + recent_selected]
+
+        def _min_hamming(prog: list[int]) -> int:
+            if not reference_progs:
+                return 0
+            return min(self._hamming_distance(prog, ref) for ref in reference_progs)
+
+        remaining = [e for e in eligible if id(e) not in top_set and id(e) not in {id(r) for r in recent_selected}]
+        remaining_with_diversity = [(e, _min_hamming(e.program)) for e in remaining]
+        remaining_with_diversity.sort(key=lambda x: x[1], reverse=True)
+        diverse_selected = [e for e, _ in remaining_with_diversity[:diverse_count]]
+        selected = top_selected + recent_selected + diverse_selected
+        seen = set()
+        deduped = []
+        for e in selected:
+            if e.sha256 not in seen:
+                seen.add(e.sha256)
+                deduped.append(e)
+        return deduped
+
+    def _write_recurrent_entries(self, output_path: str, selected: list[ChampionEntry]) -> int:
+        """Write selected entries as JSONL."""
+        count = 0
+        with open(output_path, "w") as f:
+            for entry in selected:
+                example = {
+                    "level": entry.level,
+                    "generation": entry.generation,
+                    "fitness": entry.fitness,
+                    "champion_sha256": entry.sha256,
+                    "champion_words": entry.instructions_count,
+                    "champion_program": entry.program_hex,
+                    "trace_status": entry.trace_status,
+                    "trace_instr_count": entry.instructions_count,
+                    "task_score": entry.task_score,
+                    "save_reason": "champion_archive",
+                    "cycle": entry.cycle,
+                }
+                f.write(json.dumps(example) + "\n")
+                count += 1
+        return count
+
     def save_recurrent_data(
         self,
         output_path: str,
@@ -497,82 +560,9 @@ class ChampionArchive:
             Number of examples written.
         """
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-
-        # 1) Filter by fitness threshold
         eligible = [entry for entry in self.entries if entry.fitness >= fitness_threshold]
-
-        # 2) If under the cap, write all eligible
-        if len(eligible) <= max_entries:
-            selected = eligible
-        else:
-            # 3) Weighted selection: 50% top, 30% recent, 20% diverse
-            top_count = int(max_entries * 0.50)
-            recent_count = int(max_entries * 0.30)
-            diverse_count = max_entries - top_count - recent_count  # remainder
-
-            # --- Top performers (by fitness) ---
-            sorted_by_fitness = sorted(eligible, key=lambda e: e.fitness, reverse=True)
-            top_set = {id(e) for e in sorted_by_fitness[:top_count]}
-            top_selected = sorted_by_fitness[:top_count]
-
-            # --- Recent entries (by insertion order = position in self.entries) ---
-            entry_order = {id(e): idx for idx, e in enumerate(self.entries)}
-            sorted_by_recency = sorted(eligible, key=lambda e: entry_order.get(id(e), 0), reverse=True)
-            # Avoid duplicates with top set
-            recent_selected = []
-            for e in sorted_by_recency:
-                if len(recent_selected) >= recent_count:
-                    break
-                if id(e) not in top_set:
-                    recent_selected.append(e)
-
-            # --- Diverse entries (highest Hamming distance from nearest elite) ---
-            # Build a reference set from top + recent already selected
-            reference_progs = [e.program for e in top_selected + recent_selected]
-
-            def _min_hamming(prog: list[int]) -> int:
-                """Minimum Hamming distance from any reference program."""
-                if not reference_progs:
-                    return 0
-                return min(self._hamming_distance(prog, ref) for ref in reference_progs)
-
-            remaining = [
-                e for e in eligible if id(e) not in top_set and id(e) not in {id(r) for r in recent_selected}
-            ]
-            remaining_with_diversity = [(e, _min_hamming(e.program)) for e in remaining]
-            remaining_with_diversity.sort(key=lambda x: x[1], reverse=True)
-            diverse_selected = [e for e, _ in remaining_with_diversity[:diverse_count]]
-
-            selected = top_selected + recent_selected + diverse_selected
-            # Deduplicate (shouldn't happen, but safety)
-            seen = set()
-            deduped = []
-            for e in selected:
-                if e.sha256 not in seen:
-                    seen.add(e.sha256)
-                    deduped.append(e)
-            selected = deduped
-
-        # 4) Write selected entries
-        count = 0
-        with open(output_path, "w") as f:
-            for entry in selected:
-                example = {
-                    "level": entry.level,
-                    "generation": entry.generation,
-                    "fitness": entry.fitness,
-                    "champion_sha256": entry.sha256,
-                    "champion_words": entry.instructions_count,
-                    "champion_program": entry.program_hex,
-                    "trace_status": entry.trace_status,
-                    "trace_instr_count": entry.instructions_count,
-                    "task_score": entry.task_score,
-                    "save_reason": "champion_archive",
-                    "cycle": entry.cycle,
-                }
-                f.write(json.dumps(example) + "\n")
-                count += 1
-        return count
+        selected = self._select_recurrent_entries(eligible, max_entries)
+        return self._write_recurrent_entries(output_path, selected)
 
     @property
     def current_max_cycle(self) -> int:
@@ -763,7 +753,7 @@ class ChampionArchive:
 
         # Separate foundational entries (never pruned)
         non_foundational = [(s, e) for s, e in scored if e.level not in FOUNDATIONAL_LEVELS]
-        foundational = [(s, e) for s, e in scored if e.level in FOUNDATIONAL_LEVELS]
+        [(s, e) for s, e in scored if e.level in FOUNDATIONAL_LEVELS]
 
         # Sort non-foundational by quality score (ascending = worst first)
         non_foundational.sort(key=lambda x: x[0])
@@ -819,7 +809,7 @@ class ChampionArchive:
         # Program length variance
         lengths = [e.instructions_count for e in self.entries]
         mean_len = sum(lengths) / total
-        program_length_variance = sum((l - mean_len) ** 2 for l in lengths) / total
+        program_length_variance = sum((length - mean_len) ** 2 for length in lengths) / total
 
         # Instruction diversity: fraction of unique opcodes across all champions
         all_opcodes: set[int] = set()
@@ -834,7 +824,7 @@ class ChampionArchive:
         fitnesses = [e.fitness for e in self.entries]
         mean_fit = sum(fitnesses) / total
         numerator = sum((lengths[i] - mean_len) * (fitnesses[i] - mean_fit) for i in range(total))
-        denom_len = math.sqrt(sum((l - mean_len) ** 2 for l in lengths))
+        denom_len = math.sqrt(sum((length - mean_len) ** 2 for length in lengths))
         denom_fit = math.sqrt(sum((f - mean_fit) ** 2 for f in fitnesses))
         if denom_len > 0 and denom_fit > 0:
             fitness_correlation_with_length = numerator / (denom_len * denom_fit)

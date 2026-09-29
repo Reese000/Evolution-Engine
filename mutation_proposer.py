@@ -16,7 +16,7 @@ Provides:
 import random
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 # ── Mutation Strategy Enum ───────────────────────────────────────────
 
@@ -216,95 +216,47 @@ class TraceAnalyzer:
     """
 
     @staticmethod
-    def analyze(
-        trace: list[dict[str, Any]],
-        expected: dict[str, Any],
-        inputs: dict[str, Any],
-        program: list[int] | None = None,
-        error: str | None = None,
-        budget: int | None = None,
-    ) -> TraceAnalysis:
-        """Analyze a safety-kernel execution trace and return failure analysis.
-
-        Args:
-            trace:    List of trace entries from safety-kernel response.
-                      Each entry has 'regs' (list[32]), 'pc' (int), 'cycle' (int).
-            expected: Expected output dict (e.g. {'registers': {1: 42}}).
-            inputs:   Input state dict (e.g. {'registers': {1: 10}}).
-            program:  Original program (list of 32-bit instruction words).
-            error:    Error string from safety-kernel response, if any.
-            budget:   Instruction budget used for evaluation.
-
-        Returns:
-            TraceAnalysis with divergence info and mutation suggestion.
-        """
-        # ── Empty trace ─────────────────────────────────────
-        if not trace:
-            if error:
-                return TraceAnalysis(
-                    divergence_point=0,
-                    divergence_type="illegal_instruction",
-                    final_regs=[0] * 32,
-                    trace_length=0,
-                    suggestion={
-                        "type": "replace_program",
-                        "reason": f"execution error: {error}",
-                    },
-                    error=error,
-                    expected=expected,
-                    inputs=inputs,
-                )
+    def _analyze_empty_trace(trace, error, expected, inputs):
+        """Handle empty trace case."""
+        if error:
             return TraceAnalysis(
-                divergence_point=0,
-                divergence_type="unknown",
-                final_regs=[0] * 32,
-                trace_length=0,
-                suggestion={"type": "regenerate", "reason": "empty trace"},
-                expected=expected,
-                inputs=inputs,
+                divergence_point=0, divergence_type="illegal_instruction",
+                final_regs=[0] * 32, trace_length=0,
+                suggestion={"type": "replace_program", "reason": f"execution error: {error}"},
+                error=error, expected=expected, inputs=inputs,
             )
+        return TraceAnalysis(
+            divergence_point=0, divergence_type="unknown",
+            final_regs=[0] * 32, trace_length=0,
+            suggestion={"type": "regenerate", "reason": "empty trace"},
+            expected=expected, inputs=inputs,
+        )
 
-        final_regs = trace[-1].get("regs", [0] * 32)
+    @staticmethod
+    def _analyze_illegal_instruction(trace, error, expected, inputs):
+        """Handle illegal instruction error."""
+        div_pc = TraceAnalyzer._extract_pc_from_error(error)
+        return TraceAnalysis(
+            divergence_point=len(trace) - 1, divergence_type="illegal_instruction",
+            final_regs=trace[-1].get("regs", [0] * 32), trace_length=len(trace),
+            suggestion={"type": "replace_instruction", "pc": div_pc, "reason": error},
+            divergence_pc=div_pc, error=error, expected=expected, inputs=inputs,
+        )
 
-        # ── Check for illegal instruction error ─────────────
-        if error and "illegal instruction" in error.lower():
-            div_pc = TraceAnalyzer._extract_pc_from_error(error)
-            return TraceAnalysis(
-                divergence_point=len(trace) - 1,
-                divergence_type="illegal_instruction",
-                final_regs=final_regs,
-                trace_length=len(trace),
-                suggestion={
-                    "type": "replace_instruction",
-                    "pc": div_pc,
-                    "reason": error,
-                },
-                divergence_pc=div_pc,
-                error=error,
-                expected=expected,
-                inputs=inputs,
-            )
+    @staticmethod
+    def _analyze_pc_out_of_bounds(trace, error, expected, inputs):
+        """Handle PC out of bounds error."""
+        return TraceAnalysis(
+            divergence_point=len(trace) - 1, divergence_type="pc_out_of_bounds",
+            final_regs=trace[-1].get("regs", [0] * 32), trace_length=len(trace),
+            suggestion={"type": "add_terminator", "reason": "PC went out of bounds; program likely needs EBREAK"},
+            error=error, expected=expected, inputs=inputs,
+        )
 
-        # ── Check for PC out of bounds error ────────────────
-        if error and "pc out of bounds" in error.lower():
-            return TraceAnalysis(
-                divergence_point=len(trace) - 1,
-                divergence_type="pc_out_of_bounds",
-                final_regs=final_regs,
-                trace_length=len(trace),
-                suggestion={
-                    "type": "add_terminator",
-                    "reason": "PC went out of bounds; program likely needs EBREAK",
-                },
-                error=error,
-                expected=expected,
-                inputs=inputs,
-            )
-
-        # ── Compare final register state against expected ───
+    @staticmethod
+    def _normalize_expected_regs(expected):
+        """Normalize expected register dict keys to int."""
         expected_regs: dict = expected.get("registers", {})
-
-        # Normalise keys to int
         norm_expected: dict[int, int] = {}
         for k, v in expected_regs.items():
             if isinstance(k, str):
@@ -314,106 +266,112 @@ class TraceAnalyzer:
                     continue
             else:
                 norm_expected[int(k)] = int(v)
+        return norm_expected
 
+    @staticmethod
+    def _find_wrong_regs(final_regs, norm_expected):
+        """Find wrong register values."""
         wrong_regs: dict[int, dict[str, int]] = {}
         for reg_idx, expected_val in norm_expected.items():
             actual = final_regs[reg_idx] if reg_idx < len(final_regs) else 0
             if actual != expected_val:
                 wrong_regs[reg_idx] = {"actual": actual, "expected": expected_val}
+        return wrong_regs
 
-        # ── Check for ran out of budget ─────────────────────
-        ran_out = False
-        if budget is not None and len(trace) >= budget:
-            ran_out = True
+    @staticmethod
+    def _analyze_wrong_regs(trace, final_regs, expected, inputs, wrong_regs, task_level: int | None = None):
+        """Handle wrong register values — prefer level-critical register at L17+."""
+        if task_level is not None and task_level >= 17:
+            try:
+                from tasks_rv32i import LEVEL_VERIFY_REGS
 
-        # ── Check if program has EBREAK ─────────────────────
-        # Fast path: use constant comparison (no decode overhead)
-        prog_has_ebreak = EBREAK in program if program else False
-
-        # ── Wrong register values detected ──────────────────
-        if wrong_regs:
+                level_regs = LEVEL_VERIFY_REGS.get(task_level, [])
+                critical = level_regs[-1] if level_regs else None
+                if critical is not None and critical in wrong_regs:
+                    primary_reg = critical
+                else:
+                    # Prefer highest wrong register in level verify set
+                    level_wrong = [r for r in wrong_regs if r in level_regs]
+                    primary_reg = max(level_wrong) if level_wrong else min(wrong_regs.keys())
+            except (ImportError, KeyError, TypeError, ValueError):
+                primary_reg = min(wrong_regs.keys())
+        else:
             primary_reg = min(wrong_regs.keys())
-            primary_info = wrong_regs[primary_reg]
-            return TraceAnalysis(
-                divergence_point=len(trace) - 1,
-                divergence_type="wrong_reg_value",
-                final_regs=final_regs,
-                trace_length=len(trace),
-                suggestion={
-                    "type": "fix_register",
-                    "reg": primary_reg,
-                    "actual": primary_info["actual"],
-                    "expected": primary_info["expected"],
-                    "reason": (
-                        f'reg[{primary_reg}] = {primary_info["actual"]}, ' f'expected {primary_info["expected"]}'
-                    ),
-                },
-                expected=expected,
-                inputs=inputs,
-            )
+        primary_info = wrong_regs[primary_reg]
+        return TraceAnalysis(
+            divergence_point=len(trace) - 1, divergence_type="wrong_reg_value",
+            final_regs=final_regs, trace_length=len(trace),
+            suggestion={
+                "type": "fix_register", "reg": primary_reg,
+                "actual": primary_info["actual"], "expected": primary_info["expected"],
+                "reason": f'reg[{primary_reg}] = {primary_info["actual"]}, expected {primary_info["expected"]}',
+            },
+            expected=expected, inputs=inputs,
+        )
 
-        # ── Ran out of budget ───────────────────────────────
-        if ran_out:
-            return TraceAnalysis(
-                divergence_point=len(trace) - 1,
-                divergence_type="ran_out_of_budget",
-                final_regs=final_regs,
-                trace_length=len(trace),
-                suggestion={
-                    "type": "reduce_complexity",
-                    "reason": "program exceeded instruction budget without halting",
-                    "has_ebreak": prog_has_ebreak,
-                },
-                expected=expected,
-                inputs=inputs,
-            )
+    @staticmethod
+    def _analyze_ran_out_of_budget(trace, final_regs, expected, inputs, has_ebreak):
+        """Handle ran out of budget case."""
+        return TraceAnalysis(
+            divergence_point=len(trace) - 1, divergence_type="ran_out_of_budget",
+            final_regs=final_regs, trace_length=len(trace),
+            suggestion={"type": "reduce_complexity", "reason": "program exceeded instruction budget without halting", "has_ebreak": has_ebreak},
+            expected=expected, inputs=inputs,
+        )
 
-        # ── No EBREAK in program ────────────────────────────
-        if not prog_has_ebreak:
-            return TraceAnalysis(
-                divergence_point=len(trace) - 1,
-                divergence_type="no_terminator",
-                final_regs=final_regs,
-                trace_length=len(trace),
-                suggestion={
-                    "type": "add_ebreak",
-                    "reason": "program has no EBREAK instruction",
-                },
-                expected=expected,
-                inputs=inputs,
-            )
+    @staticmethod
+    def _analyze_no_terminator(trace, final_regs, expected, inputs):
+        """Handle no EBREAK in program."""
+        return TraceAnalysis(
+            divergence_point=len(trace) - 1, divergence_type="no_terminator",
+            final_regs=final_regs, trace_length=len(trace),
+            suggestion={"type": "add_ebreak", "reason": "program has no EBREAK instruction"},
+            expected=expected, inputs=inputs,
+        )
 
-        # ── Check for halted early (PC stuck) ───────────────
+    @staticmethod
+    def _analyze_halted_early(trace, final_regs, expected, inputs):
+        """Handle halted early (PC stuck) case."""
         for i in range(1, len(trace)):
             prev_pc = trace[i - 1].get("pc", 0)
             curr_pc = trace[i].get("pc", 0)
             if curr_pc == prev_pc and i < len(trace) - 1:
                 return TraceAnalysis(
-                    divergence_point=i,
-                    divergence_type="halted_early",
-                    final_regs=final_regs,
-                    trace_length=len(trace),
-                    suggestion={
-                        "type": "check_halt_position",
-                        "reason": f"program halted at step {i}; may be too short",
-                    },
-                    divergence_pc=curr_pc,
-                    expected=expected,
-                    inputs=inputs,
+                    divergence_point=i, divergence_type="halted_early",
+                    final_regs=final_regs, trace_length=len(trace),
+                    suggestion={"type": "check_halt_position", "reason": f"program halted at step {i}; may be too short"},
+                    divergence_pc=curr_pc, expected=expected, inputs=inputs,
                 )
+        return None
 
-        # ── Default: unknown divergence → stochastic ────────
+    @staticmethod
+    def analyze(trace: list[dict[str, Any]], expected: dict[str, Any], inputs: dict[str, Any], program: list[int] | None = None, error: str | None = None, budget: int | None = None, task_level: int | None = None) -> TraceAnalysis:
+        """Analyze a safety-kernel execution trace and return failure analysis."""
+        if not trace:
+            return TraceAnalyzer._analyze_empty_trace(trace, error, expected, inputs)
+        final_regs = trace[-1].get("regs", [0] * 32)
+        if error and "illegal instruction" in error.lower():
+            return TraceAnalyzer._analyze_illegal_instruction(trace, error, expected, inputs)
+        if error and "pc out of bounds" in error.lower():
+            return TraceAnalyzer._analyze_pc_out_of_bounds(trace, error, expected, inputs)
+        norm_expected = TraceAnalyzer._normalize_expected_regs(expected)
+        wrong_regs = TraceAnalyzer._find_wrong_regs(final_regs, norm_expected)
+        if wrong_regs:
+            return TraceAnalyzer._analyze_wrong_regs(trace, final_regs, expected, inputs, wrong_regs, task_level)
+        ran_out = budget is not None and len(trace) >= budget
+        prog_has_ebreak = EBREAK in program if program else False
+        if ran_out:
+            return TraceAnalyzer._analyze_ran_out_of_budget(trace, final_regs, expected, inputs, prog_has_ebreak)
+        if not prog_has_ebreak:
+            return TraceAnalyzer._analyze_no_terminator(trace, final_regs, expected, inputs)
+        result = TraceAnalyzer._analyze_halted_early(trace, final_regs, expected, inputs)
+        if result is not None:
+            return result
         return TraceAnalysis(
-            divergence_point=len(trace) - 1,
-            divergence_type="unknown",
-            final_regs=final_regs,
-            trace_length=len(trace),
-            suggestion={
-                "type": "stochastic_perturbation",
-                "reason": "no specific divergence pattern detected",
-            },
-            expected=expected,
-            inputs=inputs,
+            divergence_point=len(trace) - 1, divergence_type="unknown",
+            final_regs=final_regs, trace_length=len(trace),
+            suggestion={"type": "stochastic_perturbation", "reason": "no specific divergence pattern detected"},
+            expected=expected, inputs=inputs,
         )
 
     @staticmethod
@@ -609,15 +567,15 @@ class DirectedMutator:
     """
 
     # ── Mutation success tracking ───────────────────────────
-    _mutation_success: dict[str, int] = {}  # description prefix -> success count
-    _mutation_attempts: dict[str, int] = {}  # description prefix -> attempt count
-    _mutation_history: list = []  # recent (description, fitness_delta) tuples, max 200
+    _mutation_success: ClassVar[dict[str, int]] = {}  # description prefix -> success count
+    _mutation_attempts: ClassVar[dict[str, int]] = {}  # description prefix -> attempt count
+    _mutation_history: ClassVar[list] = []  # recent (description, fitness_delta) tuples, max 200
 
     # ── Per-program mutation affinity tracking ──────────────
     # Maps program_hash -> mutation_type -> {successes, attempts, total_delta}
-    _program_mutation_outcomes: dict[str, dict[str, dict[str, float]]] = {}
+    _program_mutation_outcomes: ClassVar[dict[str, dict[str, dict[str, float]]]] = {}
     # Maps program_hash -> cached opcode category histogram (normalized feature vector)
-    _program_feature_cache: dict[str, tuple] = {}
+    _program_feature_cache: ClassVar[dict[str, tuple]] = {}
     # Maximum number of program hashes to track (LRU eviction when exceeded)
     _PROGRAM_AFFINITY_MAX_ENTRIES: int = 2000
     # Cosine similarity threshold for "similar" programs
@@ -668,6 +626,7 @@ class DirectedMutator:
         """
         import hashlib
         import struct
+
         data = struct.pack(f"<{len(program)}I", *program)
         return hashlib.sha256(data).hexdigest()[:16]
 
@@ -746,9 +705,7 @@ class DirectedMutator:
 
         # Ensure feature vector is cached
         if prog_hash not in DirectedMutator._program_feature_cache:
-            DirectedMutator._program_feature_cache[prog_hash] = (
-                DirectedMutator._compute_program_features(program)
-            )
+            DirectedMutator._program_feature_cache[prog_hash] = DirectedMutator._compute_program_features(program)
 
         # Normalise mutation_type to a coarse prefix for grouping
         prefix = mutation_type.split("_")[0] if "_" in mutation_type else mutation_type
@@ -803,11 +760,7 @@ class DirectedMutator:
         if not DirectedMutator._program_mutation_outcomes:
             return []
 
-        threshold = (
-            similarity_threshold
-            if similarity_threshold is not None
-            else DirectedMutator._SIMILARITY_THRESHOLD
-        )
+        threshold = similarity_threshold if similarity_threshold is not None else DirectedMutator._SIMILARITY_THRESHOLD
 
         query_features = DirectedMutator._compute_program_features(program)
 
@@ -851,9 +804,7 @@ class DirectedMutator:
         """
         outcomes = DirectedMutator._program_mutation_outcomes
         total_programs = len(outcomes)
-        total_records = sum(
-            len(type_stats) for type_stats in outcomes.values()
-        )
+        total_records = sum(len(type_stats) for type_stats in outcomes.values())
 
         # Global top mutation types (across all programs)
         global_stats: dict[str, dict[str, float]] = {}
@@ -889,6 +840,48 @@ class DirectedMutator:
         }
 
     @staticmethod
+    def _get_exact_match_results(program_hash: str, top_n: int) -> list[tuple[str, float, int]]:
+        """Return mutation strategies for exact hash match only."""
+        if program_hash not in DirectedMutator._program_mutation_outcomes:
+            return []
+        type_stats = DirectedMutator._program_mutation_outcomes[program_hash]
+        results: list[tuple[str, float, int]] = []
+        for prefix, stats in type_stats.items():
+            attempts = stats["attempts"]
+            if attempts < 1.0:
+                continue
+            rate = stats["successes"] / attempts
+            results.append((prefix, rate, int(attempts)))
+        results.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        return results[:top_n]
+
+    @staticmethod
+    def _get_similar_program_results(query_features: tuple, threshold: float, top_n: int) -> list[tuple[str, float, int]]:
+        """Return mutation strategies from similar programs via cosine similarity."""
+        aggregated: dict[str, dict[str, float]] = {}
+        for prog_hash, type_stats in DirectedMutator._program_mutation_outcomes.items():
+            cached_features = DirectedMutator._program_feature_cache.get(prog_hash)
+            if cached_features is None:
+                continue
+            sim = DirectedMutator._program_similarity(query_features, cached_features)
+            if sim < threshold:
+                continue
+            for prefix, stats in type_stats.items():
+                if prefix not in aggregated:
+                    aggregated[prefix] = {"successes": 0.0, "attempts": 0.0}
+                aggregated[prefix]["successes"] += stats["successes"]
+                aggregated[prefix]["attempts"] += stats["attempts"]
+        results: list[tuple[str, float, int]] = []
+        for prefix, agg in aggregated.items():
+            attempts = agg["attempts"]
+            if attempts < 1.0:
+                continue
+            rate = agg["successes"] / attempts
+            results.append((prefix, rate, int(attempts)))
+        results.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        return results[:top_n]
+
+    @staticmethod
     def get_program_mutation_affinity_by_hash(
         program_hash: str,
         top_n: int = 5,
@@ -916,57 +909,11 @@ class DirectedMutator:
         """
         if not DirectedMutator._program_mutation_outcomes:
             return []
-
-        threshold = (
-            similarity_threshold
-            if similarity_threshold is not None
-            else DirectedMutator._SIMILARITY_THRESHOLD
-        )
-
+        threshold = similarity_threshold if similarity_threshold is not None else DirectedMutator._SIMILARITY_THRESHOLD
         query_features = DirectedMutator._program_feature_cache.get(program_hash)
         if query_features is None:
-            # Hash not in cache — try an exact-match lookup only
-            if program_hash not in DirectedMutator._program_mutation_outcomes:
-                return []
-            type_stats = DirectedMutator._program_mutation_outcomes[program_hash]
-            results: list[tuple[str, float, int]] = []
-            for prefix, stats in type_stats.items():
-                attempts = stats["attempts"]
-                if attempts < 1.0:
-                    continue
-                rate = stats["successes"] / attempts
-                results.append((prefix, rate, int(attempts)))
-            results.sort(key=lambda x: (x[1], x[2]), reverse=True)
-            return results[:top_n]
-
-        # Aggregate stats from all similar programs
-        aggregated: dict[str, dict[str, float]] = {}
-
-        for prog_hash, type_stats in DirectedMutator._program_mutation_outcomes.items():
-            cached_features = DirectedMutator._program_feature_cache.get(prog_hash)
-            if cached_features is None:
-                continue
-
-            sim = DirectedMutator._program_similarity(query_features, cached_features)
-            if sim < threshold:
-                continue
-
-            for prefix, stats in type_stats.items():
-                if prefix not in aggregated:
-                    aggregated[prefix] = {"successes": 0.0, "attempts": 0.0}
-                aggregated[prefix]["successes"] += stats["successes"]
-                aggregated[prefix]["attempts"] += stats["attempts"]
-
-        hash_results: list[tuple[str, float, int]] = []
-        for prefix, agg in aggregated.items():
-            attempts = agg["attempts"]
-            if attempts < 1.0:
-                continue
-            rate = agg["successes"] / attempts
-            hash_results.append((prefix, rate, int(attempts)))
-
-        hash_results.sort(key=lambda x: (x[1], x[2]), reverse=True)
-        return hash_results[:top_n]
+            return DirectedMutator._get_exact_match_results(program_hash, top_n)
+        return DirectedMutator._get_similar_program_results(query_features, threshold, top_n)
 
     @staticmethod
     def get_program_cached_features(program_hash: str) -> tuple | None:
@@ -1010,6 +957,23 @@ class DirectedMutator:
             prog.extend(instrs)
             prog.append(EBREAK)
         return prog[:MAX_PROGRAM_LEN]
+
+    @staticmethod
+    def overlay_seq_keep_length(program: list[int], instrs: list[int], rng: random.Random) -> list[int]:
+        """Replace a body window with instrs; keep total length and trailing EBREAK."""
+        if not program or not instrs:
+            return list(program)
+        prog = list(program)
+        has_eb = prog[-1] == EBREAK
+        body = prog[:-1] if has_eb else prog
+        if not body:
+            return prog[:MAX_PROGRAM_LEN]
+        seq = list(instrs[: len(body)])
+        start = rng.randrange(0, len(body) - len(seq) + 1)
+        out = body[:start] + seq + body[start + len(seq) :]
+        if has_eb:
+            out.append(EBREAK)
+        return out[:MAX_PROGRAM_LEN]
 
     @staticmethod
     def insert_after_ebreak(program: list[int], new_instr: int) -> list[int]:
@@ -1072,7 +1036,6 @@ class DirectedMutator:
 
         prog = list(program)
         divergence_type = analysis.divergence_type
-        suggestion = analysis.suggestion
 
         # ── Try task-aware mutation first when task_level is set ─
         if task_level is not None:
@@ -1087,6 +1050,16 @@ class DirectedMutator:
                     crash_idx = (div_pc // 4) - 1
                     if 0 <= crash_idx < len(prog) and prog[crash_idx] != EBREAK:
                         prog[crash_idx] = NOP
+            if task_level >= 12 and divergence_type in (
+                "wrong_reg_value",
+                "ran_out_of_budget",
+                "halted_early",
+            ):
+                from evolution.register_repair import repair_program
+
+                return repair_program(prog, task_level, analysis, rng, divergence_type=divergence_type)
+            if task_level >= 17 and divergence_type in ("wrong_reg_value", "ran_out_of_budget", "halted_early"):
+                return DirectedMutator._handle_l17plus_mutation(prog, analysis, rng, task_level)
             return DirectedMutator._task_aware_mutation(prog, rng, task_level)
 
         # ── Illegal instruction ─────────────────────────────
@@ -1198,6 +1171,210 @@ class DirectedMutator:
     # ── Task-aware mutation ────────────────────────────────
 
     @staticmethod
+    def _get_simple_task_payload(task_level: int) -> tuple[list[int], str]:
+        """Return single-instruction payload for task levels 0-7."""
+        if task_level == 0:
+            return [make_rv32i("ADDI", rd=3, rs1=1, imm=0)], "l0_addi_x3_x1_0"
+        if task_level == 1:
+            return [make_rv32i("ADD", rd=4, rs1=1, rs2=1)], "l1_add_x4_x1_x1"
+        if task_level == 2:
+            return [make_rv32i("ADDI", rd=5, rs1=2, imm=0)], "l2_addi_x5_x2_0"
+        if task_level == 3:
+            return [make_rv32i("ADD", rd=6, rs1=2, rs2=2)], "l3_add_x6_x2_x2"
+        if task_level == 4:
+            return [make_rv32i("ADD", rd=7, rs1=4, rs2=6)], "l4_add_x7_x4_x6"
+        if task_level == 5:
+            return [make_rv32i("SLT", rd=8, rs1=6, rs2=4)], "l5_slt_x8_x6_x4"
+        if task_level == 6:
+            return [make_rv32i("ADD", rd=9, rs1=1, rs2=2)], "l6_add_x9_x1_x2"
+        if task_level == 7:
+            return [make_rv32i("LW", rd=10, rs1=1, imm=0)], "l7_lw_x10_0_x1"
+        return [make_rv32i("ADDI", rd=10, rs1=0, imm=0)], "l_fallback_nop"
+
+    @staticmethod
+    def _get_complex_task_payload(task_level: int) -> tuple[list[int], str]:
+        """Return multi-instruction payload for task levels 8-11."""
+        if task_level == 8:
+            tmp1 = make_rv32i("LW", rd=15, rs1=1, imm=0)
+            tmp2 = make_rv32i("LW", rd=16, rs1=2, imm=0)
+            add = make_rv32i("ADD", rd=11, rs1=15, rs2=16)
+            return [tmp1, tmp2, add], "l8_dual_load_add_x11"
+        if task_level == 9:
+            init_s = make_rv32i("ADDI", rd=15, rs1=0, imm=0)
+            init_i = make_rv32i("ADDI", rd=16, rs1=0, imm=0)
+            addr_calc = make_rv32i("ADD", rd=17, rs1=1, rs2=16)
+            load = make_rv32i("LW", rd=18, rs1=17, imm=0)
+            sum_add = make_rv32i("ADD", rd=15, rs1=15, rs2=18)
+            inc_i = make_rv32i("ADDI", rd=16, rs1=16, imm=1)
+            branch = make_rv32i("BLT", rs1=16, rs2=2, imm=-16)
+            store = make_rv32i("ADDI", rd=12, rs1=15, imm=0)
+            return [init_s, init_i, addr_calc, load, sum_add, inc_i, branch, store], "l9_sum_loop_x12"
+        if task_level == 10:
+            init_max = make_rv32i("ADDI", rd=15, rs1=0, imm=0)
+            init_i = make_rv32i("ADDI", rd=16, rs1=0, imm=0)
+            addr_calc = make_rv32i("ADD", rd=17, rs1=1, rs2=16)
+            load = make_rv32i("LW", rd=18, rs1=17, imm=0)
+            cmp = make_rv32i("SLT", rd=19, rs1=15, rs2=18)
+            beq_skip = make_rv32i("BEQ", rs1=19, rs2=0, imm=8)
+            update = make_rv32i("ADDI", rd=15, rs1=18, imm=0)
+            inc_i = make_rv32i("ADDI", rd=16, rs1=16, imm=1)
+            branch = make_rv32i("BLT", rs1=16, rs2=2, imm=-24)
+            store = make_rv32i("ADDI", rd=13, rs1=15, imm=0)
+            return [init_max, init_i, addr_calc, load, cmp, beq_skip, update, inc_i, branch, store], "l10_max_loop_x13"
+        if task_level == 11:
+            init_a = make_rv32i("ADDI", rd=15, rs1=0, imm=0)
+            init_b = make_rv32i("ADDI", rd=16, rs1=0, imm=1)
+            check_n = make_rv32i("BEQ", rs1=1, rs2=0, imm=20)
+            next_fib = make_rv32i("ADD", rd=17, rs1=15, rs2=16)
+            shift_a = make_rv32i("ADDI", rd=15, rs1=16, imm=0)
+            shift_b = make_rv32i("ADDI", rd=16, rs1=17, imm=0)
+            dec_n = make_rv32i("ADDI", rd=1, rs1=1, imm=-1)
+            loop_br = make_rv32i("BNE", rs1=1, rs2=0, imm=-20)
+            store_fib = make_rv32i("ADDI", rd=14, rs1=15, imm=0)
+            return [init_a, init_b, check_n, next_fib, shift_a, shift_b, dec_n, loop_br, store_fib], "l11_fibonacci_loop_x14"
+        return [make_rv32i("ADDI", rd=10, rs1=0, imm=0)], "l_fallback_nop"
+
+    @staticmethod
+    def _get_l17_meta_jalr_payload() -> tuple[list[int], str]:
+        """L17: build ADDI x20,x1,x2 word, store to scratch, JALR execute."""
+        return [
+            make_rv32i("ADDI", rd=21, rs1=0, imm=1),
+            make_rv32i("SLLI", rd=21, rs1=21, imm=15),
+            make_rv32i("ADDI", rd=22, rs1=0, imm=1),
+            make_rv32i("SLLI", rd=22, rs1=22, imm=11),
+            make_rv32i("ADDI", rd=23, rs1=0, imm=0x213),
+            make_rv32i("OR", rd=21, rs1=21, rs2=22),
+            make_rv32i("OR", rd=21, rs1=21, rs2=23),
+            make_rv32i("SLLI", rd=22, rs1=2, imm=20),
+            make_rv32i("OR", rd=22, rs1=22, rs2=21),
+            make_rv32i("ADDI", rd=23, rs1=0, imm=0x40),
+            make_rv32i("SW", rs1=23, rs2=22, imm=0),
+            make_rv32i("JALR", rd=0, rs1=23, imm=0),
+        ], "l17_meta_jalr_x20"
+
+    @staticmethod
+    def _get_l18_xor_payload() -> tuple[list[int], str]:
+        return [
+            make_rv32i("XOR", rd=21, rs1=1, rs2=2),
+            make_rv32i("LUI", rd=22, rs1=0, imm=0xF),
+            make_rv32i("ADDI", rd=22, rs1=22, imm=0xFFF),
+            make_rv32i("AND", rd=21, rs1=21, rs2=22),
+        ], "l18_xor_and_x21"
+
+    @staticmethod
+    def _get_l19_bne_payload() -> tuple[list[int], str]:
+        return [
+            make_rv32i("BNE", rs1=1, rs2=2, imm=12),
+            make_rv32i("ADD", rd=22, rs1=1, rs2=2),
+            make_rv32i("ADDI", rd=0, rs1=0, imm=0),
+            make_rv32i("ADDI", rd=22, rs1=1, imm=0),
+            make_rv32i("SUB", rd=22, rs1=1, rs2=2),
+        ], "l19_bne_x22"
+
+    @staticmethod
+    def _get_l20_mem_payload() -> tuple[list[int], str]:
+        return [
+            make_rv32i("ADDI", rd=23, rs1=0, imm=0x50),
+            make_rv32i("SW", rs1=23, rs2=1, imm=0),
+            make_rv32i("LW", rd=24, rs1=23, imm=0),
+            make_rv32i("XOR", rd=23, rs1=24, rs2=2),
+            make_rv32i("SW", rs1=23, rs2=23, imm=4),
+            make_rv32i("LW", rd=23, rs1=23, imm=4),
+        ], "l20_mem_xor_x23"
+
+    @staticmethod
+    def _get_l17plus_payload(task_level: int) -> tuple[list[int], str]:
+        """Return reference instruction patterns for L17-L20."""
+        if task_level == 17:
+            return DirectedMutator._get_l17_meta_jalr_payload()
+        if task_level == 18:
+            meta, _ = DirectedMutator._get_l17_meta_jalr_payload()
+            xor, desc = DirectedMutator._get_l18_xor_payload()
+            return meta + xor, f"l18_meta_xor_{desc}"
+        if task_level == 19:
+            meta, _ = DirectedMutator._get_l17_meta_jalr_payload()
+            xor, _ = DirectedMutator._get_l18_xor_payload()
+            bne, desc = DirectedMutator._get_l19_bne_payload()
+            return meta + xor + bne, f"l19_full_{desc}"
+        if task_level >= 20:
+            meta, _ = DirectedMutator._get_l17_meta_jalr_payload()
+            xor, _ = DirectedMutator._get_l18_xor_payload()
+            bne, _ = DirectedMutator._get_l19_bne_payload()
+            mem, desc = DirectedMutator._get_l20_mem_payload()
+            return meta + xor + bne + mem, f"l20_full_{desc}"
+        return DirectedMutator._get_l17_meta_jalr_payload()
+
+    @staticmethod
+    def _handle_l17plus_mutation(
+        prog: list[int],
+        analysis: TraceAnalysis,
+        rng: random.Random,
+        task_level: int,
+    ) -> tuple[list[int], str]:
+        """Inject level-specific reference patterns for L17+ failures."""
+        instrs, desc = DirectedMutator._get_l17plus_payload(task_level)
+        roll = rng.random()
+        if roll < 0.7:
+            return DirectedMutator.insert_seq_before_ebreak(prog, instrs), desc
+        # Partial inject: level-critical tail only
+        if task_level == 17:
+            tail = instrs[-4:]
+        elif task_level == 18:
+            tail = instrs[-3:]
+        elif task_level == 19:
+            tail = instrs[-5:]
+        else:
+            tail = instrs[-6:]
+        return DirectedMutator.insert_seq_before_ebreak(prog, tail), f"{desc}_tail"
+
+    @staticmethod
+    def _get_task_level_payload(task_level: int) -> tuple[list[int], str]:
+        """Return instruction list and description for a specific task level."""
+        if 0 <= task_level <= 7:
+            return DirectedMutator._get_simple_task_payload(task_level)
+        if 8 <= task_level <= 11:
+            return DirectedMutator._get_complex_task_payload(task_level)
+        if task_level >= 17:
+            return DirectedMutator._get_l17plus_payload(task_level)
+        return [make_rv32i("ADDI", rd=10, rs1=0, imm=0)], "l_fallback_nop"
+
+    @staticmethod
+    def _task_aware_generic_fallback(prog: list[int], rng: random.Random, roll: float) -> tuple[list[int], str]:
+        """Apply generic task-aware fallback mutations based on roll value."""
+        if roll < 0.30:
+            reg = rng.randint(5, 15)
+            value = rng.randint(0, 0xFFFFFFFF) & 0xFFFFFFFF
+            if value >= 0x80000000:
+                value -= 0x100000000
+            upper = (value >> 12) & 0xFFFFF
+            lower = value & 0xFFF
+            if lower >= 0x800:
+                lower -= 0x1000
+                upper = (upper + 1) & 0xFFFFF
+            lui = make_rv32i("LUI", rd=reg, imm=upper)
+            addi = make_rv32i("ADDI", rd=reg, rs1=reg, imm=lower)
+            return (DirectedMutator.insert_seq_before_ebreak(prog, [lui, addi]), f"generic_init_r{reg}_{value}")
+        if roll < 0.55:
+            rd = rng.randint(5, 15)
+            rs1 = rng.randint(0, 15)
+            rs2 = rng.randint(0, 15)
+            name = rng.choice(_ALU_NAMES_TUPLE)
+            instr = make_rv32i(name, rd=rd, rs1=rs1, rs2=rs2)
+            return (DirectedMutator.insert_before_ebreak(prog, instr), f"generic_alu_{name}_r{rd}_r{rs1}_r{rs2}")
+        if roll < 0.75:
+            mem_reg = rng.randint(0, 15)
+            data_reg = rng.randint(5, 15)
+            im_val = rng.randint(0, 255) & 0xFFF
+            sw = make_rv32i("SW", rs1=mem_reg, rs2=data_reg, imm=im_val)
+            lw = make_rv32i("LW", rd=data_reg, rs1=mem_reg, imm=im_val)
+            return (DirectedMutator.insert_seq_before_ebreak(prog, [sw, lw]), f"generic_mem_sw_lw_r{data_reg}")
+        rs1 = rng.randint(0, 15)
+        rs2 = rng.randint(0, 15)
+        name = rng.choice(("BEQ", "BNE", "BLT", "BGE"))
+        instr = make_rv32i(name, rs1=rs1, rs2=rs2, imm=4)
+        return (DirectedMutator.insert_before_ebreak(prog, instr), f"generic_branch_{name}")
+
+    @staticmethod
     def _task_aware_mutation(prog: list[int], rng: random.Random, task_level: int) -> tuple[list[int], str]:
         """Apply a curriculum-task-aware mutation.
 
@@ -1218,161 +1395,54 @@ class DirectedMutator:
           L10: x13 = max(mem[x1..])      (loop + compare)
           L11: x14 = fibonacci(x1)       (loop)
         """
-        roll = rng.random()
+        if 0 <= task_level <= 11:
+            instrs, desc = DirectedMutator._get_task_level_payload(task_level)
+            if len(instrs) == 1:
+                return DirectedMutator.insert_before_ebreak(prog, instrs[0]), desc
+            return DirectedMutator.insert_seq_before_ebreak(prog, instrs), desc
+        if task_level >= 12:
+            from evolution.register_repair import reference_words
 
-        if task_level == 0:
-            # ADDI x3, x1, 0
-            instr = make_rv32i("ADDI", rd=3, rs1=1, imm=0)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), "l0_addi_x3_x1_0")
+            roll = rng.random()
+            instrs, desc = reference_words(task_level, segment="incremental")
+            full, fdesc = reference_words(task_level, segment="full")
+            from evolution.terminal_stagnation import L30_COMPACT_MAX_WORDS
 
-        if task_level == 1:
-            # ADD x4, x1, x1
-            instr = make_rv32i("ADD", rd=4, rs1=1, rs2=1)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), "l1_add_x4_x1_x1")
+            compact = len(prog) <= L30_COMPACT_MAX_WORDS
+            if compact and task_level >= 29:
+                from evolution.terminal_stagnation import (
+                    _l11_fib_gate_imm,
+                    l30_easy_fill_variants,
+                    terminal_efficiency_at_scan_floor,
+                )
 
-        if task_level == 2:
-            # ADDI x5, x2, 0
-            instr = make_rv32i("ADDI", rd=5, rs1=2, imm=0)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), "l2_addi_x5_x2_0")
+                at_floor = terminal_efficiency_at_scan_floor(len(prog))
+                # Growth exploration at stalled scan floor is engine-injected (gen 0);
+                # task-aware mutations stay equal-length to avoid 72w population bloat.
+                if not at_floor and _l11_fib_gate_imm(prog) != 13:
+                    fills = l30_easy_fill_variants(prog)
+                    if fills and rng.random() < 0.55:
+                        return fills[0], "task_aware_l30_easy_fill"
+            if compact:
+                from evolution.terminal_stagnation import terminal_efficiency_at_scan_floor
 
-        if task_level == 3:
-            # ADD x6, x2, x2
-            instr = make_rv32i("ADD", rd=6, rs1=2, rs2=2)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), "l3_add_x6_x2_x2")
-
-        if task_level == 4:
-            # ADD x7, x4, x6
-            instr = make_rv32i("ADD", rd=7, rs1=4, rs2=6)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), "l4_add_x7_x4_x6")
-
-        if task_level == 5:
-            # SLT x8, x6, x4  (x8 = 1 if x6 < x4, i.e. x4 > x6)
-            instr = make_rv32i("SLT", rd=8, rs1=6, rs2=4)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), "l5_slt_x8_x6_x4")
-
-        if task_level == 6:
-            # ADD x9, x1, x2
-            instr = make_rv32i("ADD", rd=9, rs1=1, rs2=2)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), "l6_add_x9_x1_x2")
-
-        if task_level == 7:
-            # LW x10, 0(x1)
-            instr = make_rv32i("LW", rd=10, rs1=1, imm=0)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), "l7_lw_x10_0_x1")
-
-        if task_level == 8:
-            # L8: x11 = mem[x1] + mem[x2]
-            # Need: LW x15, 0(x1); LW x16, 0(x2); ADD x11, x15, x16
-            tmp1 = make_rv32i("LW", rd=15, rs1=1, imm=0)
-            tmp2 = make_rv32i("LW", rd=16, rs1=2, imm=0)
-            add = make_rv32i("ADD", rd=11, rs1=15, rs2=16)
-            return (DirectedMutator.insert_seq_before_ebreak(prog, [tmp1, tmp2, add]), "l8_dual_load_add_x11")
-
-        if task_level == 9:
-            # L9: x12 = sum(mem[x1..x1+x2-1])
-            # ADDI x15, x0, 0; ADDI x16, x0, 0; loop: ADD x17, x1, x16;
-            # LW x18, 0(x17); ADD x15, x15, x18; ADDI x16, x16, 1;
-            # BLT x16, x2, -20; ADDI x12, x15, 0
-            init_s = make_rv32i("ADDI", rd=15, rs1=0, imm=0)
-            init_i = make_rv32i("ADDI", rd=16, rs1=0, imm=0)
-            addr_calc = make_rv32i("ADD", rd=17, rs1=1, rs2=16)
-            load = make_rv32i("LW", rd=18, rs1=17, imm=0)
-            sum_add = make_rv32i("ADD", rd=15, rs1=15, rs2=18)
-            inc_i = make_rv32i("ADDI", rd=16, rs1=16, imm=1)
-            branch = make_rv32i("BLT", rs1=16, rs2=2, imm=-16)
-            store = make_rv32i("ADDI", rd=12, rs1=15, imm=0)
-            return (
-                DirectedMutator.insert_seq_before_ebreak(
-                    prog, [init_s, init_i, addr_calc, load, sum_add, inc_i, branch, store]
-                ),
-                "l9_sum_loop_x12",
-            )
-
-        if task_level == 10:
-            # L10: x13 = max(mem[x1..x1+x2-1])
-            # Similar to L9 but uses SLT + branch for max comparison
-            init_max = make_rv32i("ADDI", rd=15, rs1=0, imm=0)  # max = 0
-            init_i = make_rv32i("ADDI", rd=16, rs1=0, imm=0)  # i = 0
-            addr_calc = make_rv32i("ADD", rd=17, rs1=1, rs2=16)
-            load = make_rv32i("LW", rd=18, rs1=17, imm=0)  # val = mem[addr]
-            # Compare val > max
-            cmp = make_rv32i("SLT", rd=19, rs1=15, rs2=18)  # x19 = 1 if max < val
-            beq_skip = make_rv32i("BEQ", rs1=19, rs2=0, imm=8)  # skip update if max >= val
-            update = make_rv32i("ADDI", rd=15, rs1=18, imm=0)  # max = val
-            inc_i = make_rv32i("ADDI", rd=16, rs1=16, imm=1)
-            branch = make_rv32i("BLT", rs1=16, rs2=2, imm=-24)
-            store = make_rv32i("ADDI", rd=13, rs1=15, imm=0)
-            return (
-                DirectedMutator.insert_seq_before_ebreak(
-                    prog, [init_max, init_i, addr_calc, load, cmp, beq_skip, update, inc_i, branch, store]
-                ),
-                "l10_max_loop_x13",
-            )
-
-        if task_level == 11:
-            # L11: x14 = fibonacci(x1)
-            # ADDI x15, x0, 0  (a = 0)
-            # ADDI x16, x0, 1  (b = 1)
-            # BEQ x1, x0, done (if n == 0, skip)
-            # loop: ADD x17, x15, x16 (next = a + b)
-            # ADDI x15, x16, 0 (a = b)
-            # ADDI x16, x17, 0 (b = next)
-            # ADDI x1, x1, -1   (n--)
-            # BNE x1, x0, loop (if n != 0, continue)
-            # done: ADDI x14, x15, 0
-            init_a = make_rv32i("ADDI", rd=15, rs1=0, imm=0)
-            init_b = make_rv32i("ADDI", rd=16, rs1=0, imm=1)
-            check_n = make_rv32i("BEQ", rs1=1, rs2=0, imm=20)
-            next_fib = make_rv32i("ADD", rd=17, rs1=15, rs2=16)
-            shift_a = make_rv32i("ADDI", rd=15, rs1=16, imm=0)
-            shift_b = make_rv32i("ADDI", rd=16, rs1=17, imm=0)
-            dec_n = make_rv32i("ADDI", rd=1, rs1=1, imm=-1)
-            loop_br = make_rv32i("BNE", rs1=1, rs2=0, imm=-20)
-            store_fib = make_rv32i("ADDI", rd=14, rs1=15, imm=0)
-            return (
-                DirectedMutator.insert_seq_before_ebreak(
-                    prog, [init_a, init_b, check_n, next_fib, shift_a, shift_b, dec_n, loop_br, store_fib]
-                ),
-                "l11_fibonacci_loop_x14",
-            )
-
-        # Fallback to original generic task-aware logic
-        if roll < 0.30:
-            reg = rng.randint(5, 15)
-            value = rng.randint(0, 0xFFFFFFFF) & 0xFFFFFFFF
-            if value >= 0x80000000:
-                value -= 0x100000000
-            upper = (value >> 12) & 0xFFFFF
-            lower = value & 0xFFF
-            if lower >= 0x800:
-                lower -= 0x1000
-                upper = (upper + 1) & 0xFFFFF
-            lui = make_rv32i("LUI", rd=reg, imm=upper)
-            addi = make_rv32i("ADDI", rd=reg, rs1=reg, imm=lower)
-            return (DirectedMutator.insert_seq_before_ebreak(prog, [lui, addi]), f"generic_init_r{reg}_{value}")
-
-        elif roll < 0.55:
-            rd = rng.randint(5, 15)
-            rs1 = rng.randint(0, 15)
-            rs2 = rng.randint(0, 15)
-            name = rng.choice(_ALU_NAMES_TUPLE)
-            instr = make_rv32i(name, rd=rd, rs1=rs1, rs2=rs2)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), f"generic_alu_{name}_r{rd}_r{rs1}_r{rs2}")
-
-        elif roll < 0.75:
-            mem_reg = rng.randint(0, 15)
-            data_reg = rng.randint(5, 15)
-            im_val = rng.randint(0, 255) & 0xFFF
-            sw = make_rv32i("SW", rs1=mem_reg, rs2=data_reg, imm=im_val)
-            lw = make_rv32i("LW", rd=data_reg, rs1=mem_reg, imm=im_val)
-            return (DirectedMutator.insert_seq_before_ebreak(prog, [sw, lw]), f"generic_mem_sw_lw_r{data_reg}")
-
-        else:
-            rs1 = rng.randint(0, 15)
-            rs2 = rng.randint(0, 15)
-            name = rng.choice(("BEQ", "BNE", "BLT", "BGE"))
-            instr = make_rv32i(name, rs1=rs1, rs2=rs2, imm=4)
-            return (DirectedMutator.insert_before_ebreak(prog, instr), f"generic_branch_{name}")
+                seq = instrs or full or []
+                if seq:
+                    body_n = max(1, len(prog) - (1 if prog and prog[-1] == EBREAK else 0))
+                    win = min(4, len(seq), body_n)
+                    if len(seq) > win:
+                        off = rng.randrange(0, len(seq) - win + 1)
+                        seq = seq[off : off + win]
+                    over = DirectedMutator.overlay_seq_keep_length(prog, seq, rng)
+                    if over != list(prog):
+                        return over, f"task_aware_overlay_{desc or fdesc}"
+                return DirectedMutator._fallback_mutation(list(prog), rng)
+            if instrs:
+                if roll < 0.65:
+                    return DirectedMutator.insert_seq_before_ebreak(prog, instrs), f"task_aware_{desc}"
+                if full:
+                    return DirectedMutator.insert_seq_before_ebreak(prog, full), f"task_aware_{fdesc}"
+        return DirectedMutator._task_aware_generic_fallback(prog, rng, roll)
 
     # ── Fallback / generic mutations ───────────────────────
 
@@ -1447,7 +1517,7 @@ class DirectedMutator:
                     candidates.append((i, name, "branch"))
                 elif name in ALU_SWAP_PAIRS:
                     candidates.append((i, name, "alu"))
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 continue
 
         if not candidates:
@@ -1511,7 +1581,7 @@ class DirectedMutator:
                 )
                 prog[idx] = new_instr
                 return prog, f"change_rs1_{name}_at_{idx}_to_{new_rs1}"
-        except Exception:
+        except (ValueError, TypeError, KeyError):
             pass
         return prog, "no_change_reg_swap"
 
@@ -1663,133 +1733,98 @@ class DirectedMutator:
 # ── Convenience / High-Level API ──────────────────────────────────────
 
 
-def propose_mutation(
-    program: list[int],
-    trace: list[dict[str, Any]],
-    expected: dict[str, Any],
-    inputs: dict[str, Any],
-    *,
-    error: str | None = None,
-    budget: int | None = None,
-    rng: random.Random | None = None,
-    stochastic_prob: float = 0.10,
-    task_level: int | None = None,
-    strategy: Any = None,
-    strategy_archive: Any = None,
+def _propose_perturbation_capped(
+    program: list[int], rng: random.Random, task_level: int | None, strategy_archive: Any,
 ) -> tuple[list[int], str, TraceAnalysis]:
-    """High-level entry point: analyse trace and propose a mutation.
-
-    Supports strategy-based routing:
-      - RANDOM: stochastic perturbation only (no trace analysis)
-      - TASK_AWARE: task-level injection only
-      - DIRECTED: trace-analysis-driven mutation
-      - PERTURBATION_CAPPED: capped random instruction replacement
-      - HYBRID: default blend (10% stochastic + 90% directed)
-
-    Args:
-        program:        Original program (list of 32-bit instruction words).
-        trace:          Execution trace from safety-kernel.
-        expected:       Expected output dict.
-        inputs:         Input state dict.
-        error:          Error string from safety-kernel (if any).
-        budget:         Instruction budget used.
-        rng:            Random number generator (created fresh if None).
-        stochastic_prob: Probability of stochastic perturbation (default 0.10).
-        task_level:     Optional curriculum task level.
-        strategy:       MutationStrategy enum value (controls routing).
-        strategy_archive: StrategyArchive for historical solutions.
-
-    Returns:
-        Tuple of (mutated_program, description_string, trace_analysis).
-    """
-    if rng is None:
-        rng = random.Random()
-
-    # ── Strategy-based routing ───────────────────────────────────────
-    strat_val = getattr(strategy, "value", str(strategy)) if strategy is not None else "HYBRID"
-
-    if strat_val == "RANDOM":
-        # Pure stochastic: no trace analysis, maximise exploration
-        mutated_prog, desc = DirectedMutator.stochastic_perturbation(program, rng)
-        analysis = TraceAnalysis(
-            divergence_point=None, divergence_type="random", final_regs=[], trace_length=0, suggestion={}
-        )
-        return mutated_prog, f"random_{desc}", analysis
-
-    if strat_val == "TASK_AWARE":
-        # Direct task-level injection
+    """Handle PERTURBATION_CAPPED strategy: capped random instruction replacement."""
+    champion_prog = program
+    if strategy_archive is not None and strategy_archive.total_records() > 10:
         if task_level is not None:
-            mutated_prog, desc = DirectedMutator._task_aware_mutation(program, rng, task_level)
-        else:
-            mutated_prog, desc = DirectedMutator._fallback_mutation(program, rng)
-        analysis = TraceAnalysis(
-            divergence_point=None, divergence_type="task_aware", final_regs=[], trace_length=0, suggestion={}
-        )
-        return mutated_prog, f"task_aware_{desc}", analysis
-
-    if strat_val == "PERTURBATION_CAPPED":
-        # Capped perturbation: replace up to 3 random instructions with
-        # valid RV32I encodings. No trace analysis needed for mutation logic.
-        champion_prog = program
-        if strategy_archive is not None and strategy_archive.total_records() > 10:
-            if task_level is not None:
-                _, hist_desc = DirectedMutator._task_aware_mutation(list(champion_prog), rng, task_level)
-                desc = f"crossover_archive_{hist_desc}"
-            else:
-                desc = "crossover_directed"
+            _, hist_desc = DirectedMutator._task_aware_mutation(list(champion_prog), rng, task_level)
+            desc = f"crossover_archive_{hist_desc}"
         else:
             desc = "crossover_directed"
+    else:
+        desc = "crossover_directed"
+    if len(champion_prog) >= 2:
+        mutated_prog = list(champion_prog)
+        n_swaps = min(3, max(1, len(champion_prog) // 4))
+        for _ in range(n_swaps):
+            idx = rng.randint(0, len(mutated_prog) - 1)
+            if mutated_prog[idx] != EBREAK:
+                mutated_prog[idx] = make_random_rv32i(rng)
+        if mutated_prog[-1] != EBREAK:
+            mutated_prog.append(EBREAK)
+        analysis = TraceAnalysis(
+            divergence_point=None, divergence_type="perturbation_capped",
+            final_regs=[], trace_length=0, suggestion={},
+        )
+        return mutated_prog[:MAX_PROGRAM_LEN], desc, analysis
+    else:
+        mutated_prog, desc2 = DirectedMutator._fallback_mutation(program, rng)
+        analysis = TraceAnalysis(
+            divergence_point=None, divergence_type="perturbation_capped",
+            final_regs=[], trace_length=0, suggestion={},
+        )
+        return mutated_prog, f"crossover_fallback_{desc2}", analysis
 
-        if len(champion_prog) >= 2:
-            mutated_prog = list(champion_prog)
-            n_swaps = min(3, max(1, len(champion_prog) // 4))
-            for _ in range(n_swaps):
-                idx = rng.randint(0, len(mutated_prog) - 1)
-                if mutated_prog[idx] != EBREAK:
-                    mutated_prog[idx] = make_random_rv32i(rng)
-            if mutated_prog[-1] != EBREAK:
-                mutated_prog.append(EBREAK)
-            analysis = TraceAnalysis(
-                divergence_point=None,
-                divergence_type="perturbation_capped",
-                final_regs=[],
-                trace_length=0,
-                suggestion={},
-            )
-            return mutated_prog[:MAX_PROGRAM_LEN], desc, analysis
-        else:
-            mutated_prog, desc2 = DirectedMutator._fallback_mutation(program, rng)
-            analysis = TraceAnalysis(
-                divergence_point=None,
-                divergence_type="perturbation_capped",
-                final_regs=[],
-                trace_length=0,
-                suggestion={},
-            )
-            return mutated_prog, f"crossover_fallback_{desc2}", analysis
 
-    # Branches below need trace analysis for mutation logic
-    analysis = TraceAnalyzer.analyze(
-        trace=trace,
-        expected=expected,
-        inputs=inputs,
-        program=program,
-        error=error,
-        budget=budget,
+def _propose_random(program: list[int], rng: random.Random) -> tuple[list[int], str, TraceAnalysis]:
+    """Handle RANDOM strategy: pure stochastic perturbation."""
+    mutated_prog, desc = DirectedMutator.stochastic_perturbation(program, rng)
+    analysis = TraceAnalysis(
+        divergence_point=None, divergence_type="random", final_regs=[], trace_length=0, suggestion={}
     )
+    return mutated_prog, f"random_{desc}", analysis
 
+
+def _propose_task_aware(program: list[int], rng: random.Random, task_level: int | None) -> tuple[list[int], str, TraceAnalysis]:
+    """Handle TASK_AWARE strategy: task-level injection."""
+    if task_level is not None:
+        mutated_prog, desc = DirectedMutator._task_aware_mutation(program, rng, task_level)
+    else:
+        mutated_prog, desc = DirectedMutator._fallback_mutation(program, rng)
+    analysis = TraceAnalysis(
+        divergence_point=None, divergence_type="task_aware", final_regs=[], trace_length=0, suggestion={}
+    )
+    return mutated_prog, f"task_aware_{desc}", analysis
+
+
+def _propose_with_trace(program: list[int], trace: list[dict[str, Any]], expected: dict[str, Any],
+                        inputs: dict[str, Any], error: str | None, budget: int | None,
+                        rng: random.Random, task_level: int | None,
+                        strat_val: str, stochastic_prob: float) -> tuple[list[int], str, TraceAnalysis]:
+    """Handle strategies that need trace analysis: DIRECTED and HYBRID."""
+    analysis = TraceAnalyzer.analyze(
+        trace=trace, expected=expected, inputs=inputs,
+        program=program, error=error, budget=budget, task_level=task_level,
+    )
     if strat_val == "DIRECTED":
-        # Trace-analysis-driven (no stochastic component)
         mutated_prog, desc = DirectedMutator.mutate(program, trace, analysis, rng, task_level=task_level)
         return mutated_prog, f"directed_{desc}", analysis
-
-    # ── Default: HYBRID (90% directed, 10% stochastic) ──────────────
     if rng.random() < stochastic_prob:
         mutated_prog, desc = DirectedMutator.stochastic_perturbation(program, rng)
     else:
         mutated_prog, desc = DirectedMutator.mutate(program, trace, analysis, rng, task_level=task_level)
-
     return mutated_prog, desc, analysis
+
+
+def propose_mutation(program: list[int], trace: list[dict[str, Any]], expected: dict[str, Any],
+                     inputs: dict[str, Any], *, error: str | None = None, budget: int | None = None,
+                     rng: random.Random | None = None, stochastic_prob: float = 0.10,
+                     task_level: int | None = None, strategy: Any = None,
+                     strategy_archive: Any = None) -> tuple[list[int], str, TraceAnalysis]:
+    """High-level entry point: analyse trace and propose a mutation."""
+    if rng is None:
+        rng = random.Random()
+    strat_val = getattr(strategy, "value", str(strategy)) if strategy is not None else "HYBRID"
+    if strat_val == "RANDOM":
+        return _propose_random(program, rng)
+    if strat_val == "TASK_AWARE":
+        return _propose_task_aware(program, rng, task_level)
+    if strat_val == "PERTURBATION_CAPPED":
+        return _propose_perturbation_capped(program, rng, task_level, strategy_archive)
+    return _propose_with_trace(program, trace, expected, inputs, error, budget, rng, task_level, strat_val, stochastic_prob)
 
 
 def _crossover_mutation(
@@ -1900,29 +1935,20 @@ def _encode_inst(inst: dict) -> int | None:
     imm = inst.get("imm", 0)
     try:
         return rv32i_encode(name=opcode, rd=rd, rs1=rs1, rs2=rs2, imm=imm)
-    except Exception:
+    except (ValueError, TypeError, KeyError):
         return None
 
 
-def _demo() -> None:
-    """Run a quick self-test demonstrating the module."""
-    print("=" * 72)
-    print("RV32I Mutation Proposer — Self-Test")
-    print("=" * 72)
-
-    rng = random.Random(42)
-
-    # ── Test 1: Empty program ──────────────────────────────
+def _demo_test_empty(rng):
+    """Test 1: Empty program. Test 2: Single-instruction (no EBREAK)."""
     print("\n--- Test 1: Empty program ---")
     empty_prog: list[int] = []
     analysis = TraceAnalyzer.analyze(trace=[], expected={}, inputs={}, program=empty_prog, error=None)
     print(f"  Divergence type: {analysis.divergence_type}")
     mutated, desc = DirectedMutator.mutate(empty_prog, [], analysis, rng)
-    valid, err = validate_mutation(mutated)
+    valid, _ = validate_mutation(mutated)
     print(f"  Mutation: {desc}")
     print(f"  Valid encoded: {valid}, size={len(mutated)}")
-
-    # ── Test 2: Single-instruction program (no EBREAK) ─────
     print("\n--- Test 2: Single-instruction (no EBREAK) ---")
     single = [make_rv32i("ADDI", rd=10, rs1=0, imm=42)]
     trace = [{"regs": [0] * 32, "pc": 4, "cycle": 1}]
@@ -1932,54 +1958,31 @@ def _demo() -> None:
     print(f"  Divergence type: {analysis.divergence_type}")
     print(f"  Suggestion: {analysis.suggestion}")
     mutated, desc = DirectedMutator.mutate(single, trace, analysis, rng)
-    valid, err = validate_mutation(mutated)
+    valid, _err = validate_mutation(mutated)
     print(f"  Mutation: {desc}")
     print(f"  Valid encoded: {valid}, size={len(mutated)}")
     if valid:
         d = rv32i_decode(mutated[-1], validate=False)
         print(f'  Last instr: {d["name"]}')
 
-    # ── Test 3: Swap ADD → SUB ─────────────────────────────
+
+def _demo_test_swap(rng):
+    """Test 3: Swap ADD→SUB. Test 4: Swap BEQ→BNE."""
     print("\n--- Test 3: Swap ADD → SUB ---")
-    prog_add = [
-        make_rv32i("ADD", rd=10, rs1=1, rs2=2),
-        EBREAK,
-    ]
-    analysis = TraceAnalysis(
-        divergence_point=0,
-        divergence_type="wrong_reg_value",
-        final_regs=[0] * 32,
-        trace_length=1,
-        suggestion={"type": "swap_op"},
-        expected={"registers": {10: 42}},
-        inputs={},
-    )
+    prog_add = [make_rv32i("ADD", rd=10, rs1=1, rs2=2), EBREAK]
+    analysis = TraceAnalysis(divergence_point=0, divergence_type="wrong_reg_value", final_regs=[0] * 32, trace_length=1, suggestion={"type": "swap_op"}, expected={"registers": {10: 42}}, inputs={})
     mutated, desc = DirectedMutator.mutate(prog_add, [], analysis, rng)
-    valid, err = validate_mutation(mutated)
+    valid, _ = validate_mutation(mutated)
     print(f"  Mutation: {desc}")
     if valid:
         d = rv32i_decode(mutated[0], validate=False)
         print(f'  Instruction 0: {d["name"]}')
     print(f"  Valid encoded: {valid}")
-
-    # ── Test 4: Swap BEQ → BNE ─────────────────────────────
     print("\n--- Test 4: Swap BEQ → BNE ---")
-    prog_beq = [
-        make_rv32i("ADDI", rd=10, rs1=0, imm=5),
-        make_rv32i("BEQ", rs1=10, rs2=11, imm=8),
-        EBREAK,
-    ]
-    analysis = TraceAnalysis(
-        divergence_point=1,
-        divergence_type="wrong_reg_value",
-        final_regs=[0] * 32,
-        trace_length=2,
-        suggestion={"type": "swap_op"},
-        expected={"registers": {10: 5}},
-        inputs={},
-    )
+    prog_beq = [make_rv32i("ADDI", rd=10, rs1=0, imm=5), make_rv32i("BEQ", rs1=10, rs2=11, imm=8), EBREAK]
+    analysis = TraceAnalysis(divergence_point=1, divergence_type="wrong_reg_value", final_regs=[0] * 32, trace_length=2, suggestion={"type": "swap_op"}, expected={"registers": {10: 5}}, inputs={})
     mutated, desc = DirectedMutator.mutate(prog_beq, [], analysis, rng)
-    valid, err = validate_mutation(mutated)
+    valid, _err = validate_mutation(mutated)
     print(f"  Mutation: {desc}")
     if valid:
         for i, w in enumerate(mutated):
@@ -1987,90 +1990,105 @@ def _demo() -> None:
             print(f'    [{i}] {d["name"]:8s} rs1={d["rs1"]}, rs2={d["rs2"]}, imm={d["imm"]}')
     print(f"  Valid encoded: {valid}")
 
-    # ── Test 5: Stochastic perturbation ────────────────────
+
+def _demo_test_stochastic(rng):
+    """Test 5: Stochastic perturbation."""
     print("\n--- Test 5: Stochastic perturbation ---")
     prog_base = [make_rv32i("ADDI", rd=5, rs1=0, imm=10), EBREAK]
     for i in range(5):
         mutated, desc = DirectedMutator.stochastic_perturbation(prog_base, rng)
-        valid, err = validate_mutation(mutated)
+        valid, _err = validate_mutation(mutated)
         print(f"  [{i}] {desc:30s} valid={valid}, size={len(mutated)}")
         if valid:
             for w in mutated:
                 d = rv32i_decode(w, validate=False)
-                print(f'         {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, ' f'rs2={d["rs2"]}, imm={d["imm"]}')
+                print(f'         {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, rs2={d["rs2"]}, imm={d["imm"]}')
 
-    # ── Test 6: Reorder block ──────────────────────────────
+
+def _demo_test_reorder(rng):
+    """Test 6: Reorder block."""
     print("\n--- Test 6: Reorder block ---")
-    prog_reorder = [
-        make_rv32i("ADDI", rd=5, rs1=0, imm=10),
-        make_rv32i("ADDI", rd=6, rs1=0, imm=20),
-        make_rv32i("ADD", rd=7, rs1=5, rs2=6),
-        make_rv32i("ADDI", rd=8, rs1=0, imm=30),
-        EBREAK,
-    ]
+    prog_reorder = [make_rv32i("ADDI", rd=5, rs1=0, imm=10), make_rv32i("ADDI", rd=6, rs1=0, imm=20), make_rv32i("ADD", rd=7, rs1=5, rs2=6), make_rv32i("ADDI", rd=8, rs1=0, imm=30), EBREAK]
     print("  Before:")
     for i, w in enumerate(prog_reorder):
         d = rv32i_decode(w, validate=False)
-        print(f'    [{i}] {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, ' f'rs2={d["rs2"]}, imm={d["imm"]}')
+        print(f'    [{i}] {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, rs2={d["rs2"]}, imm={d["imm"]}')
     mutated, desc = DirectedMutator._reorder_block(prog_reorder, rng)
-    valid, err = validate_mutation(mutated)
+    valid, _err = validate_mutation(mutated)
     print(f"  After  ({desc}):")
     for i, w in enumerate(mutated):
         d = rv32i_decode(w, validate=False)
-        print(f'    [{i}] {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, ' f'rs2={d["rs2"]}, imm={d["imm"]}')
+        print(f'    [{i}] {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, rs2={d["rs2"]}, imm={d["imm"]}')
     print(f"  Valid encoded: {valid}")
 
-    # ── Test 7: Task-aware mutation ────────────────────────
+
+def _demo_test_task_aware(rng):
+    """Test 7: Task-aware mutation."""
     print("\n--- Test 7: Task-aware mutation (inject register init) ---")
     prog_task = [EBREAK]
     for tl in range(3):
         mutated, desc = DirectedMutator._task_aware_mutation(prog_task, rng, tl)
-        valid, err = validate_mutation(mutated)
+        valid, _err = validate_mutation(mutated)
         print(f"  [{tl}] {desc:30s} valid={valid}, size={len(mutated)}")
         if valid:
             for w in mutated:
                 d = rv32i_decode(w, validate=False)
-                print(f'         {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, ' f'rs2={d["rs2"]}, imm={d["imm"]}')
-        prog_task = mutated  # chain
+                print(f'         {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, rs2={d["rs2"]}, imm={d["imm"]}')
+        prog_task = mutated
 
-    # ── Test 8: Full propose_mutation pipeline ─────────────
+
+def _demo_test_pipeline(rng):
+    """Test 8: Full propose_mutation pipeline. Test 9: No EBREAK."""
     print("\n--- Test 8: Full propose_mutation pipeline ---")
     prog = [make_rv32i("ADDI", rd=10, rs1=0, imm=99), EBREAK]
     trace = [{"regs": [0] * 32, "pc": 4, "cycle": 1}]
     expected = {"registers": {10: 42}}
     inputs = {}
     mutated, desc, analysis = propose_mutation(prog, trace, expected, inputs, rng=rng, task_level=0)
-    valid, err = validate_mutation(mutated)
+    valid, _ = validate_mutation(mutated)
     print(f"  Analysis: {analysis.divergence_type}")
     print(f"  Mutation: {desc}")
     print(f"  Valid encoded: {valid}, size={len(mutated)}")
     if valid:
         for w in mutated:
             d = rv32i_decode(w, validate=False)
-            print(f'    {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, ' f'rs2={d["rs2"]}, imm={d["imm"]}')
-
-    # ── Test 9: No EBREAK program ──────────────────────────
+            print(f'    {d["name"]:8s} rd={d["rd"]}, rs1={d["rs1"]}, rs2={d["rs2"]}, imm={d["imm"]}')
     print("\n--- Test 9: Program without EBREAK ---")
     prog_no_ebreak = [make_rv32i("ADDI", rd=5, rs1=0, imm=10)]
     trace = [{"regs": [0] * 32, "pc": 4, "cycle": 1}]
     analysis = TraceAnalyzer.analyze(trace, {}, {}, program=prog_no_ebreak)
     print(f"  Divergence type: {analysis.divergence_type}")
     mutated, desc = DirectedMutator.mutate(prog_no_ebreak, trace, analysis, rng)
-    valid, err = validate_mutation(mutated)
+    valid, _err = validate_mutation(mutated)
     print(f"  Mutation: {desc}")
     print(f"  Valid encoded: {valid}, size={len(mutated)}")
     print(f"  Has EBREAK: {has_ebreak(mutated)}")
 
-    # ── Test 10: validate_mutation on deliberately invalid ──
+
+def _demo_test_validation():
+    """Test 10: Mutation validation."""
     print("\n--- Test 10: Mutation validation ---")
     prog_good = [make_rv32i("ADDI", rd=5, rs1=0, imm=10), EBREAK]
     ok, err = validate_mutation(prog_good)
     print(f"  Good program: valid={ok}")
-    # Try an all-zeros instruction (not a valid RV32I)
     prog_bad = [0x00000000, EBREAK]
     ok, err = validate_mutation(prog_bad)
     print(f"  Bad program (0x00000000): valid={ok}, err={err}")
 
+
+def _demo() -> None:
+    """Run a quick self-test demonstrating the module."""
+    print("=" * 72)
+    print("RV32I Mutation Proposer — Self-Test")
+    print("=" * 72)
+    rng = random.Random(42)
+    _demo_test_empty(rng)
+    _demo_test_swap(rng)
+    _demo_test_stochastic(rng)
+    _demo_test_reorder(rng)
+    _demo_test_task_aware(rng)
+    _demo_test_pipeline(rng)
+    _demo_test_validation()
     print("\n--- Self-test complete ---")
 
 

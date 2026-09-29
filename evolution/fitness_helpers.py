@@ -25,7 +25,8 @@ Typical usage from evolution_engine.py::
 
 from __future__ import annotations
 
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 # ------------------------------------------------------------------
 # Pure scoring helpers (no engine state needed)
@@ -262,8 +263,7 @@ def log_bonus_diagnostics(
         )
     else:
         engine._log(
-            f"[BonusDiag] gen={_gen} base={base_score:.2f} norm=off "
-            f"raw_total={_raw_total:.2f} {' '.join(_parts)}"
+            f"[BonusDiag] gen={_gen} base={base_score:.2f} norm=off " f"raw_total={_raw_total:.2f} {' '.join(_parts)}"
         )
 
 
@@ -307,26 +307,20 @@ def apply_novelty_qd_blending(
     if engine._current_diversity < 0.2 and nw > 0.0:
         nw = min(nw * (1.0 + (1.0 - engine._current_diversity / 0.2)), 0.8)
     ef = engine._extract_behavioral_descriptor
-    if nw > 0.0 and engine.novelty_archive is not None and ef is not None:
-        try:
-            d = ef(trace, program, budget=engine.config.eval_budget)
+    if nw > 0.0 and engine.novelty_archive is not None:
+        nv = 0.0
+        if getattr(engine.novelty_archive, "size", 0):
             try:
-                nv = engine.novelty_archive.decayed_novelty(
-                    program, engine.current_generation
-                )
-            except Exception:
-                nv = engine.novelty_archive.novelty_score(d)
-            fitness = (
-                fitness * (1.0 - nw)
-                + nv * (base_score / 10.0 if base_score > 0 else 1.0) * nw
-            )
-        except (TypeError, ValueError, RuntimeError):
-            pass
-    if (
-        engine.config.qd_bonus_weight > 0.0
-        and engine.qd_archive is not None
-        and _qd_fn is not None
-    ):
+                nv = engine.novelty_archive.decayed_novelty(program, engine.current_generation)
+            except (KeyError, TypeError, ValueError):
+                if ef is not None:
+                    try:
+                        d = ef(trace, program, budget=engine.config.eval_budget)
+                        nv = engine.novelty_archive.novelty_score(d)
+                    except (TypeError, ValueError, RuntimeError):
+                        nv = 0.0
+        fitness = fitness * (1.0 - nw) + nv * (base_score / 10.0 if base_score > 0 else 1.0) * nw
+    if engine.config.qd_bonus_weight > 0.0 and engine.qd_archive is not None and _qd_fn is not None:
         try:
             if _prog_qd_desc is None:
                 _prog_qd_desc = _qd_fn(program, trace)
@@ -340,7 +334,7 @@ def apply_novelty_qd_blending(
                     ds = engine.qd_archive.get_illumination_diversity().get(
                         "overall_diversity_score", engine._qd_coverage
                     )
-                except Exception:
+                except (KeyError, TypeError, ValueError):
                     ds = engine._qd_coverage
                 if ds < 0.20:
                     qw *= 1.0 + 2.5 * (0.20 - ds)
@@ -348,7 +342,7 @@ def apply_novelty_qd_blending(
                     fd = engine.qd_archive.get_cell_freshness(engine.current_generation)
                     fv = fd.get("avg_freshness", 0.5) if isinstance(fd, dict) else 0.5
                     qw *= 1.5 - fv
-                except Exception:
+                except (AttributeError, TypeError):  # Intentional: QD freshness lookup may fail; fallback to default
                     pass
                 fitness += qb * qw
                 if engine.champion is not None and engine.champion_trace is not None:
@@ -360,9 +354,7 @@ def apply_novelty_qd_blending(
                     if cd is not None:
                         engine._cached_champion_qd_desc = cd
                         engine._champion_qd_valid = True
-                        dist = abs(_prog_qd_desc[0] - cd[0]) + abs(
-                            _prog_qd_desc[1] - cd[1]
-                        )
+                        dist = abs(_prog_qd_desc[0] - cd[0]) + abs(_prog_qd_desc[1] - cd[1])
                         if dist < 2.0:
                             fitness *= 1.0 - 0.10 * (1.0 - dist / 2.0)
         except (TypeError, ValueError, RuntimeError):
@@ -382,7 +374,7 @@ def compute_all_bonuses(
     """Compute all bonus components."""
     try:
         _bonus_scale = engine._get_structural_bonus_scale().get("scale_factor", 1.0)
-    except Exception:
+    except (AttributeError, KeyError, TypeError):
         _bonus_scale = 1.0
     loop_bonus, mem_bonus, div_bonus = compute_structural_bonuses(
         engine, status, instr_count, program, _bonus_scale, opcode_cat_array
@@ -393,14 +385,10 @@ def compute_all_bonuses(
     from tasks_rv32i import LEVELS
 
     bonus_threshold = (
-        cached[1]
-        if cached and cached[0] == lvl
-        else max(0.85, 0.95 - 0.10 * (lvl / max(1, len(LEVELS) - 1)))
+        cached[1] if cached and cached[0] == lvl else max(0.85, 0.95 - 0.10 * (lvl / max(1, len(LEVELS) - 1)))
     )
     graduated_bonus = (
-        50.0 * (reg_match - bonus_threshold) / (1.0 - bonus_threshold)
-        if reg_match >= bonus_threshold
-        else 0.0
+        50.0 * (reg_match - bonus_threshold) / (1.0 - bonus_threshold) if reg_match >= bonus_threshold else 0.0
     )
     secondary_results = getattr(engine, "_secondary_task_results", None)
     mt_weight = getattr(engine.config, "secondary_task_weight", 1.0)
@@ -410,9 +398,7 @@ def compute_all_bonuses(
         "mem": mem_bonus,
         "div": div_bonus,
         "level": level_bonus,
-        "efficiency": compute_efficiency_score(
-            program, instr_count, status, engine.champion_level, eff_weight
-        ),
+        "efficiency": compute_efficiency_score(program, instr_count, status, engine.champion_level, eff_weight),
         "multi_task": compute_multi_task_score(secondary_results, mt_weight),
         "time_credit": compute_time_credit(status, reg_match, instr_count),
         "smc": compute_smc_bonus(status, program, instr_count, engine.champion_level),
@@ -436,6 +422,375 @@ def apply_bonuses_and_normalize(
     return base_score
 
 
+@contextmanager
+def terminal_certified_fitness_context(engine) -> Iterator[None]:
+    """Disable archive blending that distorts terminal champion fitness comparisons.
+
+    High terminal-diversity novelty/QD weights crush compute_fitness for certified
+    champions, causing efficiency promote to pick bogus shorter programs and
+    apply_l30_certified_metrics_if_degraded to revert real breakthroughs.
+    """
+    config = getattr(engine, "config", None)
+    saved = {
+        "novelty_weight": float(getattr(config, "novelty_weight", 0.0)) if config else 0.0,
+        "novelty_weight_cache": getattr(engine, "_novelty_weight_cache", None),
+        "qd_bonus_weight": float(getattr(config, "qd_bonus_weight", 0.0)) if config else 0.0,
+        "cached_task_instance_id": getattr(engine, "_cached_task_instance_id", -1),
+        "cached_expected_regs": getattr(engine, "_cached_expected_regs", {}),
+        "cached_expected_total": getattr(engine, "_cached_expected_total", 0),
+        "task_instance": getattr(engine, "task_instance", None),
+    }
+    if config is not None:
+        engine.config.novelty_weight = 0.0
+        engine.config.qd_bonus_weight = 0.0
+    engine._novelty_weight_cache = 0.0
+    engine._cached_task_instance_id = -1
+    engine._cached_expected_regs = {}
+    engine._cached_expected_total = 0
+    try:
+        yield
+    finally:
+        if config is not None:
+            engine.config.novelty_weight = saved["novelty_weight"]
+            engine.config.qd_bonus_weight = saved["qd_bonus_weight"]
+        if saved["novelty_weight_cache"] is not None:
+            engine._novelty_weight_cache = saved["novelty_weight_cache"]
+        engine._cached_task_instance_id = saved["cached_task_instance_id"]
+        engine._cached_expected_regs = saved["cached_expected_regs"]
+        engine._cached_expected_total = saved["cached_expected_total"]
+        engine.task_instance = saved["task_instance"]
+
+
+def _terminal_length_efficiency_bonus(engine, program: list[int], base_fitness: float) -> float:
+    """Reward shorter verified programs at certified L30 — unlocks fitness growth past plateau."""
+    import os
+
+    from evolution.terminal_stagnation import terminal_certified_plateau, terminal_verify_promote_active
+
+    level = int(getattr(engine, "champion_level", 0))
+    verify = float(getattr(engine, "_champion_verify_score", 0.0))
+    fit = float(getattr(engine, "champion_fitness", 0.0))
+    if not terminal_verify_promote_active() or not terminal_certified_plateau(level, verify, fit):
+        return base_fitness
+    baseline_words = int(os.environ.get("EE_TERMINAL_REF_WORDS", "73"))
+    champ = getattr(engine, "champion", None)
+    if champ:
+        baseline_words = max(baseline_words, len(champ))
+    delta_words = baseline_words - len(program)
+    if delta_words <= 0:
+        return base_fitness
+    per_word = float(os.environ.get("EE_TERMINAL_LENGTH_BONUS", "0.05"))
+    return base_fitness + delta_words * per_word
+
+
+def selection_fitness(
+    engine,
+    program: list[int],
+    trace: dict,
+    *,
+    verify_score: float | None = None,
+) -> float:
+    """Fitness for champion promotion when verify is saturated at terminal depth."""
+    verify_fn = getattr(engine, "_verify_score_from_trace", None)
+    verify = float(verify_score if verify_score is not None else (verify_fn(trace) if callable(verify_fn) else 0.0))
+    champ_verify = float(getattr(engine, "_champion_verify_score", 0.0))
+    if max(verify, champ_verify) >= 0.99:
+        from evolution.terminal_stagnation import terminal_efficiency_at_scan_floor
+
+        # Reporting floor collapses equal-length scores at scan floor; rank on
+        # promotion_raw so in-cycle challengers can advance on capability.
+        if terminal_efficiency_at_scan_floor(len(program)):
+            raw = promotion_raw_fitness(engine, program, trace, verify_score=verify)
+            champ = getattr(engine, "champion", None)
+            if champ and len(program) < len(champ):
+                return _terminal_length_efficiency_bonus(engine, program, raw)
+            return raw
+        return reporting_champion_fitness(engine, program, trace, max(verify, champ_verify))
+    return float(compute_fitness(engine, program, trace))
+
+
+def promotion_raw_fitness(
+    engine,
+    program: list[int],
+    trace: dict,
+    *,
+    verify_score: float | None = None,
+) -> float:
+    """Uncertified task fitness for saturated-verify promotion tie-breaks."""
+    verify_fn = getattr(engine, "_verify_score_from_trace", None)
+    verify = float(verify_score if verify_score is not None else (verify_fn(trace) if callable(verify_fn) else 0.0))
+    with terminal_certified_fitness_context(engine):
+        fitness = float(compute_fitness(engine, program, trace))
+        if verify >= 0.99 - 1e-6:
+            mult = partial_verify_multiplier(engine, trace)
+            if mult < 1.0 - 1e-6:
+                fitness /= mult
+        return fitness
+
+
+_CAPABILITY_SCORE_ENGINE = None
+_PROMOTION_RAW_CACHE: dict[tuple[int, ...], float] = {}
+
+
+def _isolate_capability_score_engine(engine) -> None:
+    """Reset live-loop champion state so CPU scoring cannot inherit stale context."""
+    engine.champion = None
+    engine.champion_trace = None
+    engine.champion_fitness = 0.0
+    engine._champion_partial_verify = 1.0
+    engine._champion_qd_valid = False
+    engine._cached_champion_qd_desc = None
+    engine._cached_task_instance_id = -1
+    engine._cached_expected_regs = {}
+    engine._cached_expected_total = 0
+
+
+def decode_program_words(prog: Any) -> list[int] | None:
+    """Decode hex/int program list from jsonl or carry-forward payloads."""
+    if not isinstance(prog, list) or len(prog) < 12:
+        return None
+    words: list[int] = []
+    for item in prog:
+        if isinstance(item, str):
+            words.append(int(item, 16))
+        else:
+            words.append(int(item))
+    return words
+
+
+def compact_l30_promotion_raw_fitness(program: list[int]) -> float:
+    """CPU equal-footing promotion_raw_fitness for compact L30 capability ranking."""
+    key = tuple(int(x) for x in program)
+    cached = _PROMOTION_RAW_CACHE.get(key)
+    if cached is not None:
+        return cached
+    disk_key = None
+    try:
+        from evolution.terminal_stagnation import (
+            _vm_score_disk_get,
+            _vm_score_disk_put,
+            _vm_score_program_key,
+        )
+
+        disk_key = _vm_score_program_key(key)
+        disk_cached = _vm_score_disk_get("promotion_raw_l30", disk_key)
+        if disk_cached is not None:
+            _PROMOTION_RAW_CACHE[key] = disk_cached
+            return disk_cached
+    except ImportError:
+        pass
+    global _CAPABILITY_SCORE_ENGINE
+    if _CAPABILITY_SCORE_ENGINE is None:
+        from evolution_engine import EvolutionConfig, EvolutionEngine
+
+        _CAPABILITY_SCORE_ENGINE = EvolutionEngine(
+            EvolutionConfig(max_level=30, curriculum_level=30, use_gpu=False)
+        )
+    eng = _CAPABILITY_SCORE_ENGINE
+    from tasks_rv32i import get_task_level
+
+    _isolate_capability_score_engine(eng)
+    eng.champion_level = 30
+    eng._champion_verify_score = 1.0
+    eng.task_instance = get_task_level(30)(seed=30).generate_instance()
+    with terminal_certified_fitness_context(eng):
+        trace = eng._evaluate(list(program))
+        verify = eng._verify_score_from_trace(trace)
+        score = float(promotion_raw_fitness(eng, list(program), trace, verify_score=verify))
+    if len(_PROMOTION_RAW_CACHE) > 512:
+        _PROMOTION_RAW_CACHE.clear()
+    _PROMOTION_RAW_CACHE[key] = score
+    if disk_key is not None:
+        try:
+            from evolution.terminal_stagnation import _vm_score_disk_put
+
+            _vm_score_disk_put("promotion_raw_l30", disk_key, score)
+        except ImportError:
+            pass
+    return score
+
+
+def row_capability_score(row: dict[str, Any]) -> float:
+    """Primary capability score for jsonl/carry rows (promotion_raw, not noisy task_fitness)."""
+    stored = row.get("promotion_raw_fitness")
+    if stored is not None:
+        try:
+            stored_f = float(stored)
+            # Ignore timeout/crash sentinels and GPU-inflated promotion_raw artifacts.
+            if 0.0 < stored_f <= 330.0:
+                return stored_f
+        except (TypeError, ValueError):
+            pass
+    from evolution.terminal_stagnation import L30_COMPACT_MAX_WORDS
+
+    words = int(row.get("champion_words", row.get("words", 0)))
+    lvl = int(row.get("final_level", row.get("level", 0)))
+    verify = float(row.get("champion_verify_score", row.get("verify_score", 0.0)))
+    if lvl >= 30 and 12 <= words <= L30_COMPACT_MAX_WORDS and verify >= 0.99 - 1e-6:
+        prog = decode_program_words(row.get("champion_program"))
+        if prog is not None:
+            return compact_l30_promotion_raw_fitness(prog)
+    task = row.get("task_fitness")
+    if task is not None:
+        try:
+            return float(task)
+        except (TypeError, ValueError):
+            pass
+    return float(row.get("final_fitness", row.get("fitness", 0.0)))
+
+
+def engine_promotion_raw_fitness(engine, program: list[int], trace: dict | None = None) -> float:
+    """Promotion raw fitness for the live engine champion (GPU or CPU eval path)."""
+    if trace is None:
+        trace = engine._evaluate(program)
+    verify = float(engine._verify_score_from_trace(trace))
+    with terminal_certified_fitness_context(engine):
+        return float(promotion_raw_fitness(engine, program, trace, verify_score=verify))
+
+
+def ensure_champion_trace(engine, program: list[int] | None = None) -> dict:
+    """Return an eval trace for champion metrics; re-evaluate if trace is missing or stale."""
+    prog = list(program if program is not None else engine.champion or [])
+    if not prog:
+        raise ValueError("ensure_champion_trace: no champion program")
+    trace = getattr(engine, "champion_trace", None)
+    champ = getattr(engine, "champion", None)
+    if (
+        trace is not None
+        and champ is not None
+        and tuple(int(x) for x in prog) == tuple(int(x) for x in champ)
+    ):
+        return trace
+    trace = engine._evaluate(prog)
+    if champ is not None and tuple(int(x) for x in prog) == tuple(int(x) for x in champ):
+        engine.champion_trace = trace
+    return trace
+
+
+def align_scan_floor_persisted_metrics(
+    engine: Any,
+    metrics: dict[str, Any],
+) -> None:
+    """Persist selection-scale fitness at scan floor (matches promotion_raw)."""
+    if not metrics.get("champion_verified"):
+        return
+    try:
+        from evolution.terminal_stagnation import terminal_efficiency_at_scan_floor
+    except ImportError:
+        return
+    words = int(metrics.get("champion_words", 0))
+    if not terminal_efficiency_at_scan_floor(words):
+        return
+    prom = metrics.get("promotion_raw_fitness")
+    if prom is None or float(prom) <= 0.0:
+        champ = getattr(engine, "champion", None) if engine is not None else None
+        if champ is None:
+            return
+        prom = compact_l30_promotion_raw_fitness(list(champ))
+    fit = float(prom)
+    metrics["final_fitness"] = fit
+    metrics["verified_fitness"] = fit
+    if engine is not None:
+        engine.champion_fitness = fit
+
+
+def end_of_cycle_champion_fitness(
+    engine,
+    program: list[int],
+    trace: dict,
+    champion_verify: float,
+) -> float:
+    """Metrics/champion_fitness at cycle end — prom_raw at scan floor, reporting elsewhere."""
+    from evolution.terminal_stagnation import (
+        terminal_efficiency_at_scan_floor,
+        terminal_verify_promote_active,
+    )
+
+    if (
+        terminal_verify_promote_active()
+        and terminal_efficiency_at_scan_floor(len(program))
+        and champion_verify >= 0.99 - 1e-6
+    ):
+        return float(selection_fitness(engine, program, trace, verify_score=champion_verify))
+    return float(reporting_champion_fitness(engine, program, trace, champion_verify))
+
+
+def certified_reporting_floor(engine) -> float:
+    """Best trusted fitness for saturated-verify reporting (survives noisy re-eval)."""
+    candidates = [
+        float(getattr(engine, "champion_fitness", 0.0)),
+        float(getattr(engine, "_terminal_promoted_fitness", 0.0)),
+        float(getattr(engine, "_certified_fitness_floor", 0.0)),
+    ]
+    return max(candidates)
+
+
+def reporting_champion_fitness(
+    engine,
+    program: list[int],
+    trace: dict,
+    champion_verify: float,
+) -> float:
+    """Stable end-of-cycle fitness for metrics/EPI when champion fully verifies."""
+    fitness = float(compute_fitness(engine, program, trace))
+    if champion_verify < 1.0 - 1e-6:
+        return fitness
+    mult = partial_verify_multiplier(engine, trace)
+    if mult < 1.0 - 1e-6:
+        fitness /= mult
+    if fitness < 200.0:
+        from tasks_rv32i import get_task_level
+
+        level = int(getattr(engine, "champion_level", 0))
+        level_cls = get_task_level(level)
+        saved_instance = engine.task_instance
+        try:
+            engine.task_instance = level_cls(seed=level).generate_instance()
+            canon_trace = engine._evaluate(program)
+            fitness = float(compute_fitness(engine, program, canon_trace))
+            mult = partial_verify_multiplier(engine, canon_trace)
+            if mult < 1.0 - 1e-6:
+                fitness /= mult
+        finally:
+            engine.task_instance = saved_instance
+    bonused = _terminal_length_efficiency_bonus(engine, program, fitness)
+    floor = certified_reporting_floor(engine)
+    if floor < 200.0:
+        return bonused
+    champ = getattr(engine, "champion", None)
+    if (
+        champ is not None
+        and len(program) == len(champ)
+        and tuple(int(x) for x in program) == tuple(int(x) for x in champ)
+    ):
+        # Same program re-reported end-of-cycle: floor already length-adjusted.
+        return max(bonused, floor)
+    floored = _terminal_length_efficiency_bonus(engine, program, floor)
+    return max(bonused, floored)
+
+
+def partial_verify_multiplier(engine, trace: dict) -> float:
+    """Scale fitness by the program's own verify score (not the champion's stale partial)."""
+    verify_fn = getattr(engine, "_verify_score_from_trace", None)
+    if callable(verify_fn):
+        partial = float(verify_fn(trace))
+    else:
+        partial = float(getattr(engine, "_champion_partial_verify", 1.0))
+    partial = max(0.3, partial)
+    level = int(getattr(engine, "champion_level", 0))
+    if level >= 17:
+        from evolution.progress_controller import ProgressController
+
+        certify = ProgressController.certify_verify_threshold(level)
+        if level >= int(__import__("os").environ.get("EE_MAX_LEVEL", "30")):
+            from evolution.curriculum_advance import depth_carry_verify_floor
+
+            certify = depth_carry_verify_floor(level)
+        if partial < certify and certify > 0:
+            partial = max(0.15, partial / certify)
+    return partial
+
+
 def finalize_with_blending(
     engine,
     base_score: float,
@@ -451,11 +806,28 @@ def finalize_with_blending(
             _prog_qd_desc = _qd_fn(program, trace)
         except (TypeError, ValueError, RuntimeError):
             pass
-    fitness = apply_novelty_qd_blending(
-        engine, fitness, program, trace, base_score, _qd_fn, _prog_qd_desc
-    )
-    fitness *= max(0.3, getattr(engine, "_champion_partial_verify", 1.0))
+    fitness = apply_novelty_qd_blending(engine, fitness, program, trace, base_score, _qd_fn, _prog_qd_desc)
+    fitness *= partial_verify_multiplier(engine, trace)
     return fitness
+
+
+def challenger_rank_from_trace(engine, program: list[int], trace: dict, fitness: float) -> float:
+    """Composite rank score for challenger selection at L12+."""
+    from evolution.register_repair import champion_rank_score, score_target_register
+
+    level = int(getattr(engine, "champion_level", 0))
+    if level < 12:
+        return fitness
+    expected_regs, expected_total, _status, final_regs, _, _ = extract_trace_info(engine, trace)
+    if expected_total <= 0:
+        return fitness
+    tr_score = score_target_register(level, expected_regs, final_regs)
+    verify_fn = getattr(engine, "_verify_score_from_trace", None)
+    if callable(verify_fn):
+        verify = float(verify_fn(trace))
+    else:
+        verify = float(getattr(engine, "_champion_verify_score", 0.0))
+    return champion_rank_score(level, fitness, tr_score, verify)
 
 
 def compute_fitness(
@@ -483,12 +855,16 @@ def compute_fitness(
     if status == "timeout" or instr_count >= budget:
         engine._raw_task_score = 0.0
         return -25.0
-    reg_match = score_register_match(expected_regs, expected_total, final_regs)
+    level = int(getattr(engine, "champion_level", 0))
+    if level >= 12:
+        from evolution.register_repair import weighted_register_match
+
+        reg_match = weighted_register_match(level, expected_regs, expected_total, final_regs)
+    else:
+        reg_match = score_register_match(expected_regs, expected_total, final_regs)
     base = compute_base_score(reg_match, instr_count, status, budget)
     opcode_cat_array = _get_opcode_cat_array()
-    bonuses = compute_all_bonuses(
-        engine, status, instr_count, program, reg_match, base, opcode_cat_array
-    )
+    bonuses = compute_all_bonuses(engine, status, instr_count, program, reg_match, base, opcode_cat_array)
     base = apply_bonuses_and_normalize(engine, base, bonuses)
     if raw_only:
         return base
@@ -500,16 +876,12 @@ def compute_fitness(
 # ------------------------------------------------------------------
 
 
-def batch_classify_programs(
-    traces: list, n: int, budget: int
-):
+def batch_classify_programs(traces: list, n: int, budget: int):
     """Classify programs by status (crash/timeout/ok) for batch fitness."""
     import numpy as np
 
     statuses = [t.get("status", "") for t in traces]
-    instr_counts = np.array(
-        [t.get("instructions_count", 0) for t in traces], dtype=np.int64
-    )
+    instr_counts = np.array([t.get("instructions_count", 0) for t in traces], dtype=np.int64)
     trap_causes = [t.get("trap_cause", "") for t in traces]
     crash_mask = np.zeros(n, dtype=bool)
     illegal_mask = np.zeros(n, dtype=bool)
@@ -610,7 +982,6 @@ def batch_compute_structural_bonuses(
     """Vectorized structural bonuses (loop, mem, div, smc, graduated, level)."""
     import numpy as np
 
-
     lvl = engine.champion_level
     base = np.zeros(n_ok, dtype=np.float64)
     if lvl >= 5:
@@ -703,18 +1074,14 @@ def batch_compute_base(
     """Compute base fitness scores for batch."""
     import numpy as np
 
-    ok_programs = [programs[i] for i in ok_indices]
+    [programs[i] for i in ok_indices]
     ok_traces = [traces[i] for i in ok_indices]
-    reg_matches = batch_score_registers(
-        ok_traces, expected_keys, expected_vals, n_ok
-    )
+    reg_matches = batch_score_registers(ok_traces, expected_keys, expected_vals, n_ok)
     bloat = np.where(ok_instr > 50, (ok_instr - 50).astype(np.float64) * 0.05, 0.0)
     exec_credit = np.zeros(n_ok, dtype=np.float64)
     pos = reg_matches > 0.0
     if budget > 0:
-        exec_credit[pos] = np.minimum(
-            10.0, (ok_instr[pos].astype(np.float64) / budget) * 10.0
-        )
+        exec_credit[pos] = np.minimum(10.0, (ok_instr[pos].astype(np.float64) / budget) * 10.0)
     solved_bonus = np.where(reg_matches >= 0.99, 50.0, 0.0)
     return reg_matches * 100.0 - bloat + exec_credit + solved_bonus
 
@@ -740,9 +1107,7 @@ def batch_apply_bonuses(
     ok_programs = [programs[i] for i in ok_indices]
     max_prog_len = max((len(p) for p in ok_programs), default=0)
     base += np.minimum(
-        batch_compute_efficiency(
-            engine, ok_programs, n_ok, ok_instr, max_prog_len
-        ),
+        batch_compute_efficiency(engine, ok_programs, n_ok, ok_instr, max_prog_len),
         _max_single,
     )
     base += batch_compute_structural_bonuses(
@@ -758,9 +1123,7 @@ def batch_apply_bonuses(
     )
     lvl = engine.champion_level
     if lvl >= 12:
-        smc_mask = np.zeros(
-            (n_ok, max_prog_len if max_prog_len > 0 else 1), dtype=bool
-        )
+        smc_mask = np.zeros((n_ok, max_prog_len if max_prog_len > 0 else 1), dtype=bool)
         for j, prog in enumerate(ok_programs):
             for wi, word in enumerate(prog):
                 if (word & 0x7F) in (0x37, 0x13, 0x33, 0x23, 0x67, 0x0F):
@@ -772,17 +1135,14 @@ def batch_apply_bonuses(
             _max_single[smc_ok],
         )
     # Time credit: +20 points for fast solutions (reg_match >= 0.99, instr_count <= 5)
-    ok_traces_for_tc = [traces[i] for i in ok_indices]
-    tc_reg_matches = batch_score_registers(
-        ok_traces_for_tc,
-        list(expected_regs.keys()),
-        (
-            np.array([expected_regs[k] for k in expected_regs], dtype=np.float64)
-            if expected_regs
-            else np.array([], dtype=np.float64)
-        ),
-        n_ok,
+    ok_traces = [traces[i] for i in ok_indices]
+    exp_keys = list(expected_regs.keys())
+    exp_vals = (
+        np.array([expected_regs[k] for k in expected_regs], dtype=np.float64)
+        if expected_regs
+        else np.array([], dtype=np.float64)
     )
+    tc_reg_matches = batch_score_registers(ok_traces, exp_keys, exp_vals, n_ok)
     tc_eligible = (tc_reg_matches >= 0.99) & (ok_instr > 0)
     tc_5_or_less = tc_eligible & (ok_instr <= 5)
     tc_6_to_15 = tc_eligible & (ok_instr > 5) & (ok_instr <= 15)
@@ -790,39 +1150,18 @@ def batch_apply_bonuses(
     time_credit = np.zeros(n_ok, dtype=np.float64)
     time_credit[tc_5_or_less] = 20.0
     time_credit[tc_6_to_15] = 20.0 * (1.0 - (ok_instr[tc_6_to_15].astype(np.float64) - 5.0) / 10.0)
-    time_credit[tc_above_15] = np.maximum(
-        0.0, 10.0 - (ok_instr[tc_above_15].astype(np.float64) - 15.0) * 0.2
-    )
+    time_credit[tc_above_15] = np.maximum(0.0, 10.0 - (ok_instr[tc_above_15].astype(np.float64) - 15.0) * 0.2)
     base += np.minimum(time_credit, _max_single)
     cached = engine._bonus_threshold_cache
     bonus_threshold = (
-        cached[1]
-        if cached and cached[0] == lvl
-        else max(0.85, 0.95 - 0.10 * (lvl / max(1, len(LEVELS) - 1)))
+        cached[1] if cached and cached[0] == lvl else max(0.85, 0.95 - 0.10 * (lvl / max(1, len(LEVELS) - 1)))
     )
-    ok_traces = [traces[i] for i in ok_indices]
-    grad_reg_matches = batch_score_registers(
-        ok_traces,
-        list(expected_regs.keys()),
-        (
-            np.array(
-                [expected_regs[k] for k in expected_regs],
-                dtype=np.float64,
-            )
-            if expected_regs
-            else np.array([], dtype=np.float64)
-        ),
-        n_ok,
-    )
+    grad_reg_matches = tc_reg_matches
     above = grad_reg_matches >= bonus_threshold
     denom = 1.0 - bonus_threshold
     grad_bonus = np.where(
         above,
-        (
-            50.0 * (grad_reg_matches - bonus_threshold) / denom
-            if denom > 0
-            else 0.0
-        ),
+        (50.0 * (grad_reg_matches - bonus_threshold) / denom if denom > 0 else 0.0),
         0.0,
     )
     base += np.minimum(grad_bonus, _max_single)
@@ -843,60 +1182,54 @@ def batch_blend_novelty_qd(
     """Apply novelty/QD blending to batch fitness values."""
     ef = engine._extract_behavioral_descriptor
     qdf = engine._compute_qd_axes_fn
+    qd = engine.qd_archive
+    qd_w = float(getattr(engine.config, "qd_bonus_weight", 0.0) or 0.0)
+    illum_ds = engine._qd_coverage
+    freshness_fv = 0.5
+    if qd_w > 0.0 and qd is not None and qdf is not None:
+        try:
+            illum_ds = qd.get_illumination_diversity().get(
+                "overall_diversity_score", engine._qd_coverage
+            )
+        except (KeyError, TypeError, ValueError):
+            illum_ds = engine._qd_coverage
+        try:
+            fd = qd.get_cell_freshness(engine.current_generation)
+            freshness_fv = fd.get("avg_freshness", 0.5) if isinstance(fd, dict) else 0.5
+        except (AttributeError, TypeError):
+            freshness_fv = 0.5
     for j, idx in enumerate(ok_indices):
         fj = float(base[j])
         prog, trace = programs[idx], traces[idx]
         ms = float(len(expected_regs)) if expected_regs else 1.0
-        if nw > 0.0 and engine.novelty_archive is not None and ef is not None:
-            try:
-                d = ef(trace, prog, budget=engine.config.eval_budget)
+        if nw > 0.0 and engine.novelty_archive is not None:
+            nv = 0.0
+            if getattr(engine.novelty_archive, "size", 0):
                 try:
-                    nv = engine.novelty_archive.decayed_novelty(
-                        prog, engine.current_generation
-                    )
-                except Exception:
-                    nv = engine.novelty_archive.novelty_score(d)
-                fj = fj * (1.0 - nw) + nv * (ms / 10.0) * nw
-            except (TypeError, ValueError, RuntimeError):
-                pass
-        if (
-            engine.config.qd_bonus_weight > 0.0
-            and engine.qd_archive is not None
-            and qdf is not None
-        ):
+                    nv = engine.novelty_archive.decayed_novelty(prog, engine.current_generation)
+                except (KeyError, TypeError, ValueError):
+                    if ef is not None:
+                        try:
+                            d = ef(trace, prog, budget=engine.config.eval_budget)
+                            nv = engine.novelty_archive.novelty_score(d)
+                        except (TypeError, ValueError, RuntimeError):
+                            nv = 0.0
+            fj = fj * (1.0 - nw) + nv * (ms / 10.0) * nw
+        if qd_w > 0.0 and qd is not None and qdf is not None:
             try:
                 pd = qdf(prog, trace)
                 if pd is not None:
-                    qb = engine.qd_archive.selection_bias(pd)
-                    qw = engine.config.qd_bonus_weight
+                    qb = qd.selection_bias(pd)
+                    qw = qd_w
                     st = engine.generations_stalled
                     if st > 10:
                         qw *= min(2.5, 1.0 + 0.0375 * (st - 10))
-                    try:
-                        ds = engine.qd_archive.get_illumination_diversity().get(
-                            "overall_diversity_score", engine._qd_coverage
-                        )
-                    except Exception:
-                        ds = engine._qd_coverage
+                    ds = illum_ds
                     if ds < 0.20:
                         qw *= 1.0 + 2.5 * (0.20 - ds)
-                    try:
-                        fd = engine.qd_archive.get_cell_freshness(
-                            engine.current_generation
-                        )
-                        fv = (
-                            fd.get("avg_freshness", 0.5)
-                            if isinstance(fd, dict)
-                            else 0.5
-                        )
-                        qw *= 1.5 - fv
-                    except Exception:
-                        pass
+                    qw *= 1.5 - freshness_fv
                     fj += qb * qw
-                    if (
-                        engine.champion is not None
-                        and engine.champion_trace is not None
-                    ):
+                    if engine.champion is not None and engine.champion_trace is not None:
                         cd = (
                             engine._cached_champion_qd_desc
                             if engine._champion_qd_valid
@@ -935,12 +1268,8 @@ def batch_compute_fitness(
         return [0.0] * n, [0.0] * n
     budget = eval_budget if eval_budget is not None else engine._cached_eval_budget
     expected_regs, expected_keys, expected_vals = batch_get_expected(engine)
-    instr_counts, crash_mask, illegal_mask, timeout_mask = batch_classify_programs(
-        traces, n, budget
-    )
-    fitnesses, raw_scores = batch_apply_crash_penalties(
-        n, crash_mask, illegal_mask, timeout_mask
-    )
+    instr_counts, crash_mask, illegal_mask, timeout_mask = batch_classify_programs(traces, n, budget)
+    fitnesses, raw_scores = batch_apply_crash_penalties(n, crash_mask, illegal_mask, timeout_mask)
     ok_mask = ~crash_mask & ~timeout_mask
     ok_indices = np.where(ok_mask)[0]
     n_ok = len(ok_indices)
@@ -969,10 +1298,9 @@ def batch_compute_fitness(
     nw = engine._novelty_weight_cache
     if engine._current_diversity < 0.2 and nw > 0.0:
         nw = min(nw * (1.0 + (1.0 - engine._current_diversity / 0.2)), 0.8)
-    batch_blend_novelty_qd(
-        engine, fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw
-    )
-    fitnesses[ok_indices] *= max(0.3, getattr(engine, "_champion_partial_verify", 1.0))
+    batch_blend_novelty_qd(engine, fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw)
+    for idx in ok_indices:
+        fitnesses[idx] *= partial_verify_multiplier(engine, traces[int(idx)])
     return fitnesses.tolist(), raw_scores.tolist()
 
 
