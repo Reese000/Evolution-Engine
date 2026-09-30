@@ -19,6 +19,7 @@ import time
 
 import pytest
 
+from evolution import phase_timing as _phase_timing
 from evolution.phase_timing import (
     NAMED_PHASES,
     PHASES,
@@ -36,8 +37,13 @@ from evolution.phase_timing import (
 @pytest.fixture(autouse=True)
 def _clean_vm_counter():
     reset_vm_eval()
+    # The unknown-phase warning set is process-global (warn-once); clearing it
+    # keeps test_unknown_phase_name_warns_once order-independent under
+    # pytest-randomly (review N5).
+    _phase_timing._unknown_phases.clear()
     yield
     reset_vm_eval()
+    _phase_timing._unknown_phases.clear()
 
 
 def test_vm_counter_accumulates_seconds_and_calls():
@@ -256,14 +262,20 @@ def test_reentrant_timed_vm_eval_counts_the_outer_call_once():
     recordings and ~40ms total -- over-reported `vm_eval`, which on a real
     cycle drives `unattributed` negative.
     """
+    t_outer = time.perf_counter()
     with timed_vm_eval():
         time.sleep(0.020)
         with timed_vm_eval():
             time.sleep(0.010)
+    # Measure the outer window independently: a fixed upper bound on the
+    # recorded time would be a load-sensitive assertion (sleeps stretch on a
+    # busy host), while `seconds > outer window` is exactly what a broken
+    # guard would produce (review SF4).
+    outer = time.perf_counter() - t_outer
     seconds, calls = vm_eval_totals()
     assert calls == 1  # the guard, not the sleep, is the proof
     assert seconds >= 0.029  # the outer window covers both sleeps
-    assert seconds < 0.037  # ...and NOT outer + inner (~0.040)
+    assert seconds <= outer + 0.002  # ...counted once, not outer + inner
 
 
 def test_vm_work_outside_a_vmfarm_block_is_booked_as_vm_eval():
@@ -283,8 +295,12 @@ def test_vm_work_outside_a_vmfarm_block_is_booked_as_vm_eval():
     rec = timer.end_generation()
 
     phases = rec["phase_seconds"]
-    assert rec["vm_eval_seconds"] >= 0.020  # booked as VM
-    assert phases["mutation_propagation"] < 0.005  # not as orchestration
+    assert rec["vm_eval_seconds"] >= 0.019  # booked as VM
+    # Generous bound only -- the structural proof is the line above plus the
+    # partition identity below: if the 20ms were still booked as orchestration
+    # vm_eval would be ~0, and if it were booked twice coverage would exceed 1.
+    # A fixed-tight bound here is load-sensitive (review SF5).
+    assert phases["mutation_propagation"] < 0.05  # not as orchestration
     assert phases["unattributed"] >= -1e-9
     assert rec["coverage_ratio"] <= 1.0 + 1e-9
     # the partition still holds: nothing was double counted
@@ -311,9 +327,14 @@ def test_execute_vm_records_wall_time_at_the_source():
     elapsed = time.perf_counter() - started
 
     assert isinstance(result, dict)
+    # Deterministic proof the program really executed (20000 ADDIs, EBREAK
+    # not counted) instead of being short-circuited like a self-loop; the
+    # cycle count replaces a perf floor, which is machine-dependent (review
+    # SF5).
+    assert result.get("cycles") == 20000
     seconds, calls = vm_eval_totals()
     assert calls == 1  # the source wrapper recorded it
-    assert seconds >= 0.005  # real work, not a self-loop short-circuit
+    assert seconds > 0  # record_vm_eval only counts real time
     assert seconds <= elapsed + 0.01  # the wrapper brackets the call
 
 

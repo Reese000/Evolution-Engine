@@ -26,8 +26,11 @@ import numpy as np
 # module cannot be imported.
 try:
     from evolution.phase_timing import timed_vm_eval
-except Exception:  # pragma: no cover -- instrumentation must never block eval
+except Exception as _exc:  # pragma: no cover -- instrumentation must never block eval
     timed_vm_eval = nullcontext  # type: ignore[assignment]
+    import sys as _sys  # local import: only used on this failure path
+
+    _sys.stderr.write(f"[gpu_vm_farm] phase_timing unavailable, VM timing off: {_exc!r}\n")
 
 # Lazy CuPy import — only import when GPU is actually needed to avoid
 # grabbing ~8GB VRAM at module load time, which blocks PyTorch training.
@@ -332,6 +335,12 @@ def _execute_vm(
     ``vm_eval`` instead of the surrounding orchestration phase, and the
     re-entrancy guard keeps a call that is already inside a timed VMFarm
     batch counted exactly once.
+
+    Note the coverage boundary: the batch/CuPy implementations
+    (``_execute_vm_batch_numpy``, ``VMFactory``) are deliberately NOT
+    wrapped here -- they are only accounted because every production batch
+    entry point is timed at ``VMFarm.evaluate_batch``.  A future direct
+    caller of those would book batch VM time as orchestration again.
     """
     with timed_vm_eval():
         return _execute_vm_inner(program, init_regs, init_mem, budget)

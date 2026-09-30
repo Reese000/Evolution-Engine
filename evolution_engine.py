@@ -14,6 +14,7 @@ import json
 import math
 import os
 import random
+import sys
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -1836,6 +1837,11 @@ class EvolutionEngine:
         """Run the evolution loop for num_generations (default: config)."""
         ng = num_generations if num_generations is not None else self.config.max_generations
         start_time = time.time()
+        # EE-W5: start the run clock at run() entry so gen_phase_run_seconds
+        # spans the whole call -- it has to stay comparable with
+        # elapsed_seconds and with cycles measured before the timer wiring
+        # was extracted (review SF1 on 3a27f0c).
+        self._start_phase_timer()
         checkpoint_interval = self.config.checkpoint_interval
         auto_curriculum = self.config.auto_curriculum
         task_refresh_interval = 25
@@ -1889,7 +1895,7 @@ class EvolutionEngine:
         summary["elapsed_seconds"] = self._finalize_phase_summary(summary, start_time)
         return summary
 
-    def _start_phase_timer(self) -> Any:
+    def _start_phase_timer(self) -> PhaseTimer:
         """Create the EE-W5 phase timer, attach it and start the run clock.
 
         Split out of :meth:`run` so run() stays inside the 50-line
@@ -1904,13 +1910,15 @@ class EvolutionEngine:
     def _initialize_run_timed(self, ng: int) -> dict:
         """Run :meth:`_initialize_run` and book its wall time as ``run_init``.
 
-        Creates the phase timer as a side effect (before the generation loop
-        starts), so run() needs no timer bookkeeping of its own.
+        The timer is created by :meth:`_start_phase_timer` at run() entry, so
+        ``gen_phase_run_seconds`` spans the whole run() call; the preamble in
+        between is absorbed by the finalize residual below.
         """
-        timer = self._start_phase_timer()
+        timer = getattr(self, "_phase_timer", None)
         start = time.perf_counter()
         summary = self._initialize_run(ng)
-        timer.run_init_seconds = time.perf_counter() - start
+        if timer is not None:
+            timer.run_init_seconds = time.perf_counter() - start
         return summary
 
     def _finalize_phase_summary(self, summary: dict[str, Any], start_time: float) -> float:
@@ -1920,20 +1928,38 @@ class EvolutionEngine:
         (again for the 50-line gate).
 
         ``gen_phase_run_finalize_seconds`` is the residual
-        ``run wall - init - generations``, i.e. log close, final checkpoint
-        and summary assembly; deriving it that way needs no clock capture in
-        run() and makes init + generations + finalize partition the run wall
-        (EE-W5).
+        ``run wall - init - generations``: the pre-loop preamble (config
+        reads, lazy torch import, CUDA setup), inter-generation loop gaps,
+        log close, final checkpoint and summary assembly all land here --
+        deliberately, so the three buckets partition ``gen_phase_run_seconds``
+        exactly.  Note the step change at this commit for anyone reading the
+        finalize column of a trend (review SF2 on 3a27f0c): before it, the
+        bucket only covered "after log close to after final checkpoint".
+
+        Never raises: an exception here would escape run()'s try/except and
+        be reported as ``evolution_crash``, discarding a completed cycle
+        (the same blast radius the S3 hardening of ``PhaseTimer.summary``
+        protects against, review SF3 on 7fed59b).
         """
         timer = getattr(self, "_phase_timer", None)
         elapsed = time.time() - start_time
         if timer is None or not timer.enabled:
             return elapsed
-        generations = sum(float(r.get("generation_seconds", 0.0)) for r in timer.records)
-        wall = timer.wall()
-        timer.run_finalize_seconds = max(0.0, wall - timer.run_init_seconds - generations)
-        for key, value in timer.summary(wall).items():
-            summary[key] = value
+        try:
+            generations = 0.0
+            for record in timer.records:
+                value = record.get("generation_seconds")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    generations += float(value)
+            wall = timer.wall()
+            timer.run_finalize_seconds = max(0.0, wall - timer.run_init_seconds - generations)
+            for key, value in timer.summary(wall).items():
+                summary[key] = value
+        except Exception as exc:  # noqa: BLE001 -- never fail a completed cycle
+            try:
+                sys.stderr.write(f"[phase_timing] finalize summary degraded: {exc!r}\n")
+            except Exception:  # noqa: BLE001 -- the reporter must not raise either
+                pass
         return elapsed
 
     def _refresh_task_instance(self) -> None:

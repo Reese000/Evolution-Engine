@@ -294,6 +294,7 @@ class PhaseTimer:
             return {
                 "gen_phase_generations": len(self.records),
                 "gen_phase_seconds": 0.0,
+                "gen_phase_run_seconds": round(self.wall(), 3),
                 "gen_phase_error": repr(exc),
             }
 
