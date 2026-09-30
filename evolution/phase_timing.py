@@ -159,6 +159,10 @@ class PhaseTimer:
     def active(self) -> bool:
         return self.enabled
 
+    def wall(self) -> float:
+        """Wall seconds elapsed since this timer was created."""
+        return time.perf_counter() - self._run_start
+
     # -- measurement ---------------------------------------------------
     @contextmanager
     def phase(self, name: str) -> Iterator[None]:

@@ -1836,11 +1836,6 @@ class EvolutionEngine:
         """Run the evolution loop for num_generations (default: config)."""
         ng = num_generations if num_generations is not None else self.config.max_generations
         start_time = time.time()
-        timer = PhaseTimer(enabled=timers_enabled())
-        timer.set_cycle(int(getattr(self, "_cycle_number", 0)))
-        timer.set_log_path(default_log_path(os.path.dirname(os.path.abspath(__file__))))
-        self._phase_timer = timer
-        run_perf_start = time.perf_counter()
         checkpoint_interval = self.config.checkpoint_interval
         auto_curriculum = self.config.auto_curriculum
         task_refresh_interval = 25
@@ -1861,9 +1856,7 @@ class EvolutionEngine:
 
             except ImportError:
                 pass
-        _init_perf = time.perf_counter()
-        summary = self._initialize_run(ng)
-        timer.run_init_seconds = time.perf_counter() - _init_perf
+        summary = self._initialize_run_timed(ng)
         n_levels = len(_levels_ref)
         try:
             if hasattr(self, "_raw_task_score"):
@@ -1884,7 +1877,6 @@ class EvolutionEngine:
         finally:
             self._close_log_handle()
         # Final checkpoint after all generations complete
-        _fin_perf = time.perf_counter()
         if checkpoint_interval:
             try:
                 self._checkpoint()
@@ -1894,11 +1886,55 @@ class EvolutionEngine:
         summary["final_fitness"] = self.champion_fitness
         summary["final_level"] = self.champion_level
         summary["champion_words"] = len(self.champion) if self.champion else 0
-        summary["elapsed_seconds"] = time.time() - start_time
-        timer.run_finalize_seconds = time.perf_counter() - _fin_perf
-        for _key, _value in timer.summary(time.perf_counter() - run_perf_start).items():
-            summary[_key] = _value
+        summary["elapsed_seconds"] = self._finalize_phase_summary(summary, start_time)
         return summary
+
+    def _start_phase_timer(self) -> Any:
+        """Create the EE-W5 phase timer, attach it and start the run clock.
+
+        Split out of :meth:`run` so run() stays inside the 50-line
+        method-complexity gate (tests/quality_gate/test_wave19_quality_gates).
+        """
+        timer = PhaseTimer(enabled=timers_enabled())
+        timer.set_cycle(int(getattr(self, "_cycle_number", 0)))
+        timer.set_log_path(default_log_path(os.path.dirname(os.path.abspath(__file__))))
+        self._phase_timer = timer
+        return timer
+
+    def _initialize_run_timed(self, ng: int) -> dict:
+        """Run :meth:`_initialize_run` and book its wall time as ``run_init``.
+
+        Creates the phase timer as a side effect (before the generation loop
+        starts), so run() needs no timer bookkeeping of its own.
+        """
+        timer = self._start_phase_timer()
+        start = time.perf_counter()
+        summary = self._initialize_run(ng)
+        timer.run_init_seconds = time.perf_counter() - start
+        return summary
+
+    def _finalize_phase_summary(self, summary: dict[str, Any], start_time: float) -> float:
+        """Book the finalize phase, merge the additive ``gen_phase_*`` keys.
+
+        Returns ``elapsed_seconds`` so run() assigns it in a single statement
+        (again for the 50-line gate).
+
+        ``gen_phase_run_finalize_seconds`` is the residual
+        ``run wall - init - generations``, i.e. log close, final checkpoint
+        and summary assembly; deriving it that way needs no clock capture in
+        run() and makes init + generations + finalize partition the run wall
+        (EE-W5).
+        """
+        timer = getattr(self, "_phase_timer", None)
+        elapsed = time.time() - start_time
+        if timer is None or not timer.enabled:
+            return elapsed
+        generations = sum(float(r.get("generation_seconds", 0.0)) for r in timer.records)
+        wall = timer.wall()
+        timer.run_finalize_seconds = max(0.0, wall - timer.run_init_seconds - generations)
+        for key, value in timer.summary(wall).items():
+            summary[key] = value
+        return elapsed
 
     def _refresh_task_instance(self) -> None:
         """Generate a new task instance for the current curriculum level."""
