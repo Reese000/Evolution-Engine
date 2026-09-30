@@ -7,13 +7,10 @@ no warnings.  No actual evolution is run.
 """
 from __future__ import annotations
 
-import os
-import sys
-
 from config import EvolutionSection
 
 # Ensure project root is on the path
-from evolution_engine import EvolutionConfig, EvolutionEngine
+from evolution_engine import EvolutionEngine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TestEngineHealth

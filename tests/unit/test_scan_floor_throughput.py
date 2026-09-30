@@ -190,9 +190,7 @@ def test_locus_probe_ranks_by_prom_raw(monkeypatch):
         lambda prog: prom_map.get(tuple(prog), 325.0),
     )
 
-    out = terminal_growth_material_locus_probe_variants(
-        champ, max_evals=8, start_offset=0
-    )
+    out = terminal_growth_material_locus_probe_variants(champ, max_evals=8, start_offset=0)
     assert out
     assert float(prom_map[tuple(out[0])]) >= float(prom_map[tuple(out[1])])
 
@@ -217,17 +215,12 @@ def test_locus_probe_uses_projected_material_body_diffs(monkeypatch):
         lambda _c: type("_G", (), {"qualifies": lambda self, v: True})(),
     )
 
-    out = terminal_growth_material_locus_probe_variants(
-        champ, max_evals=4, start_offset=0
-    )
+    out = terminal_growth_material_locus_probe_variants(champ, max_evals=4, start_offset=0)
     assert projected in out
 
 
 def test_locus_probe_triple_site_combos(monkeypatch):
-    from evolution.terminal_stagnation import (
-        clear_locus_probe_cache,
-        terminal_growth_material_locus_probe_variants,
-    )
+    from evolution.terminal_stagnation import clear_locus_probe_cache, terminal_growth_material_locus_probe_variants
 
     clear_locus_probe_cache()
     champ = [10, 20, 30, 40, 50, 0x00100073]
@@ -253,9 +246,7 @@ def test_locus_probe_triple_site_combos(monkeypatch):
     monkeypatch.setenv("EE_SCAN_FLOOR_GROWTH_LOCUS_PAIR_BUDGET", "0")
     monkeypatch.setenv("EE_SCAN_FLOOR_GROWTH_LOCUS_TRIPLE_BUDGET", "4")
 
-    out = terminal_growth_material_locus_probe_variants(
-        champ, max_evals=12, start_offset=0
-    )
+    out = terminal_growth_material_locus_probe_variants(champ, max_evals=12, start_offset=0)
     assert [10, 88, 77, 99, 50, 0x00100073] in out
 
 
@@ -274,17 +265,12 @@ def test_growth_material_locus_probe_grafts_diff_site(monkeypatch):
         lambda _c: type("_G", (), {"qualifies": lambda self, v: True})(),
     )
 
-    out = terminal_growth_material_locus_probe_variants(
-        champ, max_evals=4, start_offset=0
-    )
+    out = terminal_growth_material_locus_probe_variants(champ, max_evals=4, start_offset=0)
     assert [10, 20, 99, 40, 0x00100073] in out
 
 
 def test_locus_probe_cache_amortizes_within_cycle(monkeypatch):
-    from evolution.terminal_stagnation import (
-        clear_locus_probe_cache,
-        terminal_growth_material_locus_probe_variants,
-    )
+    from evolution.terminal_stagnation import clear_locus_probe_cache, terminal_growth_material_locus_probe_variants
 
     clear_locus_probe_cache()
     champ = [10, 20, 30, 40, 0x00100073]
@@ -304,12 +290,8 @@ def test_locus_probe_cache_amortizes_within_cycle(monkeypatch):
         lambda _c: type("_G", (), {"qualifies": lambda self, v: True})(),
     )
 
-    terminal_growth_material_locus_probe_variants(
-        champ, max_evals=4, start_offset=0
-    )
-    terminal_growth_material_locus_probe_variants(
-        champ, max_evals=4, start_offset=0
-    )
+    terminal_growth_material_locus_probe_variants(champ, max_evals=4, start_offset=0)
+    terminal_growth_material_locus_probe_variants(champ, max_evals=4, start_offset=0)
     assert load_calls["n"] == 1
 
 
@@ -386,9 +368,7 @@ def test_eq_refine_uses_capped_prom_rank_when_stalled(monkeypatch):
 
     import random
 
-    terminal_equal_length_refine_variants(
-        champ, 30, random.Random(0), max_evals=12
-    )
+    terminal_equal_length_refine_variants(champ, 30, random.Random(0), max_evals=12)
     assert rank_calls
     assert rank_calls[0] >= 12
 
@@ -439,9 +419,7 @@ def test_mg_stall_collect_cap_env_default():
 
 
 def test_should_rescan_false_when_compression_plateau_exhausted(monkeypatch, tmp_path):
-    from evolution.terminal_stagnation import (
-        should_rescan_terminal_efficiency_compression,
-    )
+    from evolution.terminal_stagnation import should_rescan_terminal_efficiency_compression
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -469,14 +447,10 @@ def test_should_rescan_false_when_compression_plateau_exhausted(monkeypatch, tmp
     assert should_rescan_terminal_efficiency_compression(103, 40) is False
 
 
-def test_should_rescan_terminal_efficiency_compression_warm_disk_interval(
-    tmp_path, monkeypatch
-):
+def test_should_rescan_terminal_efficiency_compression_warm_disk_interval(tmp_path, monkeypatch):
     import json
 
-    from evolution.terminal_stagnation import (
-        should_rescan_terminal_efficiency_compression,
-    )
+    from evolution.terminal_stagnation import should_rescan_terminal_efficiency_compression
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -532,10 +506,7 @@ def test_should_rescan_terminal_efficiency_compression_warm_disk_interval(
 
 
 def test_fresh_compress_core_cache_survives_cycle_change(monkeypatch):
-    from evolution.mutation_helpers import (
-        _fresh_compress_core_cache,
-        collect_scan_floor_fresh_compression_variants,
-    )
+    from evolution.mutation_helpers import _fresh_compress_core_cache, collect_scan_floor_fresh_compression_variants
 
     champ = [1, 2, 3, 4, 0x00100073]
     calls = {"n": 0}
@@ -575,10 +546,7 @@ def test_fresh_compress_core_cache_survives_cycle_change(monkeypatch):
 
 
 def test_eq_refine_late_merged_disk_cache_roundtrip(tmp_path, monkeypatch):
-    from evolution.mutation_helpers import (
-        load_eq_refine_late_merged_cache,
-        save_eq_refine_late_merged_cache,
-    )
+    from evolution.mutation_helpers import load_eq_refine_late_merged_cache, save_eq_refine_late_merged_cache
 
     champ = [1, 2, 3, 4, 0x00100073]
     merged = [[1, 2, 88, 4, 0x00100073], [1, 88, 3, 4, 0x00100073]]
@@ -712,10 +680,7 @@ def test_mg_stall_collect_skipped_when_late_merged_cache_warm(monkeypatch):
 
 
 def test_eq_refine_late_merged_cache_survives_clear(monkeypatch):
-    from evolution.mutation_helpers import (
-        _eq_refine_late_merged_cache,
-        clear_scan_floor_inject_caches,
-    )
+    from evolution.mutation_helpers import _eq_refine_late_merged_cache, clear_scan_floor_inject_caches
 
     key = ((100.5, 27), True, 8, False)
     _eq_refine_late_merged_cache[key] = ((1, 2, 3, 0x00100073),)
@@ -724,9 +689,7 @@ def test_eq_refine_late_merged_cache_survives_clear(monkeypatch):
 
 
 def test_growth_prefix_tail_splice_uses_true_lcp(monkeypatch):
-    from evolution.terminal_stagnation import (
-        terminal_growth_prefix_tail_splice_probe_variants,
-    )
+    from evolution.terminal_stagnation import terminal_growth_prefix_tail_splice_probe_variants
 
     champ = [10, 20, 30, 40, 50, 0x00100073]
     parent = [10, 20, 30, 99, 88, 0x00100073]
@@ -740,9 +703,7 @@ def test_growth_prefix_tail_splice_uses_true_lcp(monkeypatch):
         lambda _p, v, _g: None,
     )
 
-    out = terminal_growth_prefix_tail_splice_probe_variants(
-        champ, [parent], max_evals=8, start_offset=0
-    )
+    out = terminal_growth_prefix_tail_splice_probe_variants(champ, [parent], max_evals=8, start_offset=0)
     assert [10, 20, 30, 99, 88, 0x00100073] in out
 
 
@@ -774,18 +735,13 @@ def test_repair_compressed_growth_probe_keeps_equal_length_gate_repair(monkeypat
         "evolution.mutation_helpers.repair_model_guided_for_gate",
         _repair,
     )
-    out = _repair_compressed_growth_probe(
-        champ, near, gate=_Gate(), prefix_count=26
-    )
+    out = _repair_compressed_growth_probe(champ, near, gate=_Gate(), prefix_count=26)
     assert out == repaired
     assert seen_prefix == [26]
 
 
 def test_score_stall_collect_early_exit_on_breakthrough(monkeypatch):
-    from evolution.mutation_helpers import (
-        clear_scan_floor_inject_caches,
-        score_stall_collect_gate_programs,
-    )
+    from evolution.mutation_helpers import clear_scan_floor_inject_caches, score_stall_collect_gate_programs
 
     clear_scan_floor_inject_caches()
     champ = [1, 2, 3, 4, 0x00100073]
@@ -840,9 +796,7 @@ def test_equal_length_from_longer_growth_prefers_projection(monkeypatch):
         lambda *_a, **_k: (compress_calls.__setitem__("n", compress_calls["n"] + 1), champ)[1],
     )
 
-    out = equal_length_from_longer_growth(
-        champ, longer, gate=_Gate(), max_drop_trials=4, cycle_no=1
-    )
+    out = equal_length_from_longer_growth(champ, longer, gate=_Gate(), max_drop_trials=4, cycle_no=1)
     assert compress_calls["n"] == 0
     assert out == projected
 
@@ -878,9 +832,7 @@ def test_compress_pool_prefers_projection_before_peephole(monkeypatch):
         lambda prog: 325.64 if tuple(prog) == tuple(projected) else 325.0,
     )
 
-    pool = compress_growth_probe_pool(
-        champ, [longer], gate=_Gate(), cycle_no=0, max_trials=1
-    )
+    pool = compress_growth_probe_pool(champ, [longer], gate=_Gate(), cycle_no=0, max_trials=1)
     assert compress_calls["n"] == 0
     assert pool[0] == projected
 
@@ -891,15 +843,11 @@ def test_select_diverse_growth_material_prefers_spread():
     champ = [1] * 30 + [0x00100073] * 10
     near = champ + [2, 3, 4, 0x00100073]
     far = champ + [9, 8, 7, 0x00100073]
-    picked = select_diverse_growth_material_programs(
-        champ, [near, far], max_select=1
-    )
+    picked = select_diverse_growth_material_programs(champ, [near, far], max_select=1)
     assert picked == [far]
 
 
-def test_flush_growth_mg_material_candidates_records_diverse_subset(
-    monkeypatch, tmp_path
-):
+def test_flush_growth_mg_material_candidates_records_diverse_subset(monkeypatch, tmp_path):
     from evolution.mutation_helpers import flush_growth_mg_material_candidates
 
     champ = [1, 2, 3, 0x00100073]
@@ -936,9 +884,7 @@ def test_flush_growth_mg_material_candidates_records_diverse_subset(
         lambda _c, **kwargs: [],
     )
 
-    n = flush_growth_mg_material_candidates(
-        champ, [a, a, b], cycle=7, record_cap=2
-    )
+    n = flush_growth_mg_material_candidates(champ, [a, a, b], cycle=7, record_cap=2)
     assert n == 2
     assert len(recorded) == 2
     assert recorded[0] != recorded[1]
@@ -999,9 +945,7 @@ def test_resolve_growth_mg_completion_tries_lcp_deltas_on_projection(monkeypatch
         lambda _c, _v, gate=None: True,
     )
 
-    out, attempted = resolve_growth_mg_completion(
-        champ, longer, gate=_Gate(), prefix_count=26, allow_projection=True
-    )
+    out, attempted = resolve_growth_mg_completion(champ, longer, gate=_Gate(), prefix_count=26, allow_projection=True)
     assert attempted is True
     assert out == projected
     assert 27 in calls
@@ -1033,9 +977,7 @@ def test_resolve_growth_mg_completion_uses_projection_on_compress_tie(monkeypatc
         lambda _c, _v, gate=None: True,
     )
 
-    out, attempted = resolve_growth_mg_completion(
-        champ, longer, gate=_Gate(), prefix_count=26, allow_projection=True
-    )
+    out, attempted = resolve_growth_mg_completion(champ, longer, gate=_Gate(), prefix_count=26, allow_projection=True)
     assert attempted is True
     assert out == projected
 
@@ -1064,9 +1006,7 @@ def test_resolve_growth_mg_completion_skips_projection_when_disallowed(monkeypat
         lambda _c, _v, gate=None: True,
     )
 
-    out, attempted = resolve_growth_mg_completion(
-        champ, longer, gate=_Gate(), prefix_count=26, allow_projection=False
-    )
+    out, attempted = resolve_growth_mg_completion(champ, longer, gate=_Gate(), prefix_count=26, allow_projection=False)
     assert attempted is False
     assert proj_calls["n"] == 0
     assert out == longer
@@ -1082,12 +1022,7 @@ def test_growth_mg_equal_length_projection_rejects_gate_fail():
         def qualifies(self, _variant):
             return False
 
-    assert (
-        growth_mg_equal_length_projection(
-            champ, grown, prefix_count=26, gate=_Gate()
-        )
-        is None
-    )
+    assert growth_mg_equal_length_projection(champ, grown, prefix_count=26, gate=_Gate()) is None
 
 
 def test_growth_mg_equal_length_projection_locks_prefix():
@@ -1103,9 +1038,7 @@ def test_growth_mg_equal_length_projection_locks_prefix():
         def qualifies(self, variant):
             return tuple(variant) == tuple(expected)
 
-    out = growth_mg_equal_length_projection(
-        champ, grown, prefix_count=26, gate=_Gate()
-    )
+    out = growth_mg_equal_length_projection(champ, grown, prefix_count=26, gate=_Gate())
     assert out == expected
 
 
@@ -1115,12 +1048,8 @@ def test_expand_growth_anchor_prefix_counts_rotates_lcp_deltas():
     champ = [10] * 26 + [20, 30] + [0x00100073] * 12
     anchor = [10] * 26 + [99, 88] + [0x00100073] * 16
     assert len(champ) == 40
-    out0 = expand_growth_anchor_prefix_counts_stalled(
-        champ, anchor, cycle_offset=0, max_counts=3
-    )
-    out1 = expand_growth_anchor_prefix_counts_stalled(
-        champ, anchor, cycle_offset=1, max_counts=3
-    )
+    out0 = expand_growth_anchor_prefix_counts_stalled(champ, anchor, cycle_offset=0, max_counts=3)
+    out1 = expand_growth_anchor_prefix_counts_stalled(champ, anchor, cycle_offset=1, max_counts=3)
     assert out0 == [24, 25, 26]
     assert out1 == [25, 26, 27]
     assert all(1 <= pc < len(champ) for pc in out0)
@@ -1201,27 +1130,17 @@ def test_eq_refine_inject_merges_locus_grafts(monkeypatch):
 def test_scan_floor_growth_mg_max_words_caps_between_inject_gens():
     from evolution.mutation_helpers import scan_floor_growth_mg_max_words
 
-    assert scan_floor_growth_mg_max_words(
-        40, generation=10, inject_generation=49, stalled=True
-    ) == 48
-    assert scan_floor_growth_mg_max_words(
-        40, generation=49, inject_generation=49, stalled=True
-    ) == 52
-    assert scan_floor_growth_mg_max_words(
-        40, generation=10, inject_generation=49, stalled=False
-    ) == 72
+    assert scan_floor_growth_mg_max_words(40, generation=10, inject_generation=49, stalled=True) == 48
+    assert scan_floor_growth_mg_max_words(40, generation=49, inject_generation=49, stalled=True) == 52
+    assert scan_floor_growth_mg_max_words(40, generation=10, inject_generation=49, stalled=False) == 72
 
 
 def test_scan_floor_growth_mg_max_words_scales_with_shorter_champion():
     from evolution.mutation_helpers import scan_floor_growth_mg_max_words
 
     # 30w floor: relative overlength budget must beat the legacy 48/52 absolutes.
-    assert scan_floor_growth_mg_max_words(
-        30, generation=10, inject_generation=49, stalled=True
-    ) == 42
-    assert scan_floor_growth_mg_max_words(
-        30, generation=49, inject_generation=49, stalled=True
-    ) == 44
+    assert scan_floor_growth_mg_max_words(30, generation=10, inject_generation=49, stalled=True) == 42
+    assert scan_floor_growth_mg_max_words(30, generation=49, inject_generation=49, stalled=True) == 44
 
 
 def test_eq_refine_warm_inject_skips_non_late_generations(monkeypatch):
@@ -1310,10 +1229,7 @@ def test_eq_refine_inject_skips_material_probe_off_late_gen(monkeypatch):
 
 
 def test_eq_refine_late_inject_reuses_merged_pool_within_cycle(monkeypatch):
-    from evolution.mutation_helpers import (
-        clear_scan_floor_inject_caches,
-        inject_scan_floor_eq_refine_seed_challengers,
-    )
+    from evolution.mutation_helpers import clear_scan_floor_inject_caches, inject_scan_floor_eq_refine_seed_challengers
 
     clear_scan_floor_inject_caches()
     champ = [10, 20, 30, 40, 0x00100073]
@@ -1511,10 +1427,7 @@ def test_repair_model_guided_deep_uses_eq_refine_seeds(monkeypatch):
 
 
 def test_growth_crossover_pool_cache_survives_cycle_clear(monkeypatch):
-    from evolution.mutation_helpers import (
-        build_scan_floor_growth_crossover_pool,
-        clear_scan_floor_inject_caches,
-    )
+    from evolution.mutation_helpers import build_scan_floor_growth_crossover_pool, clear_scan_floor_inject_caches
 
     champ = [10, 20, 30, 40, 0x00100073]
     fill = [10, 99, 30, 40, 0x00100073]
@@ -1548,16 +1461,12 @@ def test_growth_crossover_pool_cache_survives_cycle_clear(monkeypatch):
 
     clear_scan_floor_inject_caches()
     rng = __import__("random").Random(0)
-    first = build_scan_floor_growth_crossover_pool(
-        champ, [fill], rng, cycle_no=10, max_attempts=4
-    )
+    first = build_scan_floor_growth_crossover_pool(champ, [fill], rng, cycle_no=10, max_attempts=4)
     assert first == [hybrid]
     built = calls["n"]
     assert built > 0
     clear_scan_floor_inject_caches()
-    second = build_scan_floor_growth_crossover_pool(
-        champ, [fill], rng, cycle_no=11, max_attempts=4
-    )
+    second = build_scan_floor_growth_crossover_pool(champ, [fill], rng, cycle_no=11, max_attempts=4)
     assert second == [hybrid]
     assert calls["n"] == built
 
@@ -1575,10 +1484,7 @@ def test_prime_scan_floor_growth_pool_cache_retains_plateau(tmp_path, monkeypatc
 
 
 def test_growth_pool_disk_cache_roundtrip(tmp_path, monkeypatch):
-    from evolution.mutation_helpers import (
-        load_scan_floor_growth_pool_cache,
-        save_scan_floor_growth_pool_cache,
-    )
+    from evolution.mutation_helpers import load_scan_floor_growth_pool_cache, save_scan_floor_growth_pool_cache
 
     champ = [0x10, 0x20, 0x30, 0x40, 0x00100073]
     pool = [[0x11, 0x20, 0x30, 0x40, 0x00100073], [0x10, 0x21, 0x30, 0x40, 0x00100073]]
@@ -1604,10 +1510,7 @@ def test_growth_pool_disk_cache_roundtrip(tmp_path, monkeypatch):
 
 
 def test_eq_refine_late_inject_skips_locus_when_warm_disk(monkeypatch):
-    from evolution.mutation_helpers import (
-        clear_scan_floor_inject_caches,
-        inject_scan_floor_eq_refine_seed_challengers,
-    )
+    from evolution.mutation_helpers import clear_scan_floor_inject_caches, inject_scan_floor_eq_refine_seed_challengers
 
     clear_scan_floor_inject_caches()
     champ = [10, 20, 30, 40, 0x00100073]
@@ -1762,9 +1665,7 @@ def test_collect_growth_material_projection_seeds_prom_ranked(monkeypatch):
         lambda prog: prom.get(tuple(prog), 325.6),
     )
 
-    out = collect_growth_material_projection_seeds(
-        champ, max_seeds=2, cycle_no=3, gate=gate
-    )
+    out = collect_growth_material_projection_seeds(champ, max_seeds=2, cycle_no=3, gate=gate)
     assert len(out) == 2
     assert out[0] == proj_b
     assert out[1] == proj_a
@@ -1773,12 +1674,8 @@ def test_collect_growth_material_projection_seeds_prom_ranked(monkeypatch):
 def test_scan_floor_stalled_challenger_max_words_matches_mg_cap():
     from evolution.mutation_helpers import scan_floor_stalled_challenger_max_words
 
-    assert scan_floor_stalled_challenger_max_words(
-        40, generation=0, mg_inject_generation=49
-    ) == 48
-    assert scan_floor_stalled_challenger_max_words(
-        40, generation=49, mg_inject_generation=49
-    ) == 52
+    assert scan_floor_stalled_challenger_max_words(40, generation=0, mg_inject_generation=49) == 48
+    assert scan_floor_stalled_challenger_max_words(40, generation=49, mg_inject_generation=49) == 52
 
 
 def test_filter_scan_floor_growth_programs_by_max_words():
@@ -1821,17 +1718,9 @@ def test_select_diverse_l10_lift_inject_programs_prefers_near_target(monkeypatch
     near_prog = champ + [9, 10]
     monkeypatch.setattr(
         "evolution.mutation_helpers._curriculum_l10_cached",
-        lambda p: (
-            1.0
-            if len(p) == len(long_prog)
-            else 0.95
-            if len(p) > len(champ)
-            else 0.8
-        ),
+        lambda p: (1.0 if len(p) == len(long_prog) else 0.95 if len(p) > len(champ) else 0.8),
     )
-    out = select_diverse_l10_lift_inject_programs(
-        champ, [long_prog, near_prog], n_take=2, cycle_no=0
-    )
+    out = select_diverse_l10_lift_inject_programs(champ, [long_prog, near_prog], n_take=2, cycle_no=0)
     assert len(out) == 2
     assert out[0] == long_prog
     assert out[1] == near_prog
@@ -1847,13 +1736,9 @@ def test_select_growth_inject_slot_variants_seeds_l10_lift_when_weak(monkeypatch
     monkeypatch.setenv("EE_SCAN_FLOOR_GROWTH_LONG_INJECT_CAP", "2")
     monkeypatch.setattr(
         "evolution.terminal_stagnation.curriculum_verify_mean",
-        lambda prog, level: 1.0
-        if level == 10 and len(prog) > len(champ)
-        else 0.8,
+        lambda prog, level: 1.0 if level == 10 and len(prog) > len(champ) else 0.8,
     )
-    out = select_growth_inject_slot_variants(
-        champ, pool, n_slots=4, cycle_no=0, stalled=True, max_long_words=20
-    )
+    out = select_growth_inject_slot_variants(champ, pool, n_slots=4, cycle_no=0, stalled=True, max_long_words=20)
     assert any(len(p) > len(champ) for p in out)
     assert out[0] == l10_lift
 
@@ -1869,9 +1754,7 @@ def test_select_growth_inject_slot_variants_caps_long_when_stalled(monkeypatch):
     pool = [eq_a, eq_b, long_a, long_b]
     monkeypatch.setenv("EE_SCAN_FLOOR_GROWTH_LONG_INJECT_CAP", "1")
 
-    out = select_growth_inject_slot_variants(
-        champ, pool, n_slots=5, cycle_no=0, stalled=True, max_long_words=6
-    )
+    out = select_growth_inject_slot_variants(champ, pool, n_slots=5, cycle_no=0, stalled=True, max_long_words=6)
     assert len(out) == 5
     assert sum(len(p) > len(champ) for p in out) <= 1
     assert all(len(p) == len(champ) for p in out[:2])
@@ -1893,9 +1776,7 @@ def test_record_l10_lift_growth_discoveries(monkeypatch):
         lambda _c, prog, cycle=0: recorded.append(list(prog)) or True,
     )
     state: dict = {}
-    n = record_l10_lift_growth_discoveries(
-        champ, [list(champ), list(l10_prog)], cycle=7, state=state, record_cap=2
-    )
+    n = record_l10_lift_growth_discoveries(champ, [list(champ), list(l10_prog)], cycle=7, state=state, record_cap=2)
     assert n == 1
     assert recorded == [l10_prog]
     assert state == {"cycle": 7, "recorded": 1}
@@ -2027,9 +1908,7 @@ def test_swap_inject_overlength_preserves_l10_lift_long(monkeypatch):
     )
     monkeypatch.setattr(
         "evolution.terminal_stagnation.curriculum_verify_mean",
-        lambda prog, level: 1.0
-        if level == 10 and tuple(prog) == l10_lift_t
-        else 0.8,
+        lambda prog, level: 1.0 if level == 10 and tuple(prog) == l10_lift_t else 0.8,
     )
     monkeypatch.setattr(
         "evolution.mutation_helpers.scan_floor_growth_completion_qualifies",
@@ -2139,18 +2018,10 @@ def test_select_growth_mg_anchor_fill_prefers_tail_diff_on_inject():
 def test_scan_floor_late_inject_generation_growth_and_mg():
     from evolution.mutation_helpers import scan_floor_late_inject_generation
 
-    assert scan_floor_late_inject_generation(
-        48, growth_inject_generation=48, mg_inject_generation=49
-    )
-    assert scan_floor_late_inject_generation(
-        49, growth_inject_generation=48, mg_inject_generation=49
-    )
-    assert not scan_floor_late_inject_generation(
-        0, growth_inject_generation=48, mg_inject_generation=49
-    )
-    assert not scan_floor_late_inject_generation(
-        25, growth_inject_generation=48, mg_inject_generation=49
-    )
+    assert scan_floor_late_inject_generation(48, growth_inject_generation=48, mg_inject_generation=49)
+    assert scan_floor_late_inject_generation(49, growth_inject_generation=48, mg_inject_generation=49)
+    assert not scan_floor_late_inject_generation(0, growth_inject_generation=48, mg_inject_generation=49)
+    assert not scan_floor_late_inject_generation(25, growth_inject_generation=48, mg_inject_generation=49)
 
 
 def test_collect_l10_lift_pair_drop_eq_programs(monkeypatch):
@@ -2162,13 +2033,7 @@ def test_collect_l10_lift_pair_drop_eq_programs(monkeypatch):
     gate = type("_G", (), {"qualifies": lambda self, v: True})()
     monkeypatch.setattr(
         "evolution.mutation_helpers._curriculum_l10_cached",
-        lambda p: (
-            0.95
-            if tuple(p) == tuple(eq_lift)
-            else 1.0
-            if len(p) > len(champ)
-            else 0.8
-        ),
+        lambda p: (0.95 if tuple(p) == tuple(eq_lift) else 1.0 if len(p) > len(champ) else 0.8),
     )
     monkeypatch.setattr(
         "evolution.mutation_helpers.scan_floor_growth_compress_drop_qualifies",
@@ -2231,9 +2096,7 @@ def test_enrich_growth_inject_adds_pair_drop_eq_when_l10_weak(monkeypatch):
         "evolution.mutation_helpers.collect_l10_lift_pair_drop_eq_programs",
         lambda _c, _v, **k: [list(eq_lift)],
     )
-    out = enrich_growth_inject_equal_length_pool(
-        champ, [near], gate=gate, cycle_no=0
-    )
+    out = enrich_growth_inject_equal_length_pool(champ, [near], gate=gate, cycle_no=0)
     assert eq_lift in out
     assert out.index(eq_lift) < out.index(near)
 
@@ -2255,14 +2118,10 @@ def test_enrich_growth_inject_equal_length_pool_adds_projections(monkeypatch):
     # curriculum_verify_mean lets stale cached values from earlier tests leak in.
     monkeypatch.setattr(
         "evolution.mutation_helpers._curriculum_l10_cached",
-        lambda p, level=10: 0.9
-        if level == 10 and list(p) == projected
-        else 0.8,
+        lambda p, level=10: 0.9 if level == 10 and list(p) == projected else 0.8,
     )
 
-    out = enrich_growth_inject_equal_length_pool(
-        champ, [long_prog], gate=gate, cycle_no=3
-    )
+    out = enrich_growth_inject_equal_length_pool(champ, [long_prog], gate=gate, cycle_no=3)
     assert projected in out
     assert long_prog in out
     assert out.index(projected) < out.index(long_prog)
@@ -2297,19 +2156,13 @@ def test_crossbreed_l10_prom_eq_refine_variants(monkeypatch):
     gate = type("_G", (), {"qualifies": lambda self, v: True})()
     monkeypatch.setattr(
         "evolution.mutation_helpers._curriculum_l10_cached",
-        lambda p: (
-            0.9
-            if list(p) in (high_l10, hybrid)
-            else 0.825 if list(p) == prom_seed else 0.8
-        ),
+        lambda p: (0.9 if list(p) in (high_l10, hybrid) else 0.825 if list(p) == prom_seed else 0.8),
     )
     monkeypatch.setattr(
         "evolution.fitness_helpers.compact_l30_promotion_raw_fitness",
         lambda p: 322.0 if list(p) == hybrid else 318.0 if list(p) == prom_seed else -25.0,
     )
-    out = crossbreed_l10_prom_eq_refine_variants(
-        champ, [high_l10, prom_seed], gate=gate, max_variants=4
-    )
+    out = crossbreed_l10_prom_eq_refine_variants(champ, [high_l10, prom_seed], gate=gate, max_variants=4)
     assert hybrid in out
 
 
@@ -2409,11 +2262,7 @@ def test_l10_lift_bootstrap_cache_anchor_isolation(monkeypatch):
     monkeypatch.setattr(
         "evolution.mutation_helpers._curriculum_l10_cached",
         lambda p: (
-            1.0
-            if len(p) > len(champ_a)
-            else 0.825
-            if tuple(p) == tuple(eq_a) or tuple(p) == tuple(eq_b)
-            else 0.8
+            1.0 if len(p) > len(champ_a) else 0.825 if tuple(p) == tuple(eq_a) or tuple(p) == tuple(eq_b) else 0.8
         ),
     )
     monkeypatch.setattr(
@@ -2499,10 +2348,7 @@ def test_collect_l10_lift_eq_refine_bootstrap_seeds(monkeypatch):
 
 
 def test_scan_floor_eq_inject_sort_key_prefers_prom_at_scan_floor(monkeypatch):
-    from evolution.mutation_helpers import (
-        clear_scan_floor_inject_caches,
-        scan_floor_eq_inject_sort_key,
-    )
+    from evolution.mutation_helpers import clear_scan_floor_inject_caches, scan_floor_eq_inject_sort_key
 
     clear_scan_floor_inject_caches()
     champ = [1] * 26 + [0x00100073]
@@ -2522,16 +2368,11 @@ def test_scan_floor_eq_inject_sort_key_prefers_prom_at_scan_floor(monkeypatch):
         "evolution.terminal_stagnation.curriculum_verify_mean",
         lambda prog, level: 0.9 if level == 10 and prog[20] == 88 else 0.8,
     )
-    assert scan_floor_eq_inject_sort_key(champ, high_prom) > scan_floor_eq_inject_sort_key(
-        champ, high_l10
-    )
+    assert scan_floor_eq_inject_sort_key(champ, high_prom) > scan_floor_eq_inject_sort_key(champ, high_l10)
 
 
 def test_scan_floor_eq_inject_sort_key_prefers_l10_on_prom_tie(monkeypatch):
-    from evolution.mutation_helpers import (
-        clear_scan_floor_inject_caches,
-        scan_floor_eq_inject_sort_key,
-    )
+    from evolution.mutation_helpers import clear_scan_floor_inject_caches, scan_floor_eq_inject_sort_key
 
     clear_scan_floor_inject_caches()
     champ = [1, 2, 3, 4, 0x00100073]
@@ -2545,9 +2386,7 @@ def test_scan_floor_eq_inject_sort_key_prefers_l10_on_prom_tie(monkeypatch):
         "evolution.terminal_stagnation.curriculum_verify_mean",
         lambda prog, level: 0.8 if level == 10 and prog[2] == 88 else 0.75,
     )
-    assert scan_floor_eq_inject_sort_key(champ, b) > scan_floor_eq_inject_sort_key(
-        champ, a
-    )
+    assert scan_floor_eq_inject_sort_key(champ, b) > scan_floor_eq_inject_sort_key(champ, a)
 
 
 def test_compress_mg_prefers_champion_match_drop_positions(monkeypatch):
@@ -2723,9 +2562,7 @@ def test_l10_lift_compress_keeps_higher_l10_on_live_champion():
     gate = get_scan_floor_gate(champ)
     from evolution.mutation_helpers import scan_floor_growth_completion_qualifies
 
-    out = compress_model_guided_growth_candidate(
-        champ, grown, gate=gate, max_drop_trials=64
-    )
+    out = compress_model_guided_growth_candidate(champ, grown, gate=gate, max_drop_trials=64)
     assert len(out) > len(champ)
     assert scan_floor_growth_completion_qualifies(champ, out, gate=gate)
     assert float(curriculum_verify_mean(out, 10)) >= 0.99
@@ -2809,9 +2646,7 @@ def test_refine_eq_seed_two_step_perturb_chains(monkeypatch):
         _one_step,
     )
     gate = type("_G", (), {"qualifies": lambda self, v: True})()
-    out = refine_eq_seed_two_step_perturb_variants(
-        [champ], __import__("random").Random(0), max_evals=2, gate=gate
-    )
+    out = refine_eq_seed_two_step_perturb_variants([champ], __import__("random").Random(0), max_evals=2, gate=gate)
     assert calls["n"] == 2
     assert out == [[1, 2, 99, 77, 0x00100073]]
 
@@ -2902,3 +2737,194 @@ def test_persist_l10_lift_bootstrap_intermediates(monkeypatch):
     )
     assert n == 2
     assert len(recorded) == 2
+
+
+# ---------------------------------------------------------------------------
+# EE-W4: two-stage eq donor grafts (champion + growth-material word sources)
+# ---------------------------------------------------------------------------
+
+
+class _FakeEqGate:
+    """Minimal stand-in for ScanFloorGateBaseline.qualifies()."""
+
+    def __init__(self, reject=()):
+        self.reject = {tuple(p) for p in reject}
+        self.seen: list[tuple[int, ...]] = []
+
+    def qualifies(self, prog) -> bool:
+        key = tuple(int(x) for x in prog)
+        self.seen.append(key)
+        return key not in self.reject
+
+
+def test_expand_l10_lift_eq_donor_grafts_crosses_margin_bridge(monkeypatch):
+    """A margin-dropping single edit is only useful combined with a donor word.
+
+    The champion-only graft cannot reach (1, 2, 9): reverting site 1 alone
+    drops L10 below the margin, and grafting the donor word alone drops it
+    further.  The two-stage search crosses the bridge and accepts the pair.
+    """
+    from evolution.mutation_helpers import expand_l10_lift_eq_donor_grafts
+
+    champ = [1, 2, 3]
+    base = [1, 5, 6]  # diff sites 1 and 2
+    donors = [[1, 2, 9]]  # growth-material extension carrying word 9 at site 2
+
+    l10_table = {
+        (1, 2, 3): 0.8,  # champion
+        (1, 5, 6): 0.825,  # base, already at the margin
+        (1, 2, 6): 0.80,  # bridge: below the margin on its own
+        (1, 5, 3): 0.70,  # donor word alone: far below
+        (1, 5, 9): 0.70,  # donor word alone: far below
+        (1, 2, 9): 0.825,  # bridge + donor word: back over the margin
+    }
+    prom_table = {(1, 5, 6): 100.0, (1, 2, 9): 300.0}
+
+    monkeypatch.setattr(
+        "evolution.mutation_helpers._curriculum_l10_cached",
+        lambda prog: l10_table.get(tuple(prog), 0.0),
+    )
+    monkeypatch.setattr(
+        "evolution.fitness_helpers.compact_l30_promotion_raw_fitness",
+        lambda prog: prom_table.get(tuple(prog), 0.0),
+    )
+    gate = _FakeEqGate()
+
+    out = expand_l10_lift_eq_donor_grafts(champ, base, donors=donors, gate=gate, max_variants=8)
+
+    assert [1, 2, 9] in out, "bridge + donor word must be reachable"
+    # prom-ranked: the lifted graft beats the untouched base
+    assert out[0] == [1, 2, 9]
+    # nothing below the L10 margin may escape, bridges included
+    assert [1, 2, 6] not in out
+    assert [1, 5, 3] not in out
+    assert [1, 5, 9] not in out
+    for prog in out:
+        assert l10_table[tuple(prog)] + 1e-6 >= 0.8 + 0.02
+        assert gate.qualifies(prog)
+
+
+def test_expand_l10_lift_eq_donor_grafts_respects_eq_gate(monkeypatch):
+    """An eq-gate rejection outranks nothing: the candidate must not escape."""
+    from evolution.mutation_helpers import expand_l10_lift_eq_donor_grafts
+
+    champ = [1, 2, 3]
+    base = [1, 5, 6]
+    donors = [[1, 2, 9]]
+    l10_table = {
+        (1, 2, 3): 0.8,
+        (1, 5, 6): 0.825,
+        (1, 2, 6): 0.80,
+        (1, 5, 3): 0.70,
+        (1, 5, 9): 0.70,
+        (1, 2, 9): 0.825,
+    }
+    prom_table = {(1, 5, 6): 100.0, (1, 2, 9): 300.0}
+
+    monkeypatch.setattr(
+        "evolution.mutation_helpers._curriculum_l10_cached",
+        lambda prog: l10_table.get(tuple(prog), 0.0),
+    )
+    monkeypatch.setattr(
+        "evolution.fitness_helpers.compact_l30_promotion_raw_fitness",
+        lambda prog: prom_table.get(tuple(prog), 0.0),
+    )
+    gate = _FakeEqGate(reject=[(1, 2, 9)])
+
+    out = expand_l10_lift_eq_donor_grafts(champ, base, donors=donors, gate=gate, max_variants=8)
+
+    assert [1, 2, 9] not in out
+    assert [1, 5, 6] in out
+
+
+def test_expand_l10_lift_eq_donor_grafts_rejects_length_mismatch(monkeypatch):
+    from evolution.mutation_helpers import expand_l10_lift_eq_donor_grafts
+
+    gate = _FakeEqGate()
+    assert expand_l10_lift_eq_donor_grafts([1, 2, 3], [1, 2], gate=gate) == []
+    assert expand_l10_lift_eq_donor_grafts([], [1, 2, 3], gate=gate) == []
+    assert expand_l10_lift_eq_donor_grafts([1, 2, 3], [], gate=gate) == []
+    # identical programs have no diff site to graft at
+    assert expand_l10_lift_eq_donor_grafts([1, 2, 3], [1, 2, 3], gate=gate) == []
+
+
+def test_expand_l10_lift_eq_donor_grafts_default_donors_from_growth_material(
+    monkeypatch,
+):
+    """With no explicit donors the graft pool comes from growth material."""
+    from evolution.mutation_helpers import expand_l10_lift_eq_donor_grafts
+
+    champ = [1, 2, 3]
+    base = [1, 5, 6]
+    l10_table = {
+        (1, 2, 3): 0.8,
+        (1, 5, 6): 0.825,
+        (1, 2, 6): 0.80,
+        (1, 5, 3): 0.70,
+        (1, 5, 9): 0.70,
+        (1, 2, 9): 0.825,
+    }
+    prom_table = {(1, 5, 6): 100.0, (1, 2, 9): 300.0}
+    loaded: list[list[int]] = []
+
+    def _load(anchor, *, max_programs=48):
+        loaded.append(list(anchor))
+        return [[1, 2, 9]]
+
+    monkeypatch.setattr(
+        "evolution.mutation_helpers._curriculum_l10_cached",
+        lambda prog: l10_table.get(tuple(prog), 0.0),
+    )
+    monkeypatch.setattr(
+        "evolution.fitness_helpers.compact_l30_promotion_raw_fitness",
+        lambda prog: prom_table.get(tuple(prog), 0.0),
+    )
+    monkeypatch.setattr("evolution.champion_rollback.load_growth_material_programs", _load)
+
+    out = expand_l10_lift_eq_donor_grafts(champ, base, gate=_FakeEqGate(), max_variants=8)
+
+    assert loaded and loaded[0] == champ
+    assert [1, 2, 9] in out
+
+
+def test_l10_lift_bootstrap_material_cap_defaults_enabled():
+    """EE-W4 work item 1: 29w L10-lift intermediates persist by default.
+
+    The bootstrap path used to default ``EE_L10_LIFT_BOOTSTRAP_MATERIAL_CAP``
+    to 0, which silently disabled
+    :func:`persist_l10_lift_bootstrap_intermediates` and left no 29w@0.938
+    parents on disk for compress breeding.
+    """
+    import inspect
+
+    from evolution.mutation_helpers import collect_l10_lift_eq_refine_bootstrap_seeds
+
+    source = inspect.getsource(collect_l10_lift_eq_refine_bootstrap_seeds)
+    assert 'EE_L10_LIFT_BOOTSTRAP_MATERIAL_CAP", "0"' not in source
+    assert 'EE_L10_LIFT_BOOTSTRAP_MATERIAL_CAP", "4"' in source
+
+
+def test_persist_l10_lift_bootstrap_intermediates_keeps_29w_weak_margin(
+    monkeypatch,
+):
+    """29w@0.9375 survives the weak (0.05) L10-lift margin at anchor L10 0.8."""
+    from evolution.mutation_helpers import persist_l10_lift_bootstrap_intermediates
+
+    recorded: list[list[int]] = []
+    champ = list(range(27))
+    prog_29w_good = list(range(27)) + [88, 77]  # L10 0.9375
+    prog_29w_weak = list(range(27)) + [66, 55]  # L10 0.82 (not > 0.85)
+
+    def _l10(prog):
+        if len(prog) <= len(champ):
+            return 0.8
+        return 0.9375 if prog[-1] == 77 else 0.82
+
+    monkeypatch.setattr("evolution.mutation_helpers._curriculum_l10_cached", _l10)
+    monkeypatch.setattr(
+        "evolution.champion_rollback.record_scan_floor_growth_material",
+        lambda _c, prog, **_: recorded.append(list(prog)) or True,
+    )
+    n = persist_l10_lift_bootstrap_intermediates(champ, [prog_29w_weak, prog_29w_good], cycle=7, max_record=4)
+    assert n == 1
+    assert recorded == [prog_29w_good]

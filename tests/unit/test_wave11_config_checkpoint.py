@@ -3,20 +3,17 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 import os
-import sys
 import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from checkpoint_manager import CheckpointManager, CheckpointMismatchError
+from checkpoint_manager import CheckpointManager
 
 # Ensure project root is on sys.path
-from config import Config, EvolutionSection, load_config
+from config import Config, EvolutionSection
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. TestConfigSummary
@@ -44,9 +41,7 @@ class TestConfigSummary:
             "max_consecutive_same_strategy",
             "total_config_fields",
         }
-        assert expected_keys.issubset(summary.keys()), (
-            f"Missing keys: {expected_keys - summary.keys()}"
-        )
+        assert expected_keys.issubset(summary.keys()), f"Missing keys: {expected_keys - summary.keys()}"
 
     def test_summary_includes_all_major_settings(self):
         """Summary values match the dataclass defaults."""
@@ -58,9 +53,7 @@ class TestConfigSummary:
         assert summary["mutation_rate"] == 0.3
         assert summary["novelty_weight"] == 0.3
         assert summary["qd_bonus_weight"] == 0.1
-        assert summary["total_config_fields"] == len(
-            EvolutionSection.__dataclass_fields__
-        )
+        assert summary["total_config_fields"] == len(EvolutionSection.__dataclass_fields__)
 
     def test_archives_enabled_true_when_any_archive_active(self):
         """archives_enabled is True when at least one archive is enabled."""
@@ -69,27 +62,19 @@ class TestConfigSummary:
         assert evo_default.get_config_summary()["archives_enabled"] is True
 
         # Only novelty archive
-        evo_novelty = EvolutionSection(
-            use_novelty_archive=True, use_qd_archive=False, use_strategy_archive=False
-        )
+        evo_novelty = EvolutionSection(use_novelty_archive=True, use_qd_archive=False, use_strategy_archive=False)
         assert evo_novelty.get_config_summary()["archives_enabled"] is True
 
         # Only QD archive
-        evo_qd = EvolutionSection(
-            use_novelty_archive=False, use_qd_archive=True, use_strategy_archive=False
-        )
+        evo_qd = EvolutionSection(use_novelty_archive=False, use_qd_archive=True, use_strategy_archive=False)
         assert evo_qd.get_config_summary()["archives_enabled"] is True
 
         # Only strategy archive
-        evo_strat = EvolutionSection(
-            use_novelty_archive=False, use_qd_archive=False, use_strategy_archive=True
-        )
+        evo_strat = EvolutionSection(use_novelty_archive=False, use_qd_archive=False, use_strategy_archive=True)
         assert evo_strat.get_config_summary()["archives_enabled"] is True
 
         # All disabled
-        evo_none = EvolutionSection(
-            use_novelty_archive=False, use_qd_archive=False, use_strategy_archive=False
-        )
+        evo_none = EvolutionSection(use_novelty_archive=False, use_qd_archive=False, use_strategy_archive=False)
         assert evo_none.get_config_summary()["archives_enabled"] is False
 
 
@@ -127,9 +112,7 @@ class TestConfigValidation:
 
     def test_warns_when_no_archives_enabled(self):
         """No diversity mechanisms enabled triggers a warning."""
-        evo = EvolutionSection(
-            use_novelty_archive=False, use_qd_archive=False, use_strategy_archive=False
-        )
+        evo = EvolutionSection(use_novelty_archive=False, use_qd_archive=False, use_strategy_archive=False)
         warnings = evo.validate_config()
         assert any("diversity mechanisms" in w.lower() or "no diversity" in w.lower() for w in warnings)
 
@@ -162,10 +145,11 @@ class TestConfigDefaults:
 
     def test_config_sections_exist(self):
         """Config object has all major sections."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             cfg = Config.__new__(Config)
             cfg.evolution = EvolutionSection()
             from config import AutonomousRunnerSection, MetaControllerSection, RetrainSection
+
             cfg.retrain = RetrainSection()
             cfg.meta_controller = MetaControllerSection()
             cfg.autonomous_runner = AutonomousRunnerSection()
@@ -194,13 +178,15 @@ class TestCheckpointManagerFunctions:
 
         def fake_save(data, path):
             import json as _json
+
             with open(path, "wb") as f:
                 f.write(_json.dumps({"_serialized": True}).encode())
 
         def fake_load(path, map_location=None, weights_only=None):
             import json as _json
+
             with open(path, "rb") as f:
-                raw = _json.loads(f.read())
+                _json.loads(f.read())
             return {
                 "config_name": "medium",
                 "config": {"hidden": 256},
@@ -214,9 +200,18 @@ class TestCheckpointManagerFunctions:
 
     def test_save_creates_file(self):
         """save() creates a checkpoint file on disk."""
-        with tempfile.TemporaryDirectory() as tmpdir, \
-             self._patch_torch(), \
-             patch.dict("sys.modules", {"milestone1": MagicMock(), "milestone1.training": MagicMock(), "milestone1.training.model_factory": MagicMock(MODEL_SIZE_CONFIGS={"medium": {"hidden": 256}})}):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            self._patch_torch(),
+            patch.dict(
+                "sys.modules",
+                {
+                    "milestone1": MagicMock(),
+                    "milestone1.training": MagicMock(),
+                    "milestone1.training.model_factory": MagicMock(MODEL_SIZE_CONFIGS={"medium": {"hidden": 256}}),
+                },
+            ),
+        ):
             mgr = CheckpointManager(base_dir=tmpdir)
             model = self._mock_model()
             path = mgr.save(model, config_name="medium", val_loss=0.1, cycle=5)
@@ -224,9 +219,18 @@ class TestCheckpointManagerFunctions:
 
     def test_load_returns_data(self):
         """load() returns a tuple of (checkpoint_dict, meta_dict)."""
-        with tempfile.TemporaryDirectory() as tmpdir, \
-             self._patch_torch(), \
-             patch.dict("sys.modules", {"milestone1": MagicMock(), "milestone1.training": MagicMock(), "milestone1.training.model_factory": MagicMock(MODEL_SIZE_CONFIGS={"medium": {"hidden": 256}})}):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            self._patch_torch(),
+            patch.dict(
+                "sys.modules",
+                {
+                    "milestone1": MagicMock(),
+                    "milestone1.training": MagicMock(),
+                    "milestone1.training.model_factory": MagicMock(MODEL_SIZE_CONFIGS={"medium": {"hidden": 256}}),
+                },
+            ),
+        ):
             mgr = CheckpointManager(base_dir=tmpdir)
             model = self._mock_model()
             mgr.save(model, config_name="medium", val_loss=0.1, cycle=5)
@@ -237,9 +241,18 @@ class TestCheckpointManagerFunctions:
 
     def test_save_load_roundtrip(self):
         """Data saved is the same data loaded back."""
-        with tempfile.TemporaryDirectory() as tmpdir, \
-             self._patch_torch(), \
-             patch.dict("sys.modules", {"milestone1": MagicMock(), "milestone1.training": MagicMock(), "milestone1.training.model_factory": MagicMock(MODEL_SIZE_CONFIGS={"medium": {"hidden": 256}})}):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            self._patch_torch(),
+            patch.dict(
+                "sys.modules",
+                {
+                    "milestone1": MagicMock(),
+                    "milestone1.training": MagicMock(),
+                    "milestone1.training.model_factory": MagicMock(MODEL_SIZE_CONFIGS={"medium": {"hidden": 256}}),
+                },
+            ),
+        ):
             mgr = CheckpointManager(base_dir=tmpdir)
             model = self._mock_model()
             mgr.save(model, config_name="medium", val_loss=0.042, cycle=10, archive_size=5)
@@ -249,8 +262,7 @@ class TestCheckpointManagerFunctions:
 
     def test_load_missing_file_raises(self):
         """load() raises FileNotFoundError for a missing checkpoint."""
-        with tempfile.TemporaryDirectory() as tmpdir, \
-             self._patch_torch():
+        with tempfile.TemporaryDirectory() as tmpdir, self._patch_torch():
             mgr = CheckpointManager(base_dir=tmpdir)
             with pytest.raises(FileNotFoundError):
                 mgr.load(name="nonexistent")
@@ -263,9 +275,18 @@ class TestCheckpointManagerFunctions:
 
     def test_exists_returns_true_after_save(self):
         """exists() returns True after a successful save."""
-        with tempfile.TemporaryDirectory() as tmpdir, \
-             self._patch_torch(), \
-             patch.dict("sys.modules", {"milestone1": MagicMock(), "milestone1.training": MagicMock(), "milestone1.training.model_factory": MagicMock(MODEL_SIZE_CONFIGS={"medium": {"hidden": 256}})}):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            self._patch_torch(),
+            patch.dict(
+                "sys.modules",
+                {
+                    "milestone1": MagicMock(),
+                    "milestone1.training": MagicMock(),
+                    "milestone1.training.model_factory": MagicMock(MODEL_SIZE_CONFIGS={"medium": {"hidden": 256}}),
+                },
+            ),
+        ):
             mgr = CheckpointManager(base_dir=tmpdir)
             model = self._mock_model()
             mgr.save(model, config_name="medium", val_loss=0.1, cycle=5)
@@ -283,12 +304,14 @@ class TestLoggingConfigSetup:
     def test_setup_logging_returns_no_error(self):
         """setup_logging() completes without error."""
         from logging_config import setup_logging
+
         # Should not raise
         setup_logging(log_dir=tempfile.mkdtemp())
 
     def test_get_logger_returns_logger(self):
         """get_logger returns a valid Logger instance."""
         from logging_config import get_logger
+
         logger = get_logger("TestWave11")
         assert isinstance(logger, logging.Logger)
         assert logger.name == "TestWave11"
@@ -296,6 +319,7 @@ class TestLoggingConfigSetup:
     def test_logger_has_correct_level(self):
         """Logger created by get_logger has expected effective level."""
         from logging_config import get_logger
+
         logger = get_logger("TestWave11Level")
         # By default, loggers inherit from root; setup_logging sets root to DEBUG
         # so effective level should be DEBUG or INFO depending on setup
@@ -304,15 +328,17 @@ class TestLoggingConfigSetup:
     def test_setup_logging_with_custom_log_dir(self):
         """setup_logging creates log file in specified directory."""
         from logging_config import setup_logging
+
         with tempfile.TemporaryDirectory() as tmpdir:
             setup_logging(log_dir=tmpdir)
-            log_file = os.path.join(tmpdir, "evolution.log")
+            os.path.join(tmpdir, "evolution.log")
             # File may not exist until a message is logged, but dir should exist
             assert os.path.isdir(tmpdir)
 
     def test_multiple_get_logger_calls_are_consistent(self):
         """Multiple calls to get_logger with same name return same logger."""
         from logging_config import get_logger
+
         logger1 = get_logger("TestConsistent")
         logger2 = get_logger("TestConsistent")
         assert logger1 is logger2

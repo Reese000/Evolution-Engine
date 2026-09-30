@@ -4,17 +4,14 @@
 These tests target specific uncovered lines to improve coverage.
 """
 
-import json
 import os
 import sys
-import tempfile
-from unittest.mock import MagicMock, patch
 
 # Ensure project root is importable
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from evolution_engine import EvalResult, EvolutionConfig, EvolutionEngine, VMFarm
+from evolution_engine import EvolutionConfig, EvolutionEngine
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -23,20 +20,20 @@ from evolution_engine import EvalResult, EvolutionConfig, EvolutionEngine, VMFar
 
 def _make_config(**overrides):
     """Build a minimal EvolutionConfig for testing."""
-    defaults = dict(
-        population_size=10,
-        max_generations=5,
-        use_gpu=False,
-        use_secondary_tasks=False,
-        checkpoint_interval=3,
-        auto_curriculum=False,
-        seed=42,
-        eval_budget=5000,
-        instruction_budget=10000,
-        use_novelty_archive=False,
-        use_qd_archive=False,
-        use_strategy_archive=False,
-    )
+    defaults = {
+        "population_size": 10,
+        "max_generations": 5,
+        "use_gpu": False,
+        "use_secondary_tasks": False,
+        "checkpoint_interval": 3,
+        "auto_curriculum": False,
+        "seed": 42,
+        "eval_budget": 5000,
+        "instruction_budget": 10000,
+        "use_novelty_archive": False,
+        "use_qd_archive": False,
+        "use_strategy_archive": False,
+    }
     defaults.update(overrides)
     return EvolutionConfig(**defaults)
 
@@ -119,6 +116,7 @@ class TestArchiveMethods:
         state = engine.save_archive_state()
         assert "qd" in state
         assert "novelty" in state
+        assert "strategy" in state
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +237,7 @@ class TestConfigValidation:
     def test_invalid_population_size(self):
         """Population size < 2 should raise ValueError."""
         try:
-            config = EvolutionConfig(population_size=1)
+            EvolutionConfig(population_size=1)
             assert False, "Should have raised ValueError"
         except ValueError:
             pass
@@ -247,14 +245,13 @@ class TestConfigValidation:
     def test_invalid_max_generations(self):
         """Max generations < 1 should raise ValueError."""
         try:
-            config = EvolutionConfig(max_generations=0)
+            EvolutionConfig(max_generations=0)
             assert False, "Should have raised ValueError"
         except ValueError:
             pass
 
     def test_config_validate(self):
         """EvolutionConfig should exist and be importable."""
-        from evolution_engine import EvolutionConfig
 
         config = _make_config()
         assert config is not None
@@ -298,10 +295,28 @@ class TestArchiveState:
         """Save and load archive state should be consistent."""
         config = _make_config()
         engine = EvolutionEngine(config=config)
+        engine.strategy_archive.record("RANDOM", level=0, success=True, generation=1)
         state = engine.save_archive_state()
         # Load it back
-        engine.load_archive_state(qd_data=state.get("qd"), novelty_data=state.get("novelty"))
+        engine.load_archive_state(
+            qd_data=state.get("qd"),
+            novelty_data=state.get("novelty"),
+            strategy_data=state.get("strategy"),
+        )
+        assert engine.strategy_archive.total_records() == 1
         # No crash = success
+
+    def test_strategy_archive_serialize_roundtrip(self):
+        """Strategy archive serialize/deserialize preserves records."""
+        from strategy_archive import StrategyArchive
+
+        archive = StrategyArchive()
+        archive.record("RANDOM", level=0, success=True, generation=1)
+        archive.record("HYBRID", level=0, success=False, generation=2)
+        restored = StrategyArchive.deserialize(archive.serialize())
+        assert restored.total_records() == 2
+        random_recs = [r for r in restored._records if r["strategy"] == "RANDOM"]
+        assert random_recs and random_recs[0]["success"]
 
 
 # ---------------------------------------------------------------------------

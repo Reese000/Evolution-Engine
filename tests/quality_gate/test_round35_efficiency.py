@@ -20,9 +20,7 @@ Tests:
 from __future__ import annotations
 
 import collections
-import os
 import random
-import sys
 
 # -- Path setup --
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, VMFarm, compute_qd_axes

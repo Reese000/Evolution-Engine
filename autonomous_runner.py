@@ -35,7 +35,7 @@ import math
 import os
 import signal
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from paths import M1_CHECKPOINTS, META_CONTROLLER_STATE, PROJECT_ROOT, RESULTS_FILE, ensure_project_on_path
@@ -274,7 +274,7 @@ def generate_progress_report(state: dict[str, Any]) -> dict[str, Any]:
         Dict matching the progress_report_schema.json schema.
     """
     # ── Timestamp ──────────────────────────────────────────────────
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     # ── Cycle & fitness ────────────────────────────────────────────
     cycle_number = state.get("cycle_number", 0)
@@ -397,7 +397,7 @@ class AutonomousRunner:
             "consecutive_errors": 0,
             "error_types": {},
             "last_cycle_timestamp": "",
-            "start_timestamp": datetime.now().isoformat(),
+            "start_timestamp": datetime.now(timezone.utc).isoformat(),
             "cycles_completed": 0,
             "stop_reason": None,
             "stagnation_cycles": 0,
@@ -455,7 +455,7 @@ class AutonomousRunner:
         """
         import tempfile
 
-        self._state["last_cycle_timestamp"] = datetime.now().isoformat()
+        self._state["last_cycle_timestamp"] = datetime.now(timezone.utc).isoformat()
         # Persist stagnation tracking state
         self._state["stagnation_cycles"] = self._stagnation_cycles
         self._state["self_correction_attempts"] = self._self_correction_attempts
@@ -598,19 +598,43 @@ class AutonomousRunner:
             if os.path.isfile(mc_path):
                 mc.load_state(mc_path)
             return mc
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
             log(f"MetaController init skipped: {e}")
             return None
 
+    def _run_single_cycle(self, cycle: int, meta_controller: Any) -> None:
+        """Execute one cycle inside the main loop."""
+        try:
+            self.run_cycle(cycle)
+            self._state["consecutive_errors"] = 0
+        except KeyboardInterrupt:
+            self.graceful_stop()
+            return
+        except MemoryError as e:
+            recovered = self._handle_oom(e, cycle)
+            if not recovered:
+                log(f"  OOM recovery failed after retries in cycle {cycle}")
+                self._state["error_count"] = self._state.get("error_count", 0) + 1
+                self._state["consecutive_errors"] = self._state.get("consecutive_errors", 0) + 1
+            else:
+                self._state["consecutive_errors"] = 0
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
+            self.log_error(e, cycle)
+            self.attempt_recovery()
+        self._state["current_cycle"] = cycle
+        self._state["cycles_completed"] = cycle
+        self.save_state()
+        self._health.write_health(self._state)
+        cleanup_old_cycles(cycle)
+        rotation_result = run_all_rotations()
+        if any(rotation_result.get(k, 0) > 0 for k in ["checkpoints", "recurrent", "archives", "reports"]):
+            log(f"Data rotation: {sum(rotation_result.values())} items cleaned")
+
     def run(self) -> None:
         """Main loop: cycle → retrain → cycle → ..."""
-        # Install signal handlers
         signal.signal(signal.SIGINT, self._request_shutdown)
         signal.signal(signal.SIGTERM, self._request_shutdown)
-
-        # Phase 5.2: Clean up stale state from previous runs
         cleanup_stale_state(current_cycle=self._state.get("current_cycle", 0))
-
         log("AutonomousRunner starting")
         mc_display = self._config.get("max_cycles")
         log(f"  Max cycles:      {'unlimited' if mc_display is None else mc_display}")
@@ -621,13 +645,9 @@ class AutonomousRunner:
             f"  Stagnation cap:  {self._max_stagnation_cycles} cycles "
             f"(self-correction up to {self._max_self_correction_attempts} attempts)"
         )
-
         self._health.set_status("running")
-
-        # Lazy-init MetaController for stagnation detection (if not already wired)
         self._meta_controller = self._init_meta_controller()
         meta_controller = self._meta_controller
-
         while not self.should_stop(meta_controller=meta_controller):
             cycle = self._state["current_cycle"] + 1
             mc_display = self._config.get("max_cycles")
@@ -635,38 +655,7 @@ class AutonomousRunner:
             log(f"\n{'─' * 60}")
             log(f"CYCLE {cycle}/{max_label}")
             log(f"{'─' * 60}")
-
-            try:
-                self.run_cycle(cycle)
-                self._state["consecutive_errors"] = 0
-            except KeyboardInterrupt:
-                self.graceful_stop()
-                return
-            except MemoryError as e:
-                recovered = self._handle_oom(e, cycle)
-                if not recovered:
-                    log(f"  OOM recovery failed after retries in cycle {cycle}")
-                    self._state["error_count"] = self._state.get("error_count", 0) + 1
-                    self._state["consecutive_errors"] = self._state.get("consecutive_errors", 0) + 1
-                else:
-                    self._state["consecutive_errors"] = 0
-            except Exception as e:
-                self.log_error(e, cycle)
-                self.attempt_recovery()
-
-            self._state["current_cycle"] = cycle
-            self._state["cycles_completed"] = cycle
-            self.save_state()
-            self._health.write_health(self._state)
-
-            # Disk cleanup: prune old cycle directories
-            cleanup_old_cycles(cycle)
-
-            # Data rotation: checkpoints, recurrent data, archives, reports
-            rotation_result = run_all_rotations()
-            if any(rotation_result.get(k, 0) > 0 for k in ["checkpoints", "recurrent", "archives", "reports"]):
-                log(f"Data rotation: {sum(rotation_result.values())} items cleaned")
-
+            self._run_single_cycle(cycle, meta_controller)
         self._health.set_status("stopped")
         self.save_state()
         log("AutonomousRunner stopped")
@@ -789,9 +778,9 @@ class AutonomousRunner:
                 mc_path = str(META_CONTROLLER_STATE)
                 try:
                     mc.save_state(mc_path)
-                except Exception as e:
+                except (OSError, ValueError) as e:
                     log(f"  MetaController state save failed: {e}")
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError, OSError) as e:
                 log(f"  Checkpoint gating failed: {e}")
 
         return retrain_result
@@ -864,6 +853,140 @@ class AutonomousRunner:
         except (OSError, PermissionError) as e:
             log(f"Warning: failed to generate progress report: {e}")
 
+    def _compute_disk_usage_mb(self) -> float:
+        """Compute total checkpoint disk usage in MB."""
+        disk_used_mb = 0.0
+        try:
+            for f in glob.glob(os.path.join(str(M1_CHECKPOINTS), "*.pt")):
+                disk_used_mb += os.path.getsize(f) / (1024 * 1024)
+        except (OSError, ValueError):
+            pass
+        return disk_used_mb
+
+    def _build_report_dict(
+        self, cycle: int, cycle_metrics: dict[str, Any], all_records: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Build the rich schema-v1.0 progress report dict."""
+        data = self._gather_report_data(cycle, cycle_metrics, all_records)
+        return self._format_report_dict(data, cycle, cycle_metrics)
+
+    def _gather_report_data(
+        self, cycle: int, cycle_metrics: dict[str, Any], all_records: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Gather all data needed for the report."""
+        recent_records = self._metrics.get_history(last_n=20)
+        all_cycle_times = [r.get("cycle_time_seconds") for r in all_records if r.get("cycle_time_seconds") is not None]
+        return {
+            "fitness_trend": self._metrics.get_trend("fitness", window=min(cycle, 10)),
+            "level_trend": self._metrics.get_trend("level", window=min(cycle, 10)),
+            "fitness_trajectory": [r["fitness"] for r in recent_records if "fitness" in r],
+            "level_history": [r["level"] for r in recent_records if "level" in r],
+            "val_loss_history": [r.get("val_loss") for r in recent_records],
+            "retrain_count": sum(1 for r in recent_records if r.get("retrained")),
+            "best_ever": max((r.get("fitness", 0.0) for r in all_records), default=0.0),
+            "diversity_score": cycle_metrics.get("diversity_score"),
+            "evo_secs": cycle_metrics.get("evolution_seconds"),
+            "retrain_secs": cycle_metrics.get("retrain_seconds"),
+            "total_cycle_secs": cycle_metrics.get("cycle_time_seconds"),
+            "avg_cycle_secs": round(sum(all_cycle_times) / len(all_cycle_times), 2) if all_cycle_times else None,
+            "error_types": dict(self._state.get("error_types", {})),
+            "disk_used_mb": self._compute_disk_usage_mb(),
+        }
+
+    def _report_summary(self, s: dict[str, Any]) -> dict[str, Any]:
+        """Build summary sub-dict."""
+        return {
+            "best_fitness": s["best_fitness"],
+            "best_level": s["best_level"],
+            "cycles_completed": s["cycles_completed"],
+            "total_errors": s.get("total_errors", 0),
+            "uptime_seconds": round(time.time() - self._health._start_time, 1),
+            "start_timestamp": s.get("start_timestamp", ""),
+        }
+
+    def _report_fitness(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build fitness sub-dict."""
+        return {
+            "trajectory": data["fitness_trajectory"],
+            "trend": data["fitness_trend"],
+            "best_ever": data["best_ever"],
+        }
+
+    def _report_level(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build level sub-dict."""
+        return {
+            "progression_history": data["level_history"],
+            "trend": data["level_trend"],
+        }
+
+    def _report_retrain(self, data: dict[str, Any], cycle_metrics: dict[str, Any]) -> dict[str, Any]:
+        """Build retrain sub-dict."""
+        return {
+            "val_loss_history": data["val_loss_history"],
+            "last_val_loss": cycle_metrics.get("val_loss"),
+            "retrain_count": data["retrain_count"],
+        }
+
+    def _report_diversity(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build diversity sub-dict."""
+        return {
+            "unique_individuals": None,
+            "qd_occupied": None,
+            "qd_total": None,
+            "diversity_score": data["diversity_score"],
+            "latest_diversity": data["diversity_score"],
+        }
+
+    def _report_time(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build time_breakdown sub-dict."""
+        return {
+            "evolution_seconds": data["evo_secs"],
+            "retrain_seconds": data["retrain_secs"],
+            "total_cycle_seconds": data["total_cycle_secs"],
+            "avg_cycle_seconds": data["avg_cycle_secs"],
+        }
+
+    def _report_errors(self, s: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+        """Build errors sub-dict."""
+        return {
+            "total_count": s.get("total_errors", 0),
+            "types": data["error_types"],
+            "consecutive_errors": s.get("consecutive_errors", 0),
+        }
+
+    def _report_trends(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build trends sub-dict."""
+        return {
+            "fitness": data["fitness_trend"],
+            "level": data["level_trend"],
+        }
+
+    def _report_resources(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build resource_usage sub-dict."""
+        return {
+            "checkpoint_disk_mb": round(data["disk_used_mb"], 1),
+            "population_size": self._config.get("evolution", {}).get("population_size", 50),
+        }
+
+    def _format_report_dict(self, data: dict[str, Any], cycle: int, cycle_metrics: dict[str, Any]) -> dict[str, Any]:
+        """Format the report dict from gathered data."""
+        s = self._state
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "cycle": cycle,
+            "schema_version": "1.0",
+            "summary": self._report_summary(s),
+            "fitness": self._report_fitness(data),
+            "level": self._report_level(data),
+            "retrain": self._report_retrain(data, cycle_metrics),
+            "diversity": self._report_diversity(data),
+            "time_breakdown": self._report_time(data),
+            "errors": self._report_errors(s, data),
+            "trends": self._report_trends(data),
+            "latest_cycle": cycle_metrics,
+            "resource_usage": self._report_resources(data),
+        }
+
     def _write_extended_report(
         self, cycle: int, cycle_metrics: dict[str, Any], all_records: list[dict[str, Any]]
     ) -> None:
@@ -871,92 +994,7 @@ class AutonomousRunner:
         ``progress_report.json`` (the canonical, actively-consumed report).
         """
         try:
-            fitness_trend = self._metrics.get_trend("fitness", window=min(cycle, 10))
-            level_trend = self._metrics.get_trend("level", window=min(cycle, 10))
-
-            recent_records = self._metrics.get_history(last_n=20)
-            fitness_trajectory = [r["fitness"] for r in recent_records if "fitness" in r]
-            level_history = [r["level"] for r in recent_records if "level" in r]
-
-            val_loss_history = [r.get("val_loss") for r in recent_records]
-            retrain_count = sum(1 for r in recent_records if r.get("retrained"))
-
-            best_ever = max((r.get("fitness", 0.0) for r in all_records), default=0.0)
-            diversity_score = cycle_metrics.get("diversity_score")
-
-            evo_secs = cycle_metrics.get("evolution_seconds")
-            retrain_secs = cycle_metrics.get("retrain_seconds")
-            total_cycle_secs = cycle_metrics.get("cycle_time_seconds")
-
-            all_cycle_times = [
-                r.get("cycle_time_seconds") for r in all_records if r.get("cycle_time_seconds") is not None
-            ]
-            avg_cycle_secs = round(sum(all_cycle_times) / len(all_cycle_times), 2) if all_cycle_times else None
-
-            error_types = dict(self._state.get("error_types", {}))
-
-            disk_used_mb = 0.0
-            try:
-                for f in glob.glob(os.path.join(str(M1_CHECKPOINTS), "*.pt")):
-                    disk_used_mb += os.path.getsize(f) / (1024 * 1024)
-            except (OSError, ValueError):
-                pass
-
-            report = {
-                "generated_at": datetime.now().isoformat(),
-                "cycle": cycle,
-                "schema_version": "1.0",
-                "summary": {
-                    "best_fitness": self._state["best_fitness"],
-                    "best_level": self._state["best_level"],
-                    "cycles_completed": self._state["cycles_completed"],
-                    "total_errors": self._state.get("total_errors", 0),
-                    "uptime_seconds": round(time.time() - self._health._start_time, 1),
-                    "start_timestamp": self._state.get("start_timestamp", ""),
-                },
-                "fitness": {
-                    "trajectory": fitness_trajectory,
-                    "trend": fitness_trend,
-                    "best_ever": best_ever,
-                },
-                "level": {
-                    "progression_history": level_history,
-                    "trend": level_trend,
-                },
-                "retrain": {
-                    "val_loss_history": val_loss_history,
-                    "last_val_loss": cycle_metrics.get("val_loss"),
-                    "retrain_count": retrain_count,
-                },
-                "diversity": {
-                    "unique_individuals": None,
-                    "qd_occupied": None,
-                    "qd_total": None,
-                    "diversity_score": diversity_score,
-                    "latest_diversity": diversity_score,
-                },
-                "time_breakdown": {
-                    "evolution_seconds": evo_secs,
-                    "retrain_seconds": retrain_secs,
-                    "total_cycle_seconds": total_cycle_secs,
-                    "avg_cycle_seconds": avg_cycle_secs,
-                },
-                "errors": {
-                    "total_count": self._state.get("total_errors", 0),
-                    "types": error_types,
-                    "consecutive_errors": self._state.get("consecutive_errors", 0),
-                },
-                "trends": {
-                    "fitness": fitness_trend,
-                    "level": level_trend,
-                },
-                "latest_cycle": cycle_metrics,
-                "resource_usage": {
-                    "checkpoint_disk_mb": round(disk_used_mb, 1),
-                    "population_size": self._config.get("evolution", {}).get("population_size", 50),
-                },
-            }
-
+            report = self._build_report_dict(cycle, cycle_metrics, all_records)
             report_path = os.path.join(str(PROJECT_ROOT), "progress_report.json")
             with open(report_path, "w", encoding="utf-8") as f:
                 json.dump(report, f, indent=2)
@@ -1107,7 +1145,7 @@ class AutonomousRunner:
                     if self._checkpoint:
                         log(f"  Reloaded checkpoint: {self._checkpoint}")
 
-            except Exception as e:
+            except (ValueError, OSError) as e:
                 last_error = e
                 log(f"  Retrain error on attempt {attempt + 1}/{max_attempts}: {e}")
                 if attempt >= max_attempts - 1:
@@ -1185,8 +1223,8 @@ class AutonomousRunner:
             # Full archive reset with champion preservation
             log("Strategy: Archive reset (preserve champion)")
             if engine is not None:
-                champion = getattr(engine, "champion", None)
-                champion_fitness = getattr(engine, "champion_fitness", 0)
+                getattr(engine, "champion", None)
+                getattr(engine, "champion_fitness", 0)
                 if hasattr(engine, "_qd_archive"):
                     engine._qd_archive.clear()
                 # Re-seed: the next generation will repopulate from champion mutation

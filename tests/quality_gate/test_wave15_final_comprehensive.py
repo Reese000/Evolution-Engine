@@ -15,13 +15,10 @@ Uses pytest, tempfile, random. No existing files modified.
 """
 from __future__ import annotations
 
-import json
-import math
 import os
 import random
 import sys
 import tempfile
-from typing import Dict, List, Optional
 
 import pytest
 
@@ -30,29 +27,18 @@ _PROJECT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 if _PROJECT not in sys.path:
     sys.path.insert(0, _PROJECT)
 
-from champion_archive import FOUNDATIONAL_LEVELS, ChampionArchive, ChampionEntry
-from config import (
-    AutonomousRunnerSection,
-    Config,
-    EvolutionSection,
-    MetaControllerSection,
-    RetrainSection,
-    load_config,
-)
-from meta_controller import (
-    MetaController,
-    StagnationResult,
-    TelemetrySnapshot,
-    TuningAction,
-)
+from champion_archive import ChampionArchive, ChampionEntry
+from config import AutonomousRunnerSection, Config, EvolutionSection, MetaControllerSection, RetrainSection, load_config
+from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from metrics import MetricsCollector
-from novelty import SparseArchive, extract_behavioral_descriptor
-from qd_archive import MAPElitesArchive, QDArchive
+from novelty import SparseArchive
+from qd_archive import MAPElitesArchive
 from strategy_archive import StrategyArchive
 
 # ══════════════════════════════════════════════════════════════════════
 # Helpers
 # ══════════════════════════════════════════════════════════════════════
+
 
 def _snap(
     cycle: int = 1,
@@ -97,6 +83,7 @@ def _make_program(length: int = 5, seed: int = 42) -> list[int]:
 # ══════════════════════════════════════════════════════════════════════
 # 1. TestAllNewMethodsExist — verify all 27+ new methods exist
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestAllNewMethodsExist:
     """Verify all new methods exist on their respective classes via hasattr."""
@@ -344,6 +331,7 @@ class TestAllNewMethodsExist:
 # 2. TestMetaControllerComplete — full lifecycle
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestMetaControllerComplete:
     """Full MetaController lifecycle: create → add telemetry → detect → trend → score."""
 
@@ -353,13 +341,15 @@ class TestMetaControllerComplete:
 
             # ── Phase 1: Normal improvement ───────────────────────
             for c in range(1, 6):
-                mc.update_cycle(_snap(
-                    cycle=c,
-                    fitness=1.0 + c * 0.5,
-                    level=c,
-                    val_loss=3.0 - c * 0.3,
-                    diversity=0.5,
-                ))
+                mc.update_cycle(
+                    _snap(
+                        cycle=c,
+                        fitness=1.0 + c * 0.5,
+                        level=c,
+                        val_loss=3.0 - c * 0.3,
+                        diversity=0.5,
+                    )
+                )
 
             # Should be NORMAL
             assert mc.detect_stagnation() == StagnationResult.NORMAL
@@ -368,13 +358,15 @@ class TestMetaControllerComplete:
 
             # ── Phase 2: Detect stagnation ────────────────────────
             for c in range(6, 12):
-                mc.update_cycle(_snap(
-                    cycle=c,
-                    fitness=3.5,  # flat — no improvement
-                    level=5,
-                    val_loss=2.0,
-                    diversity=0.5,
-                ))
+                mc.update_cycle(
+                    _snap(
+                        cycle=c,
+                        fitness=3.5,  # flat — no improvement
+                        level=5,
+                        val_loss=2.0,
+                        diversity=0.5,
+                    )
+                )
 
             # fitness_plateau cycles = 3, level_stall = 5
             result = mc.detect_stagnation()
@@ -473,6 +465,7 @@ class TestMetaControllerComplete:
 # 3. TestStrategyArchiveComplete — full lifecycle
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestStrategyArchiveComplete:
     """Full StrategyArchive lifecycle: create → record → recommend → analyze."""
 
@@ -567,6 +560,7 @@ class TestStrategyArchiveComplete:
 # ══════════════════════════════════════════════════════════════════════
 # 4. TestChampionArchiveComplete — full lifecycle
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestChampionArchiveComplete:
     """Full ChampionArchive lifecycle: create → add → select → diversity → prune."""
@@ -669,16 +663,24 @@ class TestChampionArchiveComplete:
 # 5. TestNoveltyComplete — SparseArchive lifecycle
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestNoveltyComplete:
     """SparseArchive: create → add → manage_capacity → decay → novelty_score."""
 
     def _make_desc(self, seed: int = 0) -> dict:
         rng = random.Random(seed)
-        return {k: rng.random() for k in [
-            "inst_diversity", "reg_pressure", "program_length",
-            "branch_fraction", "alu_fraction", "load_store_ratio",
-            "unique_regs_used",
-        ]}
+        return {
+            k: rng.random()
+            for k in [
+                "inst_diversity",
+                "reg_pressure",
+                "program_length",
+                "branch_fraction",
+                "alu_fraction",
+                "load_store_ratio",
+                "unique_regs_used",
+            ]
+        }
 
     def test_full_lifecycle(self):
         sa = SparseArchive(k_neighbors=3, novelty_threshold=0.1)
@@ -756,6 +758,7 @@ class TestNoveltyComplete:
 # ══════════════════════════════════════════════════════════════════════
 # 6. TestQDArchiveComplete — MAPElitesArchive lifecycle
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestQDArchiveComplete:
     """MAPElitesArchive: create → add → velocity → illumination → coverage."""
@@ -877,6 +880,7 @@ class TestQDArchiveComplete:
 # 7. TestMetricsComplete — MetricsCollector lifecycle
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestMetricsComplete:
     """MetricsCollector: create → record → trend → anomalies → correlate."""
 
@@ -888,12 +892,14 @@ class TestMetricsComplete:
             rng = random.Random(42)
             fitness_values = [50.0 + i * 2.5 + rng.gauss(0, 0.5) for i in range(20)]
             for i, f in enumerate(fitness_values):
-                mc.record_cycle({
-                    "cycle": i + 1,
-                    "fitness": f,
-                    "level": i % 5,
-                    "val_loss": 2.0 - i * 0.05 + rng.gauss(0, 0.1),
-                })
+                mc.record_cycle(
+                    {
+                        "cycle": i + 1,
+                        "fitness": f,
+                        "level": i % 5,
+                        "val_loss": 2.0 - i * 0.05 + rng.gauss(0, 0.1),
+                    }
+                )
 
             # ── Count records ─────────────────────────────────────
             count = mc.count_records()
@@ -969,6 +975,7 @@ class TestMetricsComplete:
 # ══════════════════════════════════════════════════════════════════════
 # 8. TestConfigComplete — Config lifecycle
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestConfigComplete:
     """Config: create → get_config_summary → validate_config → fields accessible."""

@@ -13,7 +13,6 @@ Validates:
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -166,7 +165,7 @@ class TestEvolutionEngineLogFileHandle(unittest.TestCase):
         """Logging without a log dir should just use structured logger."""
         from evolution_engine import EvolutionConfig, EvolutionEngine
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             cfg = EvolutionConfig(log_dir="", max_generations=1)
             engine = EvolutionEngine(config=cfg)
             engine.current_generation = 0
@@ -433,7 +432,7 @@ class TestQDAxesComputation(unittest.TestCase):
                 else:
                     word = rv32i_encode(name=name, rd=0, rs1=0, rs2=0, imm=0)
                 program.append(word)
-            except Exception:
+            except ValueError:
                 pass
 
         trace = {"final_regs": {i: i for i in range(1, 32)}}

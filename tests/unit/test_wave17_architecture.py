@@ -18,7 +18,6 @@ import math
 import os
 import sys
 import tempfile
-from typing import Any
 
 import pytest
 
@@ -69,6 +68,7 @@ def _tmpfile(suffix: str = ".json") -> str:
 # ═══════════════════════════════════════════════════════════════════════
 # 1. TestModuleIsolation
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class TestModuleIsolation:
     """Each enhanced module imports independently without circular deps."""
@@ -128,6 +128,7 @@ class TestModuleIsolation:
 # 2. TestClassInterfaces
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestClassInterfaces:
     """Verify consistent return-type patterns across module interfaces."""
 
@@ -135,78 +136,91 @@ class TestClassInterfaces:
 
     def test_strategy_archive_summary_returns_dict(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         result = sa.summary()
         assert isinstance(result, dict)
 
     def test_novelty_archive_summary_returns_dict(self):
         from novelty import SparseArchive
+
         sa = SparseArchive()
         result = sa.get_archive_summary()
         assert isinstance(result, dict)
 
     def test_qd_archive_summary_returns_dict(self):
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.get_archive_summary()
         assert isinstance(result, dict)
 
     def test_qd_fitness_distribution_returns_dict(self):
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.get_fitness_distribution()
         assert isinstance(result, dict)
 
     def test_qd_cell_stats_returns_dict(self):
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.get_cell_stats()
         assert isinstance(result, dict)
 
     def test_qd_improvement_velocity_returns_dict(self):
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.get_improvement_velocity()
         assert isinstance(result, dict)
 
     def test_qd_illumination_diversity_returns_dict(self):
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.get_illumination_diversity()
         assert isinstance(result, dict)
 
     def test_monitoring_alerts_config_summary_returns_dict(self):
         from monitoring_alerts import AlertManager
+
         am = AlertManager()
         result = am.get_config_summary()
         assert isinstance(result, dict)
 
     def test_meta_controller_state_summary_returns_dict(self):
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.get_state_summary()
         assert isinstance(result, dict)
 
     def test_meta_controller_effectiveness_report_returns_dict(self):
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.get_effectiveness_report()
         assert isinstance(result, dict)
 
     def test_meta_controller_recovery_confidence_returns_dict(self):
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.get_recovery_confidence()
         assert isinstance(result, dict)
 
     def test_meta_controller_cross_cycle_trends_returns_dict(self):
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.get_cross_cycle_trends()
         assert isinstance(result, dict)
 
     def test_meta_controller_suggest_parameter_reset_returns_dict(self):
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.suggest_parameter_reset()
         assert isinstance(result, dict)
@@ -215,30 +229,35 @@ class TestClassInterfaces:
 
     def test_strategy_archive_recommend_returns_str(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         result = sa.recommend_strategy(level=0)
         assert isinstance(result, str)
 
     def test_meta_controller_should_rollback_returns_bool(self):
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.should_rollback()
         assert isinstance(result, bool)
 
     def test_novelty_get_diversity_score_returns_float(self):
         from novelty import SparseArchive
+
         sa = SparseArchive()
         result = sa.get_diversity_score()
         assert isinstance(result, (int, float))
 
     def test_qd_archive_coverage_returns_float(self):
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.coverage()
         assert isinstance(result, (int, float))
 
     def test_qd_archive_size_returns_int(self):
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.size  # @property, not callable
         assert isinstance(result, int)
@@ -247,18 +266,21 @@ class TestClassInterfaces:
 
     def test_strategy_archive_total_records_returns_int(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         result = sa.total_records()
         assert isinstance(result, int)
 
     def test_novelty_trim_archive_returns_int(self):
         from novelty import SparseArchive
+
         sa = SparseArchive()
         result = sa.trim_archive(max_entries=10)
         assert isinstance(result, int)
 
     def test_novelty_manage_capacity_returns_int(self):
         from novelty import SparseArchive
+
         sa = SparseArchive()
         result = sa.manage_capacity(max_size=100)
         assert isinstance(result, int)
@@ -267,6 +289,7 @@ class TestClassInterfaces:
         tmp = _tmpfile(".jsonl")
         try:
             from metrics import MetricsCollector
+
             mc = MetricsCollector(path=tmp)
             result = mc.count_records()
             assert isinstance(result, int)
@@ -277,54 +300,63 @@ class TestClassInterfaces:
 
     def test_strategy_archive_records_by_level_returns_list(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         result = sa.records_by_level(level=0)
         assert isinstance(result, list)
 
     def test_strategy_archive_records_by_strategy_returns_list(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         result = sa.records_by_strategy(strategy="random")
         assert isinstance(result, list)
 
     def test_meta_controller_get_tuning_escalation_history_returns_list(self):
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.get_tuning_escalation_history()
         assert isinstance(result, list)
 
     def test_novelty_recent_descriptors_returns_list(self):
         from novelty import SparseArchive
+
         sa = SparseArchive()
         result = sa.recent_descriptors(n=5)
         assert isinstance(result, list)
 
     def test_novelty_recent_novelty_scores_returns_list(self):
         from novelty import SparseArchive
+
         sa = SparseArchive()
         result = sa.recent_novelty_scores(n=5)
         assert isinstance(result, list)
 
     def test_qd_archive_grid_solutions_returns_list(self):
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.grid_solutions()
         assert isinstance(result, list)
 
     def test_monitoring_alerts_get_alert_history_returns_list(self):
         from monitoring_alerts import AlertManager
+
         am = AlertManager()
         result = am.get_alert_history()
         assert isinstance(result, list)
 
     def test_config_validate_config_returns_list(self):
         from config import EvolutionSection
+
         es = EvolutionSection()
         result = es.validate_config()
         assert isinstance(result, list)
 
     def test_config_get_config_summary_returns_dict(self):
         from config import EvolutionSection
+
         es = EvolutionSection()
         result = es.get_config_summary()
         assert isinstance(result, dict)
@@ -334,6 +366,7 @@ class TestClassInterfaces:
 # 3. TestErrorHandling
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestErrorHandling:
     """Verify methods handle edge cases gracefully."""
 
@@ -342,6 +375,7 @@ class TestErrorHandling:
     def test_strategy_archive_recommend_empty(self):
         """recommend_strategy on empty archive returns a string (fallback)."""
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         result = sa.recommend_strategy(level=0)
         assert isinstance(result, str)
@@ -350,6 +384,7 @@ class TestErrorHandling:
     def test_strategy_archive_success_rate_empty(self):
         """success_rate on empty archive returns 0 or 0.0."""
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         result = sa.success_rate(strategy="random")
         assert result == 0 or result == 0.0
@@ -357,6 +392,7 @@ class TestErrorHandling:
     def test_strategy_archive_summary_empty(self):
         """summary on empty archive returns dict with expected keys."""
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         summary = sa.summary()
         assert isinstance(summary, dict)
@@ -365,17 +401,24 @@ class TestErrorHandling:
     def test_novelty_novelty_score_empty_archive(self):
         """novelty_score on empty archive doesn't crash."""
         from novelty import SparseArchive
+
         sa = SparseArchive()
-        desc = {"inst_diversity": 0.5, "reg_pressure": 0.3,
-                "program_length": 0.1, "branch_fraction": 0.2,
-                "alu_fraction": 0.4, "load_store_ratio": 0.1,
-                "unique_regs_used": 0.3}
+        desc = {
+            "inst_diversity": 0.5,
+            "reg_pressure": 0.3,
+            "program_length": 0.1,
+            "branch_fraction": 0.2,
+            "alu_fraction": 0.4,
+            "load_store_ratio": 0.1,
+            "unique_regs_used": 0.3,
+        }
         score = sa.novelty_score(desc)
         assert isinstance(score, (int, float))
 
     def test_qd_archive_selection_bias_empty(self):
         """selection_bias on empty archive returns 0.0."""
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.selection_bias(descriptor=[0.0, 0.0])
         assert isinstance(result, (int, float))
@@ -384,6 +427,7 @@ class TestErrorHandling:
     def test_qd_archive_get_freshest_cell_empty(self):
         """get_freshest_cell on empty archive returns None."""
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.get_freshest_cell()
         assert result is None
@@ -391,6 +435,7 @@ class TestErrorHandling:
     def test_qd_archive_coverage_empty(self):
         """coverage on empty archive returns 0.0."""
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.coverage()
         assert result == 0.0
@@ -400,6 +445,7 @@ class TestErrorHandling:
         tmp = _tmpfile(".jsonl")
         try:
             from metrics import MetricsCollector
+
             mc = MetricsCollector(path=tmp)
             result = mc.get_history(last_n=10)
             assert isinstance(result, list)
@@ -412,6 +458,7 @@ class TestErrorHandling:
         tmp = _tmpfile(".jsonl")
         try:
             from metrics import MetricsCollector
+
             mc = MetricsCollector(path=tmp)
             result = mc.count_records()
             assert result == 0
@@ -423,6 +470,7 @@ class TestErrorHandling:
     def test_novelty_novelty_score_none_descriptor(self):
         """novelty_score with empty dict doesn't crash."""
         from novelty import SparseArchive
+
         sa = SparseArchive()
         score = sa.novelty_score({})
         assert isinstance(score, (int, float))
@@ -430,6 +478,7 @@ class TestErrorHandling:
     def test_champion_archive_add_minimal(self):
         """ChampionArchive.add with minimal entry doesn't crash."""
         from champion_archive import ChampionArchive
+
         ca = ChampionArchive.__new__(ChampionArchive)
         # Set minimum required attributes
         ca._entries = []
@@ -451,6 +500,7 @@ class TestErrorHandling:
     def test_novelty_adaptive_threshold_empty(self):
         """adaptive_threshold with no data returns finite value."""
         from novelty import SparseArchive
+
         sa = SparseArchive()
         result = sa.adaptive_threshold()
         assert isinstance(result, (int, float))
@@ -459,6 +509,7 @@ class TestErrorHandling:
     def test_strategy_archive_time_weighted_empty(self):
         """time_weighted_success_rate with no data returns 0 or 0.0."""
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         result = sa.time_weighted_success_rate(strategy="random")
         assert result == 0 or result == 0.0
@@ -466,6 +517,7 @@ class TestErrorHandling:
     def test_qd_archive_neighborhood_density_empty(self):
         """get_neighborhood_density on empty archive returns 0.0."""
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         result = qa.get_neighborhood_density(descriptor=[0.0, 0.0])
         assert isinstance(result, (int, float))
@@ -474,6 +526,7 @@ class TestErrorHandling:
     def test_meta_controller_detect_stagnation_empty(self):
         """detect_stagnation with no history returns NORMAL."""
         from meta_controller import MetaController, StagnationResult
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.detect_stagnation()
         assert isinstance(result, StagnationResult)
@@ -485,12 +538,14 @@ class TestErrorHandling:
 # 4. TestStateManagement
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestStateManagement:
     """Verify serialization/deserialization roundtrips."""
 
     def _make_mc_with_data(self):
         """Create a MetaController with a few telemetry snapshots."""
         from meta_controller import MetaController, TelemetrySnapshot
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         for i in range(5):
             snap = TelemetrySnapshot(
@@ -513,6 +568,7 @@ class TestStateManagement:
     def test_meta_controller_save_load_roundtrip(self):
         """MetaController state survives save → load."""
         from meta_controller import MetaController
+
         mc = self._make_mc_with_data()
         path = _tmpfile(".json")
         try:
@@ -525,8 +581,9 @@ class TestStateManagement:
             s1 = mc.get_state_summary()
             s2 = mc2.get_state_summary()
             # Same cycle count
-            assert s1.get("total_cycles", s1.get("cycles_tracked", 0)) == \
-                   s2.get("total_cycles", s2.get("cycles_tracked", 0))
+            assert s1.get("total_cycles", s1.get("cycles_tracked", 0)) == s2.get(
+                "total_cycles", s2.get("cycles_tracked", 0)
+            )
         finally:
             os.unlink(path)
 
@@ -557,6 +614,7 @@ class TestStateManagement:
     def test_meta_controller_load_nonexistent_returns_false(self):
         """load_state with nonexistent path returns False."""
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.load_state("/tmp/nonexistent_evolution_state_99999.json")
         assert result is False
@@ -564,6 +622,7 @@ class TestStateManagement:
     def test_meta_controller_load_corrupt_returns_false(self):
         """load_state with corrupt JSON returns False (doesn't crash)."""
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         path = _tmpfile(".json")
         try:
@@ -577,6 +636,7 @@ class TestStateManagement:
     def test_strategy_archive_save_load_roundtrip(self):
         """StrategyArchive state survives save → load."""
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         # Record a few entries (record takes: strategy, level, success, generation)
         for i in range(3):
@@ -600,6 +660,7 @@ class TestStateManagement:
     def test_strategy_archive_save_creates_file(self):
         """save creates the target file."""
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         path = _tmpfile(".json")
         os.unlink(path)
@@ -616,6 +677,7 @@ class TestStateManagement:
     def test_strategy_archive_load_nonexistent_returns_false(self):
         """load with nonexistent path returns False."""
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         result = sa.load("/tmp/nonexistent_sa_99999.json")
         assert result is False
@@ -623,6 +685,7 @@ class TestStateManagement:
     def test_evolution_config_get_config_summary(self):
         """EvolutionSection.get_config_summary returns a non-empty dict."""
         from config import EvolutionSection
+
         es = EvolutionSection()
         summary = es.get_config_summary()
         assert isinstance(summary, dict)
@@ -631,6 +694,7 @@ class TestStateManagement:
     def test_evolution_config_validate_config(self):
         """EvolutionSection.validate_config returns a list."""
         from config import EvolutionSection
+
         es = EvolutionSection()
         errors = es.validate_config()
         assert isinstance(errors, list)
@@ -640,6 +704,7 @@ class TestStateManagement:
     def test_novelty_serialize_deserialize_roundtrip(self):
         """SparseArchive survives serialize → deserialize."""
         from novelty import SparseArchive
+
         sa = SparseArchive()
         data = sa.serialize()
         assert isinstance(data, dict)
@@ -650,6 +715,7 @@ class TestStateManagement:
     def test_qd_archive_serialize_roundtrip(self):
         """MAPElitesArchive survives serialize → deserialize."""
         from qd_archive import MAPElitesArchive
+
         qa = MAPElitesArchive()
         data = qa.serialize()
         assert isinstance(data, dict)
@@ -659,6 +725,7 @@ class TestStateManagement:
     def test_meta_controller_tuning_history_summary(self):
         """get_tuning_history_summary returns a dict."""
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.get_tuning_history_summary()
         assert isinstance(result, dict)
@@ -666,6 +733,7 @@ class TestStateManagement:
     def test_meta_controller_effectiveness_score(self):
         """get_effectiveness_score returns a finite float."""
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.get_effectiveness_score()
         assert isinstance(result, (int, float))
@@ -674,6 +742,7 @@ class TestStateManagement:
     def test_strategy_archive_summary_after_records(self):
         """summary reflects recorded data."""
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         sa.record(strategy="random", level=0, success=True)
         sa.record(strategy="directed", level=1, success=True)
@@ -683,6 +752,7 @@ class TestStateManagement:
     def test_meta_controller_get_best_checkpoint_none(self):
         """get_best_checkpoint returns None when no checkpoints exist."""
         from meta_controller import MetaController
+
         mc = MetaController(checkpoint_dir=tempfile.mkdtemp())
         result = mc.get_best_checkpoint()
         assert result is None or isinstance(result, str)
@@ -690,6 +760,7 @@ class TestStateManagement:
     def test_monitoring_alerts_get_alert_history_empty(self):
         """get_alert_history returns empty list for fresh AlertManager."""
         from monitoring_alerts import AlertManager
+
         am = AlertManager()
         history = am.get_alert_history()
         assert isinstance(history, list)
@@ -698,6 +769,7 @@ class TestStateManagement:
     def test_monitoring_alerts_config_summary_structure(self):
         """get_config_summary has expected keys."""
         from monitoring_alerts import AlertManager
+
         am = AlertManager()
         summary = am.get_config_summary()
         assert isinstance(summary, dict)
@@ -707,6 +779,7 @@ class TestStateManagement:
     def test_data_rotation_run_all_rotations_returns_dict(self):
         """run_all_rotations returns a dict with rotation counts."""
         from data_rotation import run_all_rotations
+
         result = run_all_rotations()
         assert isinstance(result, dict)
         # Should have keys for each rotation type

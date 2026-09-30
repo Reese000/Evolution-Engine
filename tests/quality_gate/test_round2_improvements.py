@@ -11,7 +11,6 @@ Validates:
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -65,7 +64,7 @@ class TestMetaControllerAtomicState(unittest.TestCase):
         from meta_controller import MetaController
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            state_path = os.path.join(tmpdir, "mc_state.json")
+            os.path.join(tmpdir, "mc_state.json")
             mc = MetaController(checkpoint_dir=tmpdir)
 
             # Try to save to a read-only location
@@ -179,7 +178,7 @@ class TestMetaEvolutionSeedFailure(unittest.TestCase):
         """Verify that one failed seed does not reset all fitnesses."""
         from meta_evolution import MetaEvolutionConfig, MetaEvolutionEngine
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             config = MetaEvolutionConfig(
                 meta_population_size=2,
                 meta_generations=1,
@@ -190,7 +189,7 @@ class TestMetaEvolutionSeedFailure(unittest.TestCase):
             # We can't run full meta-evolution in unit tests (requires GPU),
             # but we can test the logic directly
 
-            engine = MetaEvolutionEngine(meta_config=config)
+            MetaEvolutionEngine(meta_config=config)
 
             # Simulate the seed loop behavior
             ensemble_fitnesses = [0.3, 0.5]  # Two successful seeds

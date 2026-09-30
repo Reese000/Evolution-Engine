@@ -18,7 +18,7 @@ ensure_project_on_path()
 
 from evolution_engine import EvolutionConfig, EvolutionEngine
 from tasks_rv32i import LEVELS, get_task_level, reference_solution
-from vm_farm import EvalResult, _run_one_evaluation
+from vm_farm import _run_one_evaluation
 
 # ═══════════════════════════════════════════════════════════════════════
 # Fixtures
@@ -78,6 +78,7 @@ class TestCurriculumLevelCount:
     def test_generate_all_tasks_returns_31_instances(self):
         """generate_all_tasks should return 31 task instances."""
         from tasks_rv32i import generate_all_tasks
+
         instances = generate_all_tasks(seed=42)
         assert len(instances) == 31
 
@@ -254,9 +255,7 @@ class TestReferenceSolutionExecution:
         output_regs = result.registers
         for reg, exp_val in expected.items():
             actual_val = output_regs.get(reg, 0)
-            assert actual_val == exp_val, (
-                f"L{level} register x{reg}: expected {exp_val:#x}, got {actual_val:#x}"
-            )
+            assert actual_val == exp_val, f"L{level} register x{reg}: expected {exp_val:#x}, got {actual_val:#x}"
 
     @pytest.mark.parametrize("level", [14, 15, 16])
     def test_reference_solution_verify_score(self, level):
@@ -291,8 +290,11 @@ class TestReferenceSolutionExecution:
         inputs = inst["inputs"]
 
         result = _run_one_evaluation(
-            kernel_path="", program=program, budget=10000,
-            init_regs=inputs.get("registers", {}), init_mem=inputs.get("memory", {}),
+            kernel_path="",
+            program=program,
+            budget=10000,
+            init_regs=inputs.get("registers", {}),
+            init_mem=inputs.get("memory", {}),
         )
         assert result.success
         # x17 should hold the final output
@@ -310,8 +312,11 @@ class TestReferenceSolutionExecution:
         inputs = inst["inputs"]
 
         result = _run_one_evaluation(
-            kernel_path="", program=program, budget=10000,
-            init_regs=inputs.get("registers", {}), init_mem=inputs.get("memory", {}),
+            kernel_path="",
+            program=program,
+            budget=10000,
+            init_regs=inputs.get("registers", {}),
+            init_mem=inputs.get("memory", {}),
         )
         assert result.success
         v1 = inputs["registers"].get(1, 0)

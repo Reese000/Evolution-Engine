@@ -6,14 +6,13 @@ wired correctly.  No actual evolution is run.  Keeps tests fast.
 """
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestEngineHealth:
     """Verify EvolutionEngine basic construction and interface via conftest fixture."""
@@ -86,6 +85,7 @@ class TestEngineHealth:
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. TestConfigHealth
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestConfigHealth:
     """Verify EvolutionSection construction, summary, and validation."""

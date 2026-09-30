@@ -10,8 +10,6 @@ Does NOT modify any existing files.
 """
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
@@ -21,15 +19,11 @@ from evolution_engine import EvolutionConfig, EvolutionEngine
 class TestEngineHealth:
     """Verify EvolutionEngine creation, attributes, and diagnostic surfaces."""
 
-    def test_engine_creation_with_default_config(
-        self, engine: EvolutionEngine
-    ) -> None:
+    def test_engine_creation_with_default_config(self, engine: EvolutionEngine) -> None:
         """Engine can be created via the conftest engine fixture."""
         assert isinstance(engine, EvolutionEngine)
 
-    def test_engine_has_all_expected_attributes(
-        self, engine: EvolutionEngine
-    ) -> None:
+    def test_engine_has_all_expected_attributes(self, engine: EvolutionEngine) -> None:
         """Engine exposes every attribute expected by the hot-path methods."""
         expected_attrs = [
             "config",
@@ -59,9 +53,7 @@ class TestEngineHealth:
         """engine.run is a callable method."""
         assert callable(engine.run)
 
-    def test_engine_get_run_diagnostics_returns_dict(
-        self, engine: EvolutionEngine
-    ) -> None:
+    def test_engine_get_run_diagnostics_returns_dict(self, engine: EvolutionEngine) -> None:
         """get_run_diagnostics returns a dict with expected keys."""
         diag = engine.get_run_diagnostics()
         assert isinstance(diag, dict)
@@ -81,9 +73,7 @@ class TestEngineHealth:
         for key in expected_keys:
             assert key in diag, f"diagnostics missing key: {key}"
 
-    def test_engine_get_performance_metrics_returns_dict(
-        self, engine: EvolutionEngine
-    ) -> None:
+    def test_engine_get_performance_metrics_returns_dict(self, engine: EvolutionEngine) -> None:
         """get_performance_metrics returns a dict with expected keys."""
         metrics = engine.get_performance_metrics()
         assert isinstance(metrics, dict)

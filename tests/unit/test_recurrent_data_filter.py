@@ -9,14 +9,11 @@ Verifies:
 
 import json
 import os
-import sys
-
-import pytest
 
 # Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from champion_archive import ChampionArchive, _hash_program
+from champion_archive import ChampionArchive
 
 
 def _make_entries(archive: ChampionArchive, specs: list[dict]) -> None:
@@ -245,7 +242,7 @@ class TestWeightedSelection:
         _make_entries(archive, specs)
 
         out = str(tmp_path / "recurrent_data.jsonl")
-        count = archive.save_recurrent_data(out, max_entries=20, fitness_threshold=0.0)
+        archive.save_recurrent_data(out, max_entries=20, fitness_threshold=0.0)
 
         records = _read_jsonl(out)
         sha256s = [r["champion_sha256"] for r in records]

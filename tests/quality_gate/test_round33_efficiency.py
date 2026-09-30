@@ -14,7 +14,6 @@ Covers:
 import collections
 import os
 import random
-import sys
 import tempfile
 
 import pytest
@@ -581,7 +580,7 @@ class TestAdaptiveMutationBasePreservation:
         engine = _make_engine(mutation_rate=0.4)
         # Simulate a few generations to trigger storage
         engine._fitness_velocity = 5.0
-        rate = engine._compute_adaptive_mutation_rate()
+        engine._compute_adaptive_mutation_rate()
         # The original rate should be stored on first call
         assert hasattr(engine, "_original_mutation_rate")
         assert engine._original_mutation_rate == 0.4

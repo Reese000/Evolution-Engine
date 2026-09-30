@@ -11,15 +11,11 @@ Tests that:
 """
 from __future__ import annotations
 
-import random
-
-import pytest
-
 from paths import ensure_project_on_path
 
 ensure_project_on_path()
 
-from evolution_engine import EvolutionConfig, EvolutionEngine
+from evolution_engine import EvolutionConfig
 from tasks_rv32i import LEVELS
 from tests.conftest import make_engine
 

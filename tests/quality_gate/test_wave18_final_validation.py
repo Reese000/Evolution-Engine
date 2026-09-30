@@ -17,8 +17,8 @@ import importlib
 import inspect
 import os
 import sys
-import textwrap
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -215,8 +215,9 @@ class TestPipelineWiringComplete:
         assert "self.strategy_archive.adaptive_exploration_bonus" in self._src
 
     def test_manage_capacity_in_update_novelty_archive(self):
-        """manage_capacity must be called inside _update_novelty_archive."""
-        assert "self.novelty_archive.manage_capacity()" in self._src
+        """manage_capacity must be called inside _update_novelty_archive (now in qd_archive_mixin)."""
+        qd_src = (_ROOT / "evolution" / "qd_archive_mixin.py").read_text(encoding="utf-8")
+        assert "self.novelty_archive.manage_capacity()" in qd_src
 
     def test_get_cross_cycle_trends_in_generation_loop(self):
         """get_cross_cycle_trends must be called in the generation loop."""
@@ -260,7 +261,7 @@ class TestNoRegressions:
 
     def test_init_exists_and_accepts_kwargs(self):
         """EvolutionEngine.__init__ must exist and accept config/rng/vm_farm/champion_anchor."""
-        from evolution_engine import EvolutionConfig, EvolutionEngine
+        from evolution_engine import EvolutionEngine
 
         sig = inspect.signature(EvolutionEngine.__init__)
         params = list(sig.parameters.keys())
@@ -403,7 +404,7 @@ class TestDocumentationCoverage:
 class TestCodeIntegrity:
     """Verify no syntax errors in all modified files by importing each module."""
 
-    MODIFIED_MODULES = [
+    MODIFIED_MODULES: ClassVar[list[str]] = [
         "evolution_engine",
         "novelty",
         "strategy_archive",

@@ -6,7 +6,6 @@ novelty tracking, circuit breaker logic, and program analysis.
 
 from __future__ import annotations
 
-
 # ------------------------------------------------------------------
 # Pure / static helpers (no engine state needed)
 # ------------------------------------------------------------------
@@ -82,6 +81,52 @@ def compute_population_diversity(
     return seen_bits.bit_count() / num_categories
 
 
+def population_category_bits(
+    challengers: list[list[int]],
+    opcode_cat_array: list[int],
+) -> int:
+    """Bitset of opcode categories present across the challenger population."""
+    seen_bits = 0
+    for prog in challengers:
+        for word in prog:
+            cat = opcode_cat_array[word & 0x7F]
+            if cat >= 0:
+                seen_bits |= 1 << cat
+    return seen_bits
+
+
+# One representative mnemonic per opcode category (index matches category id).
+_CATEGORY_SEED_NAMES: tuple[str, ...] = (
+    "LUI",
+    "AUIPC",
+    "JAL",
+    "JALR",
+    "BEQ",
+    "LW",
+    "SW",
+    "ADDI",
+    "ADD",
+    "FENCE",
+    "ECALL",
+)
+
+
+def generate_category_seed(category: int, rng) -> list[int]:
+    """Minimal valid program that introduces one missing opcode category."""
+    from mutation_proposer import EBREAK, make_rv32i
+
+    name = _CATEGORY_SEED_NAMES[category]
+    word = make_rv32i(
+        name,
+        rd=rng.randint(1, 31),
+        rs1=rng.randint(0, 31),
+        rs2=rng.randint(0, 31),
+    )
+    if name == "ECALL":
+        return [word]
+    return [word, EBREAK]
+
+
 def inject_diversity(
     challengers: list[list[int]],
     n_inject: int,
@@ -90,6 +135,7 @@ def inject_diversity(
     opcode_cat_array: list[int],
     num_categories: int,
     generate_seed_fn,
+    preserve_indices: set[int] | None = None,
 ) -> None:
     """Replace the least-diverse challengers with fresh random programs.
 
@@ -97,6 +143,9 @@ def inject_diversity(
     many of its opcodes are shared by the majority of the population.
     Programs whose opcodes are all "common" (appear in > 60% of
     population) are replaced.
+
+    When categories are missing from the population union, injected slots
+    target those gaps first so opcode diversity can recover at scan floor.
 
     Injected programs are generated from scratch (not mutated) to
     maximize opcode diversity. They receive the DIVERSITY_INJECT
@@ -132,8 +181,11 @@ def inject_diversity(
     # R37: Merge scoring + top-k selection into a single pass.
     import heapq as _heapq
 
+    protected = set(int(i) for i in (preserve_indices or set()))
     top_heap: list[tuple[float, int]] = []  # min-heap of (score, idx)
     for i, bits in enumerate(prog_opcodes_bits):
+        if i in protected:
+            continue
         if bits == 0:
             score = 1.0
         else:
@@ -147,8 +199,20 @@ def inject_diversity(
     # Sort descending by score to inject most-redundant first.
     top_heap.sort(reverse=True)
     top_n = top_heap
-    for _, idx in top_n:
-        challengers[idx] = generate_seed_fn(rng=rng)
+
+    all_mask = (1 << num_categories) - 1
+    seen_bits = population_category_bits(challengers, cat_arr)
+    missing = [cat for cat in range(num_categories) if not (seen_bits & (1 << cat))]
+    rng.shuffle(missing)
+
+    for inject_i, (_, idx) in enumerate(top_n):
+        if missing:
+            cat = missing[inject_i % len(missing)]
+            challengers[idx] = generate_category_seed(cat, rng)
+            seen_bits |= population_category_bits([challengers[idx]], cat_arr)
+            missing = [c for c in missing if not (seen_bits & (1 << c))]
+        else:
+            challengers[idx] = generate_seed_fn(rng=rng)
         strategies[idx] = "DIVERSITY_INJECT"
 
 
@@ -235,7 +299,7 @@ def record_cycle_level_outcome(engine) -> None:
             score = level_cls(seed=level).verify(output, engine.task_instance)
             if score >= 1.0:
                 had_success = True
-        except Exception:
+        except (KeyError, TypeError, ValueError, RuntimeError):
             pass
     # Also check last challengers
     if not had_success and engine._last_results:
@@ -256,7 +320,7 @@ def record_cycle_level_outcome(engine) -> None:
                 if score >= 1.0:
                     had_success = True
                     break
-        except Exception:
+        except (KeyError, TypeError, ValueError, RuntimeError):
             pass
     record_level_circuit_outcome(engine._level_circuit_stats, level, had_success)
     check_level_circuit_breaker(

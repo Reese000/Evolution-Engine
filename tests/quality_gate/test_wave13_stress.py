@@ -12,12 +12,9 @@ Tests high-volume operation, edge cases, and performance of:
 from __future__ import annotations
 
 import gc
-import math
-import os
 import random
-import sys
-import tempfile
 import time
+from typing import ClassVar
 
 import pytest
 
@@ -32,6 +29,7 @@ from strategy_archive import StrategyArchive
 # ══════════════════════════════════════════════════════════════════════════════
 # Test 1: MetaController Stress
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestMetaControllerStress:
     """Stress-test MetaController with 100 telemetry entries and analysis methods."""
@@ -79,15 +77,23 @@ class TestMetaControllerStress:
         # Next 30 cycles with completely flat fitness (stagnation)
         for i in range(21, 51):
             snap = TelemetrySnapshot(
-                cycle=i, fitness=50.0, level=3, champion_words=10,
-                val_loss=0.5, diversity=0.3, novelty_size=5,
-                qd_occupied=10, qd_total=100, traces_count=10,
-                retrained=False, generations_completed=10,
+                cycle=i,
+                fitness=50.0,
+                level=3,
+                champion_words=10,
+                val_loss=0.5,
+                diversity=0.3,
+                novelty_size=5,
+                qd_occupied=10,
+                qd_total=100,
+                traces_count=10,
+                retrained=False,
+                generations_completed=10,
             )
             mc.update_cycle(snap)
         result = mc.detect_stagnation()
         assert result is not None
-        assert hasattr(result, 'is_stagnant') or isinstance(result, object)
+        assert hasattr(result, "is_stagnant") or isinstance(result, object)
 
     def test_effectiveness_report(self, mc):
         """Run effectiveness report after heavy ingestion."""
@@ -172,11 +178,20 @@ class TestMetaControllerStress:
 # Test 2: StrategyArchive Stress
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestStrategyArchiveStress:
     """Stress-test StrategyArchive with 1000 outcomes across 10 levels."""
 
-    STRATEGIES = ["RANDOM", "TASK_AWARE", "PERTURBATION", "CROSSOVER",
-                  "ELITIST", "DIVERSITY", "NOVELTY", "ADAPTIVE"]
+    STRATEGIES: ClassVar[list[str]] = [
+        "RANDOM",
+        "TASK_AWARE",
+        "PERTURBATION",
+        "CROSSOVER",
+        "ELITIST",
+        "DIVERSITY",
+        "NOVELTY",
+        "ADAPTIVE",
+    ]
 
     def _populate(self, n_records=1000, n_levels=10):
         """Create a fully populated archive."""
@@ -202,12 +217,14 @@ class TestStrategyArchiveStress:
         sa = StrategyArchive(max_records=2000)
         batch = []
         for i in range(500):
-            batch.append({
-                "strategy": rng.choice(self.STRATEGIES),
-                "level": rng.randint(0, 9),
-                "success": rng.random() < 0.4,
-                "gen": i,
-            })
+            batch.append(
+                {
+                    "strategy": rng.choice(self.STRATEGIES),
+                    "level": rng.randint(0, 9),
+                    "success": rng.random() < 0.4,
+                    "gen": i,
+                }
+            )
         sa.record_batch(batch)
         assert sa.total_records() == 500
 
@@ -342,7 +359,7 @@ class TestStrategyArchiveStress:
     def test_max_records_trim(self):
         """Archive trims old records when max_records is exceeded."""
         sa = StrategyArchive(max_records=50)
-        rng = random.Random(99)
+        random.Random(99)
         for i in range(100):
             sa.record("RANDOM", 0, True, generation=i)
         assert sa.total_records() == 50
@@ -357,6 +374,7 @@ class TestStrategyArchiveStress:
 # ══════════════════════════════════════════════════════════════════════════════
 # Test 3: ChampionArchive Stress
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestChampionArchiveStress:
     """Stress-test ChampionArchive with 100 champions."""
@@ -426,7 +444,6 @@ class TestChampionArchiveStress:
     def test_quality_weighted_prune(self, tmp_path):
         """quality_weighted_prune removes low-quality champions when over capacity."""
         ca, _added = self._populate(n=100, max_size=80, tmp_path=tmp_path)
-        initial_size = ca.size
         removed = ca.quality_weighted_prune()
         assert isinstance(removed, int)
         # After pruning, should be at or below max_size
@@ -548,6 +565,7 @@ class TestChampionArchiveStress:
 # Test 4: MetricsCollector Stress
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestMetricsStress:
     """Stress-test MetricsCollector with 200 cycles of random data."""
 
@@ -618,8 +636,7 @@ class TestMetricsStress:
     def test_correlate_metrics_pairs(self, mc):
         """correlate_metrics between pairs of metrics."""
         self._record_200_cycles(mc)
-        pairs = [("fitness", "level"), ("diversity", "novelty_size"),
-                 ("fitness", "diversity"), ("words", "level")]
+        pairs = [("fitness", "level"), ("diversity", "novelty_size"), ("fitness", "diversity"), ("words", "level")]
         for a, b in pairs:
             corr = mc.correlate_metrics(a, b, window=50)
             assert isinstance(corr, dict)
@@ -633,7 +650,7 @@ class TestMetricsStress:
     def test_cache_invalidation(self, mc):
         """Cache is invalidated after new records."""
         self._record_200_cycles(mc)
-        h1 = mc.get_history()
+        mc.get_history()
         # Add one more record
         mc.record_cycle({"cycle": 200, "fitness": 999.0})
         h2 = mc.get_history()
@@ -661,6 +678,7 @@ class TestMetricsStress:
 # ══════════════════════════════════════════════════════════════════════════════
 # Test 5: SparseArchive (Novelty) Stress
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestNoveltyArchiveStress:
     """Stress-test SparseArchive with 50 entries and capacity management."""

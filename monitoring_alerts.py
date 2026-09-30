@@ -24,7 +24,7 @@ import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 # ── Alert Thresholds ─────────────────────────────────────────────────
@@ -86,7 +86,7 @@ class AlertManager:
         """Record alert in memory log."""
         self._alert_log.append(
             {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "level": level,
                 "title": title,
                 "message": message,
@@ -137,7 +137,7 @@ class AlertManager:
             "title": f"🔔 Evolution Engine — {title}",
             "description": message,
             "color": color_map.get(level, 0x808080),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "footer": {"text": f"Severity: {level.upper()}"},
         }
         payload = json.dumps({"embeds": [embed]}).encode("utf-8")
@@ -174,7 +174,7 @@ class AlertManager:
                 f"{'=' * 50}\n"
                 f"Level: {level.upper()}\n"
                 f"Title: {title}\n"
-                f"Time: {datetime.now().isoformat()}\n"
+                f"Time: {datetime.now(timezone.utc).isoformat()}\n"
                 f"\n"
                 f"{message}\n"
             )

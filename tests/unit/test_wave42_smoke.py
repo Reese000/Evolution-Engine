@@ -3,16 +3,12 @@
 Fast, no-evolution tests that verify core object creation and API
 surface without running any actual evolution cycles.
 """
+
 from __future__ import annotations
 
 # Import shared factory from conftest
-import os
-import sys
-
-import pytest
-
 from config import EvolutionSection
-from evolution_engine import EvolutionConfig, EvolutionEngine
+from evolution_engine import EvolutionEngine
 from tests.conftest import make_engine
 
 # ══════════════════════════════════════════════════════════════════════════════

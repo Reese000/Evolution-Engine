@@ -15,8 +15,6 @@ import sys
 from collections import deque
 from pathlib import Path
 
-import pytest
-
 # ── path setup ────────────────────────────────────────────────────────────────
 _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
@@ -232,6 +230,4 @@ class TestConfigHealth:
         """Default config should produce no validation warnings."""
         config = EvolutionSection()
         warnings = config.validate_config()
-        assert len(warnings) == 0, (
-            f"Default config produced unexpected warnings: {warnings}"
-        )
+        assert len(warnings) == 0, f"Default config produced unexpected warnings: {warnings}"

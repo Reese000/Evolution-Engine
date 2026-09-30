@@ -280,9 +280,7 @@ def scan_floor_stalled_growth_injection_generation(
         return int(generation) == int(inject_generation)
     if int(generation) == 0:
         return True
-    return scan_floor_growth_injection_generation(
-        generation, max_generations=max_generations, once_per_cycle=True
-    )
+    return scan_floor_growth_injection_generation(generation, max_generations=max_generations, once_per_cycle=True)
 
 
 def scan_floor_stalled_compression_injection_generation(
@@ -297,9 +295,7 @@ def scan_floor_stalled_compression_injection_generation(
         return True
     if inject_generation is not None:
         return int(generation) == int(inject_generation)
-    if scan_floor_compression_injection_generation(
-        generation, max_generations=max_generations, once_per_cycle=True
-    ):
+    if scan_floor_compression_injection_generation(generation, max_generations=max_generations, once_per_cycle=True):
         return True
     import os
 
@@ -328,11 +324,7 @@ def _expand_growth_material_for_grafts(
         int(os.environ.get("EE_SCAN_FLOOR_GROWTH_COMPRESS_DROP_TRIALS", "48")),
     )
     cycle_rot = int(cycle_no or 0) % 3
-    material_sig = tuple(
-        tuple(int(w) for w in prog)
-        for prog in material[:16]
-        if prog
-    )
+    material_sig = tuple(tuple(int(w) for w in prog) for prog in material[:16] if prog)
     cache_key = (champ_t, material_sig, cycle_rot, cap)
     cached = _graft_projection_cache.get(cache_key)
     if cached is not None:
@@ -363,11 +355,8 @@ def _expand_growth_material_for_grafts(
         if (
             compressed
             and len(compressed) > len(champion)
-            and _curriculum_l10_cached(list(compressed))
-            > _curriculum_l10_cached(list(champion)) + 0.01
-            and scan_floor_growth_completion_qualifies(
-                list(champion), list(compressed), gate=gate
-            )
+            and _curriculum_l10_cached(list(compressed)) > _curriculum_l10_cached(list(champion)) + 0.01
+            and scan_floor_growth_completion_qualifies(list(champion), list(compressed), gate=gate)
         ):
             seeds.insert(0, list(compressed))
         seen_local = {tuple(int(x) for x in prog) for prog in target}
@@ -392,13 +381,8 @@ def _expand_growth_material_for_grafts(
         if src_t not in seen:
             seen.add(src_t)
             expanded.append(src_list)
-        if (
-            _curriculum_l10_cached(list(champion)) < 0.85 - 1e-6
-            and len(src_list) > champ_n
-        ):
-            for mid in enumerate_l10_lift_shrink_intermediates(
-                list(champion), src_list, gate=gate
-            ):
+        if _curriculum_l10_cached(list(champion)) < 0.85 - 1e-6 and len(src_list) > champ_n:
+            for mid in enumerate_l10_lift_shrink_intermediates(list(champion), src_list, gate=gate):
                 mid_t = tuple(int(x) for x in mid)
                 if mid_t in seen:
                     continue
@@ -443,24 +427,17 @@ def growth_material_diff_graft_variants(
     """Equal-length grafts at growth-material diff sites (index-24-style breakthrough loci)."""
     import itertools
     import os
+
     if not champion or not material:
         return []
     from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
     from evolution.terminal_stagnation import get_scan_floor_gate
 
-    raw_material_key = tuple(
-        tuple(int(w) for w in prog)
-        for prog in material[:12]
-        if prog
-    )
+    raw_material_key = tuple(tuple(int(w) for w in prog) for prog in material[:12] if prog)
     pair_cap = int(
-        max_pair_combos
-        if max_pair_combos is not None
-        else os.environ.get("EE_GROWTH_MATERIAL_GRAFT_PAIR_BUDGET", "8")
+        max_pair_combos if max_pair_combos is not None else os.environ.get("EE_GROWTH_MATERIAL_GRAFT_PAIR_BUDGET", "8")
     )
-    cross_parent_cap = int(
-        os.environ.get("EE_GROWTH_MATERIAL_GRAFT_CROSS_PARENT_BUDGET", "8")
-    )
+    cross_parent_cap = int(os.environ.get("EE_GROWTH_MATERIAL_GRAFT_CROSS_PARENT_BUDGET", "8"))
     triple_cap = int(os.environ.get("EE_GROWTH_MATERIAL_GRAFT_TRIPLE_BUDGET", "6"))
     projection_cap = int(os.environ.get("EE_GROWTH_MATERIAL_GRAFT_PROJECTION_CAP", "12"))
     eval_budget = max(
@@ -468,11 +445,7 @@ def growth_material_diff_graft_variants(
         int(os.environ.get("EE_GROWTH_MATERIAL_GRAFT_EVAL_BUDGET", "20")),
     )
     champ_pr = float(compact_l30_promotion_raw_fitness(list(champion)))
-    cycle_key = (
-        _graft_cycle_key(int(cycle_no), champion)
-        if cycle_no is not None
-        else None
-    )
+    cycle_key = _graft_cycle_key(int(cycle_no), champion) if cycle_no is not None else None
     if cycle_key is not None:
         used = int(_graft_cycle_evals.get(cycle_key, 0))
         eval_budget = max(0, int(eval_budget) - used)
@@ -494,15 +467,13 @@ def growth_material_diff_graft_variants(
         int(cycle_no or -1) % 3,
         eval_budget,
     )
-    cached = getattr(growth_material_diff_graft_variants, "_result_cache", {}).get(
-        graft_key
-    )
+    cached = getattr(growth_material_diff_graft_variants, "_result_cache", {}).get(graft_key)
     if cached is not None:
         result = [list(prog) for prog in cached]
         if cycle_key is not None and result:
-            _graft_cycle_evals[cycle_key] = int(
-                _graft_cycle_evals.get(cycle_key, 0)
-            ) + min(int(eval_budget), len(result))
+            _graft_cycle_evals[cycle_key] = int(_graft_cycle_evals.get(cycle_key, 0)) + min(
+                int(eval_budget), len(result)
+            )
             prior = _graft_cycle_results.get(cycle_key, ())
             merged_cached: list[tuple[int, ...]] = []
             seen_cached: set[tuple[int, ...]] = set()
@@ -533,11 +504,7 @@ def growth_material_diff_graft_variants(
     for src in material:
         if not src or len(src) < champ_n:
             continue
-        diffs = [
-            i
-            for i in range(champ_n)
-            if int(src[i]) != int(champ[i])
-        ]
+        diffs = [i for i in range(champ_n) if int(src[i]) != int(champ[i])]
         if not diffs or len(diffs) > 8:
             continue
         material_sites.append((len(diffs), list(src), diffs))
@@ -671,9 +638,7 @@ def growth_material_diff_graft_variants(
     if len(cache) > 64:
         cache.pop(next(iter(cache)))
     if cycle_key is not None:
-        _graft_cycle_evals[cycle_key] = int(_graft_cycle_evals.get(cycle_key, 0)) + int(
-            prom_evals
-        )
+        _graft_cycle_evals[cycle_key] = int(_graft_cycle_evals.get(cycle_key, 0)) + int(prom_evals)
         prior = _graft_cycle_results.get(cycle_key, ())
         merged: list[tuple[int, ...]] = []
         seen_cycle: set[tuple[int, ...]] = set()
@@ -725,14 +690,9 @@ def collect_scan_floor_fresh_compression_variants(
     span = terminal_efficiency_drop_span(champ_n, word_cap)
     budget = max(
         4,
-        int(
-            max_evals_per_source
-            or os.environ.get("EE_SCAN_FLOOR_COMPRESS_FRESH_BUDGET", "12")
-        ),
+        int(max_evals_per_source or os.environ.get("EE_SCAN_FLOOR_COMPRESS_FRESH_BUDGET", "12")),
     )
-    union = _merge_fresh_compress_long_sources(
-        cycle_key, list(champion), champ_n, long_sources
-    )
+    union = _merge_fresh_compress_long_sources(cycle_key, list(champion), champ_n, long_sources)
     long_pool = [list(prog) for prog in union]
     try:
         from evolution.terminal_stagnation import _scan_floor_probe_stall_mode
@@ -780,14 +740,10 @@ def collect_scan_floor_fresh_compression_variants(
     seen: set[tuple[int, ...]] = {tuple(prog) for prog in out}
     seen.add(tuple(champion))
     for idx, source in enumerate(sources):
-        seed = (
-            cycle_no * 997 + gen_idx * 31 + stall_seed_offset * 13 + idx * 1009
-        ) & 0x7FFFFFFF
+        seed = (cycle_no * 997 + gen_idx * 31 + stall_seed_offset * 13 + idx * 1009) & 0x7FFFFFFF
         rng = random.Random(seed)
         per_source = budget if idx == 0 else max(4, budget // 2)
-        for variant in terminal_efficiency_variants(
-            list(source), rng, max_evals=per_source, max_drop_span=span
-        ):
+        for variant in terminal_efficiency_variants(list(source), rng, max_evals=per_source, max_drop_span=span):
             if not variant or len(variant) >= len(source):
                 continue
             if len(variant) > champ_n:
@@ -917,9 +873,9 @@ def collect_scan_floor_l10_lift_growth_candidates(
     from evolution.terminal_stagnation import (
         curriculum_verify_mean,
         get_scan_floor_gate,
+        l30_l8_mem_add_variant,
         l30_l10_bounded_sum_variant,
         l30_l10_max_in_sum_loop_variant,
-        l30_l8_mem_add_variant,
         l30_order_sensitive_variant,
     )
 
@@ -959,9 +915,7 @@ def collect_scan_floor_l10_lift_growth_candidates(
                 continue
             if not scan_floor_growth_heldout_qualifies(champ, list(variant)):
                 continue
-            if not scan_floor_growth_completion_qualifies(
-                champ, list(variant), gate=gate
-            ):
+            if not scan_floor_growth_completion_qualifies(champ, list(variant), gate=gate):
                 continue
             seen.add(key)
             out.append(list(variant))
@@ -984,9 +938,7 @@ def collect_scan_floor_l10_lift_growth_candidates(
                     comp_key not in seen
                     and _curriculum_l10_cached(list(compressed)) > champ_l10 + 1e-6
                     and scan_floor_growth_heldout_qualifies(champ, list(compressed))
-                    and scan_floor_growth_completion_qualifies(
-                        champ, list(compressed), gate=gate
-                    )
+                    and scan_floor_growth_completion_qualifies(champ, list(compressed), gate=gate)
                 ):
                     seen.add(comp_key)
                     out.append(list(compressed))
@@ -994,9 +946,7 @@ def collect_scan_floor_l10_lift_growth_candidates(
             for seed_prog in (list(variant), list(compressed) if compressed else None):
                 if not seed_prog or len(seed_prog) <= len(champ):
                     continue
-                for mid in enumerate_l10_lift_shrink_intermediates(
-                    champ, seed_prog, gate=gate
-                ):
+                for mid in enumerate_l10_lift_shrink_intermediates(champ, seed_prog, gate=gate):
                     mid_key = tuple(int(x) for x in mid)
                     if mid_key in seen:
                         continue
@@ -1045,17 +995,11 @@ def scan_floor_growth_completion_qualifies(
         return False
     champ_n = len(champion)
     var_n = len(variant)
-    from evolution.terminal_stagnation import (
-        get_scan_floor_gate,
-        scan_floor_compression_probe_qualifies,
-    )
+    from evolution.terminal_stagnation import get_scan_floor_gate, scan_floor_compression_probe_qualifies
 
     gate = gate or get_scan_floor_gate(champion)
     if var_n > champ_n:
-        from evolution.terminal_stagnation import (
-            compact_curriculum_side_score,
-            heldout_l30_verify_mean,
-        )
+        from evolution.terminal_stagnation import compact_curriculum_side_score, heldout_l30_verify_mean
 
         champ_h = float(heldout_l30_verify_mean(list(champion), int(n_seeds)))
         cand_h = float(heldout_l30_verify_mean(list(variant), int(n_seeds)))
@@ -1123,9 +1067,7 @@ def enumerate_l10_lift_shrink_intermediates(
             key = tuple(int(x) for x in trial)
             if key in seen:
                 continue
-            if trial_l10 > best_l10 + 1e-6 or (
-                abs(trial_l10 - best_l10) < 1e-6 and len(trial) < best_len
-            ):
+            if trial_l10 > best_l10 + 1e-6 or (abs(trial_l10 - best_l10) < 1e-6 and len(trial) < best_len):
                 best_drop = list(trial)
                 best_l10 = trial_l10
                 best_len = len(trial)
@@ -1159,12 +1101,7 @@ def _iter_l10_lift_pair_drop_trials(prog: list[int], champ_n: int, gap: int):
             for i in range(1, len(prog) - 3):
                 for j in range(i + 1, len(prog) - 2):
                     for k in range(j + 1, len(prog) - 1):
-                        yield (
-                            prog[:i]
-                            + prog[i + 1 : j]
-                            + prog[j + 1 : k]
-                            + prog[k + 1 :]
-                        )
+                        yield (prog[:i] + prog[i + 1 : j] + prog[j + 1 : k] + prog[k + 1 :])
 
 
 def collect_l10_lift_pair_drop_eq_programs(
@@ -1280,9 +1217,7 @@ def maybe_l10_lift_post_mutation_compress(
         compressed
         and len(compressed) < len(mutated)
         and _curriculum_l10_cached(list(compressed)) + 1e-6 >= champ_l10 + 0.01
-        and scan_floor_growth_completion_qualifies(
-            list(champion), list(compressed), gate=gate
-        )
+        and scan_floor_growth_completion_qualifies(list(champion), list(compressed), gate=gate)
     ):
         return list(compressed)
     return list(mutated)
@@ -1383,11 +1318,7 @@ def repair_model_guided_for_gate(
     if not program or gate is None:
         return None
     champ_t = tuple(champion) if champion else None
-    champ_pr = (
-        float(compact_l30_promotion_raw_fitness(list(champion)))
-        if champion
-        else -1.0
-    )
+    champ_pr = float(compact_l30_promotion_raw_fitness(list(champion))) if champion else -1.0
     min_gain = 0.0
     if champion:
         from evolution.terminal_stagnation import scan_floor_min_raw_gain
@@ -1413,9 +1344,7 @@ def repair_model_guided_for_gate(
     try:
         from evolution.terminal_stagnation import _scan_floor_probe_stall_mode
 
-        stalled = bool(
-            _scan_floor_probe_stall_mode(len(champion) if champion else None)
-        )
+        stalled = bool(_scan_floor_probe_stall_mode(len(champion) if champion else None))
     except ImportError:
         pass
     budget = max(4, int(max_evals))
@@ -1455,12 +1384,9 @@ def repair_model_guided_for_gate(
     diff_candidates: list[list[int]] = [seed]
     if champion and prefix_count is not None and champ_t is not None:
         pc = int(prefix_count)
-        diff_positions = [
-            i
-            for i in range(pc, len(champion))
-            if i < len(seed) and int(seed[i]) != int(champion[i])
-        ]
-        from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+        diff_positions = [i for i in range(pc, len(champion)) if i < len(seed) and int(seed[i]) != int(champion[i])]
+        from milestone1.rv32i_mask import decode as rv32i_decode
+        from milestone1.rv32i_mask import encode as rv32i_encode
 
         for pos in diff_positions[:8]:
             trial = list(champion)
@@ -1492,25 +1418,17 @@ def repair_model_guided_for_gate(
         accepted = _accept_candidate(best, best_pr)
         if accepted is not None:
             return accepted
-        deep_enabled = (
-            os.environ.get("EE_SCAN_FLOOR_GATE_REPAIR_DEEP", "0") == "1" or stalled
-        )
+        deep_enabled = os.environ.get("EE_SCAN_FLOOR_GATE_REPAIR_DEEP", "0") == "1" or stalled
         if not deep_enabled:
             return None
 
     start = hash(tuple(seed)) & 0x7FFFFFFF
     deep_candidates: list[list[int]] = list(diff_candidates)
     deep_candidates.extend(
-        terminal_wide_imm_sweep_probe_variants(
-            seed, max_evals=budget, start_offset=start % 97, gate=gate
-        )
+        terminal_wide_imm_sweep_probe_variants(seed, max_evals=budget, start_offset=start % 97, gate=gate)
     )
     rng = random.Random(start)
-    deep_candidates.extend(
-        terminal_imm_perturb_probe_variants(
-            seed, rng, max_evals=max(4, budget // 2), gate=gate
-        )
-    )
+    deep_candidates.extend(terminal_imm_perturb_probe_variants(seed, rng, max_evals=max(4, budget // 2), gate=gate))
     if stalled and champion and len(seed) == len(champion):
         min_pos = max(
             int(prefix_count) if prefix_count is not None else 0,
@@ -1600,6 +1518,7 @@ def compress_model_guided_growth_candidate(
         semantic_compress,
         terminal_efficiency_at_scan_floor,
     )
+
     gate = gate or get_scan_floor_gate(champion)
     champ_n = len(champion)
     from evolution.terminal_stagnation import curriculum_verify_mean
@@ -1636,9 +1555,7 @@ def compress_model_guided_growth_candidate(
             if (
                 not loop_prefix
                 or len(loop_prefix) >= len(loop_cur)
-                or not scan_floor_growth_completion_qualifies(
-                    champion, loop_prefix, gate=gate
-                )
+                or not scan_floor_growth_completion_qualifies(champion, loop_prefix, gate=gate)
             ):
                 break
             loop_cur = list(loop_prefix)
@@ -1666,9 +1583,7 @@ def compress_model_guided_growth_candidate(
                 side_tier = 1
         elif trial_n == champ_n and gate.qualifies(trial):
             side_tier = 2
-        elif trial_n > champ_n and scan_floor_growth_completion_qualifies(
-            champion, trial, gate=gate
-        ):
+        elif trial_n > champ_n and scan_floor_growth_completion_qualifies(champion, trial, gate=gate):
             side_tier = 1
         if l10_lift_compress:
             return (l10, prom, -trial_n, side_tier, lcp)
@@ -1746,9 +1661,7 @@ def compress_model_guided_growth_candidate(
             seen_pool.add(key)
             pool.append(list(prog))
         qualifying = [
-            list(prog)
-            for prog in pool
-            if scan_floor_growth_completion_qualifies(champion, list(prog), gate=gate)
+            list(prog) for prog in pool if scan_floor_growth_completion_qualifies(champion, list(prog), gate=gate)
         ]
         if qualifying:
             qualifying.sort(
@@ -1784,11 +1697,7 @@ def _repair_compressed_growth_probe(
         return list(compressed)
     from evolution.terminal_stagnation import scan_floor_compact_tail_min_position
 
-    prefix = (
-        int(prefix_count)
-        if prefix_count is not None
-        else int(scan_floor_compact_tail_min_position(champ_n))
-    )
+    prefix = int(prefix_count) if prefix_count is not None else int(scan_floor_compact_tail_min_position(champ_n))
     repaired = repair_model_guided_for_gate(
         list(compressed),
         gate,
@@ -1799,9 +1708,7 @@ def _repair_compressed_growth_probe(
     )
     if repaired is None or not gate.qualifies(repaired):
         return None
-    if len(repaired) > len(champion) and not scan_floor_growth_heldout_qualifies(
-        champion, repaired
-    ):
+    if len(repaired) > len(champion) and not scan_floor_growth_heldout_qualifies(champion, repaired):
         return None
     return list(repaired)
 
@@ -1839,9 +1746,7 @@ def equal_length_from_longer_growth(
             )
         )
         comp_l10 = _curriculum_l10_cached(comp)
-        if comp_l10 > champ_l10 + 0.01 and scan_floor_growth_completion_qualifies(
-            champion, comp, gate=gate
-        ):
+        if comp_l10 > champ_l10 + 0.01 and scan_floor_growth_completion_qualifies(champion, comp, gate=gate):
             return list(comp)
         comp = None
     if cycle_no is not None:
@@ -1865,11 +1770,7 @@ def equal_length_from_longer_growth(
             gate=gate,
             max_drop_trials=max_drop_trials,
         )
-    if (
-        len(comp) == champ_n
-        and tuple(comp) != tuple(champion)
-        and not gate.qualifies(comp)
-    ):
+    if len(comp) == champ_n and tuple(comp) != tuple(champion) and not gate.qualifies(comp):
         cap = repair_eval_cap
         if cap is None:
             cap = max(
@@ -1941,10 +1842,7 @@ def select_diverse_growth_material_programs(
                 score = (champ_count, champ_mag, champ_count)
             else:
                 min_sep = min(
-                    sum(
-                        int(prog[i]) != int(other[i])
-                        for i in range(len(champ), min(len(prog), len(other)))
-                    )
+                    sum(int(prog[i]) != int(other[i]) for i in range(len(champ), min(len(prog), len(other))))
                     for other in selected
                 )
                 score = (min_sep, champ_mag, champ_count)
@@ -1966,10 +1864,7 @@ def flush_growth_mg_material_candidates(
     if not champion:
         return 0
     from evolution.champion_rollback import record_scan_floor_growth_material
-    from evolution.terminal_stagnation import (
-        curriculum_verify_mean,
-        get_scan_floor_gate,
-    )
+    from evolution.terminal_stagnation import curriculum_verify_mean, get_scan_floor_gate
 
     champ = list(champion)
     augmented = [list(prog) for prog in (candidates or []) if prog]
@@ -1994,14 +1889,8 @@ def flush_growth_mg_material_candidates(
     cap = max(1, int(record_cap))
     seen_mandatory = {tuple(int(x) for x in mandatory[0])} if mandatory else set()
     remaining = max(0, cap - len(mandatory))
-    pool = [
-        list(prog)
-        for prog in augmented
-        if tuple(int(x) for x in prog) not in seen_mandatory
-    ]
-    picked = list(mandatory) + select_diverse_growth_material_programs(
-        champ, pool, max_select=remaining
-    )
+    pool = [list(prog) for prog in augmented if tuple(int(x) for x in prog) not in seen_mandatory]
+    picked = list(mandatory) + select_diverse_growth_material_programs(champ, pool, max_select=remaining)
     recorded = 0
     for prog in picked:
         if record_scan_floor_growth_material(champ, list(prog), cycle=int(cycle)):
@@ -2151,11 +2040,7 @@ def select_diverse_l10_lift_inject_programs(
         int(os.environ.get("EE_L10_LIFT_INJECT_TARGET_EXTRA", "2")),
     )
     min_l10 = champ_l10 + 0.01
-    pool = [
-        list(p)
-        for p in programs
-        if p and len(p) > champ_n and _curriculum_l10_cached(list(p)) > min_l10
-    ]
+    pool = [list(p) for p in programs if p and len(p) > champ_n and _curriculum_l10_cached(list(p)) > min_l10]
     if not pool:
         return []
     out: list[list[int]] = []
@@ -2188,11 +2073,7 @@ def select_diverse_l10_lift_inject_programs(
             break
         _add(prog)
     high_short = sorted(
-        [
-            list(p)
-            for p in pool
-            if _curriculum_l10_cached(list(p)) >= 0.9 - 1e-6
-        ],
+        [list(p) for p in pool if _curriculum_l10_cached(list(p)) >= 0.9 - 1e-6],
         key=len,
     )
     for prog in high_short:
@@ -2244,11 +2125,7 @@ def select_growth_inject_slot_variants(
     short_pool = [p for p in pool if len(p) < champ_n]
     l10_lift_long: list[list[int]] = []
     if champ_l10_weak:
-        l10_lift_long = [
-            list(p)
-            for p in long_pool
-            if _curriculum_l10_cached(list(p)) > champ_l10 + 0.01
-        ]
+        l10_lift_long = [list(p) for p in long_pool if _curriculum_l10_cached(list(p)) > champ_l10 + 0.01]
         l10_lift_long.sort(
             key=lambda prog: (
                 _curriculum_l10_cached(list(prog)),
@@ -2287,10 +2164,7 @@ def select_growth_inject_slot_variants(
             added += 1
         remaining = int(n_slots) - len(out)
     long_other = [
-        list(p)
-        for p in long_pool
-        if tuple(int(x) for x in p) not in seen_out
-        and list(p) not in l10_lift_long
+        list(p) for p in long_pool if tuple(int(x) for x in p) not in seen_out and list(p) not in l10_lift_long
     ]
     if remaining > 0 and long_other:
         long_take = min(remaining, long_cap)
@@ -2342,9 +2216,7 @@ def scan_floor_growth_inject_rank(
             champ_l10 = _curriculum_l10_cached(champ)
             extra_words = int(os.environ.get("EE_GROWTH_COMPRESS_TARGET_EXTRA_WORDS", "4"))
             if champ_l10 < 0.85 - 1e-6:
-                extra_words = int(
-                    os.environ.get("EE_GROWTH_COMPRESS_TARGET_EXTRA_WORDS_WEAK_L10", "2")
-                )
+                extra_words = int(os.environ.get("EE_GROWTH_COMPRESS_TARGET_EXTRA_WORDS_WEAK_L10", "2"))
             target_len = champ_n + max(2, extra_words)
             if prog_l10 > champ_l10 + 0.01:
                 return (5, prog_l10, -abs(prog_n - target_len), pr)
@@ -2440,9 +2312,7 @@ def filter_scan_floor_growth_programs_by_max_words(
 
 
 _SHRINK_CHALLENGER_MISS = object()
-_shrink_challenger_cache: dict[
-    tuple[tuple[int, ...], tuple[int, ...], int, int], list[int] | object
-] = {}
+_shrink_challenger_cache: dict[tuple[tuple[int, ...], tuple[int, ...], int, int], list[int] | object] = {}
 
 
 def clear_shrink_challenger_cache() -> None:
@@ -2515,15 +2385,9 @@ def shrink_scan_floor_challenger_to_max_words(
     if compressed and len(compressed) <= cap:
         if len(compressed) == champ_n and gate.qualifies(compressed):
             return _finish(list(compressed))
-        if len(compressed) > champ_n and scan_floor_growth_completion_qualifies(
-            champ, list(compressed), gate=gate
-        ):
+        if len(compressed) > champ_n and scan_floor_growth_completion_qualifies(champ, list(compressed), gate=gate):
             return _finish(list(compressed))
-    pc = (
-        int(prefix_count)
-        if prefix_count is not None
-        else growth_anchor_lcp_prefix(champ, prog)
-    )
+    pc = int(prefix_count) if prefix_count is not None else growth_anchor_lcp_prefix(champ, prog)
     normalized = normalize_model_guided_tail_growth(
         prog,
         champ,
@@ -2558,9 +2422,7 @@ def scan_floor_l10_lift_preserve_slot(
     from evolution.terminal_stagnation import get_scan_floor_gate
 
     gate = gate or get_scan_floor_gate(list(champion))
-    return bool(
-        scan_floor_growth_completion_qualifies(list(champion), list(program), gate=gate)
-    )
+    return bool(scan_floor_growth_completion_qualifies(list(champion), list(program), gate=gate))
 
 
 def record_l10_lift_growth_discoveries(
@@ -2582,11 +2444,7 @@ def record_l10_lift_growth_discoveries(
         return 0
     cap = max(
         1,
-        int(
-            record_cap
-            if record_cap is not None
-            else os.environ.get("EE_L10_LIFT_DISCOVERY_RECORD_CAP", "4")
-        ),
+        int(record_cap if record_cap is not None else os.environ.get("EE_L10_LIFT_DISCOVERY_RECORD_CAP", "4")),
     )
     check_cap = max(
         1,
@@ -2604,9 +2462,7 @@ def record_l10_lift_growth_discoveries(
     seen: set[tuple[int, ...]] = {tuple(int(x) for x in champion)}
     added = 0
     long_candidates = [
-        list(prog)
-        for prog in challengers
-        if prog and len(prog) > champ_n and tuple(int(x) for x in prog) not in seen
+        list(prog) for prog in challengers if prog and len(prog) > champ_n and tuple(int(x) for x in prog) not in seen
     ]
     if not long_candidates:
         return 0
@@ -2615,9 +2471,7 @@ def record_l10_lift_growth_discoveries(
         key = tuple(int(x) for x in prog)
         if not scan_floor_l10_lift_preserve_slot(list(champion), list(prog)):
             continue
-        if record_scan_floor_growth_material(
-            list(champion), list(prog), cycle=cycle_key
-        ):
+        if record_scan_floor_growth_material(list(champion), list(prog), cycle=cycle_key):
             added += 1
             recorded += 1
             seen.add(key)
@@ -2674,9 +2528,7 @@ def swap_inject_overlength_for_eq_seeds(
         mg_inject_generation=mg_inject_generation,
     ):
         return 0
-    seeds = load_scan_floor_eq_refine_seeds(
-        list(champion), max_seeds=8, probe_material=False
-    )
+    seeds = load_scan_floor_eq_refine_seeds(list(champion), max_seeds=8, probe_material=False)
     if not seeds:
         return 0
     champ_n = len(champion)
@@ -2689,8 +2541,7 @@ def swap_inject_overlength_for_eq_seeds(
     if (
         category_saturated
         and long_slots
-        and os.environ.get("EE_SCAN_FLOOR_INJECT_EQ_LENGTH_SWAP_SATURATED", "1")
-        != "0"
+        and os.environ.get("EE_SCAN_FLOOR_INJECT_EQ_LENGTH_SWAP_SATURATED", "1") != "0"
     ):
         max_swap = max(max_swap, len(long_slots))
     from evolution.terminal_stagnation import get_scan_floor_gate
@@ -2780,9 +2631,7 @@ def cap_scan_floor_challenger_lengths(
 def scan_floor_eq_refine_seeds_path() -> str:
     import os
 
-    return os.path.join(
-        _evolution_project_root(), ".agents", "scan_floor_eq_refine_seeds.json"
-    )
+    return os.path.join(_evolution_project_root(), ".agents", "scan_floor_eq_refine_seeds.json")
 
 
 def _eq_refine_plateau_key(champion: list[int]) -> tuple[float, int]:
@@ -2814,10 +2663,7 @@ def _eq_refine_payload_matches_plateau(
     stored_key = payload.get("plateau_key")
     if isinstance(stored_key, list) and len(stored_key) == 2:
         try:
-            if (
-                round(float(stored_key[0]), 4) == plateau_key[0]
-                and int(stored_key[1]) == plateau_key[1]
-            ):
+            if round(float(stored_key[0]), 4) == plateau_key[0] and int(stored_key[1]) == plateau_key[1]:
                 return True
         except (TypeError, ValueError):
             pass
@@ -2869,11 +2715,7 @@ def expand_l10_lift_eq_champion_grafts(
     anchor = list(champion)
     base = list(program)
     champ_l10 = _curriculum_l10_cached(anchor)
-    diffs = [
-        i
-        for i in range(len(anchor))
-        if int(base[i]) != int(anchor[i])
-    ]
+    diffs = [i for i in range(len(anchor)) if int(base[i]) != int(anchor[i])]
     if not diffs:
         return []
     cap = min(len(diffs), 8)
@@ -2904,6 +2746,184 @@ def expand_l10_lift_eq_champion_grafts(
         if key in seen:
             continue
         seen.add(key)
+        out.append(list(trial))
+        if len(out) >= max(1, int(max_variants)):
+            break
+    return out
+
+
+def _eq_donor_words_by_site(
+    anchor: list[int],
+    base: list[int],
+    donors: list[list[int]],
+    *,
+    per_site_cap: int = 8,
+) -> dict[int, list[int]]:
+    """Donor words available at each diff site (champion word first)."""
+    out: dict[int, list[int]] = {}
+    champ_n = len(anchor)
+    for i in range(champ_n):
+        if int(base[i]) == int(anchor[i]):
+            continue
+        words: list[int] = [int(anchor[i])]
+        for donor in donors:
+            if not donor or i >= len(donor):
+                continue
+            word = int(donor[i])
+            if word == int(base[i]) or word in words:
+                continue
+            words.append(word)
+            if len(words) >= max(2, int(per_site_cap)):
+                break
+        out[i] = words
+    return out
+
+
+def expand_l10_lift_eq_donor_grafts(
+    champion: list[int],
+    program: list[int],
+    *,
+    donors: list[list[int]] | None = None,
+    gate=None,
+    max_variants: int = 8,
+    min_l10_margin: float = 0.02,
+    max_evals: int | None = None,
+) -> list[list[int]]:
+    """Two-stage eq-length grafts over champion + growth-material donor words.
+
+    Stage 1 collects single-word *bridges* (the champion word at one diff
+    site) without applying the L10 margin, so an edit that on its own drops
+    below the margin can still be combined with a second edit.  Stage 2
+    accepts a candidate only when it keeps the L10 margin **and** passes the
+    eq-length gate, then ranks accepted candidates by prom.  Every returned
+    program therefore satisfies exactly the acceptance that
+    :func:`expand_l10_lift_eq_champion_grafts` demands - no gate is relaxed
+    - but the search may cross a margin-dropping bridge to get there.
+
+    Donors default to the persisted growth-material bucket plus the champion,
+    which is where long near-champion extensions (single-word graft sources
+    that are neither the champion nor an eq seed) live.
+    """
+    import os
+
+    if not champion or not program or len(program) != len(champion):
+        return []
+    from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
+    from evolution.terminal_stagnation import get_scan_floor_gate
+
+    anchor = [int(x) for x in champion]
+    base = [int(x) for x in program]
+    gate = gate or get_scan_floor_gate(list(anchor))
+    champ_n = len(anchor)
+    champ_l10 = _curriculum_l10_cached(anchor)
+    margin = float(min_l10_margin)
+    diffs = [i for i in range(champ_n) if base[i] != anchor[i]]
+    if not diffs:
+        return []
+
+    if donors is None:
+        donors = [list(anchor)]
+        from evolution.champion_rollback import load_growth_material_programs
+
+        try:
+            donors.extend(load_growth_material_programs(list(anchor)))
+        except (OSError, TypeError, ValueError):
+            pass
+    donors = [list(d) for d in donors if d]
+
+    budget = int(max_evals) if max_evals is not None else int(os.environ.get("EE_L10_DONOR_GRAFT_EVAL_CAP", "2500"))
+    budget = max(16, budget)
+    evals = 0
+    accepted: dict[tuple[int, ...], tuple[float, float, list[int]]] = {}
+
+    def _l10_of(prog: list[int]) -> float:
+        nonlocal evals
+        evals += 1
+        return float(_curriculum_l10_cached(list(prog)))
+
+    def _accept(trial: list[int]) -> None:
+        """Keep a trial only at full acceptance: L10 margin AND eq gate."""
+        if len(trial) != champ_n:
+            return
+        key = tuple(int(x) for x in trial)
+        if key in accepted:
+            return
+        trial_l10 = _l10_of(list(key))
+        if trial_l10 + 1e-6 < champ_l10 + margin:
+            return
+        if not gate.qualifies(list(key)):
+            return
+        prom = float(compact_l30_promotion_raw_fitness(list(key)))
+        accepted[key] = (prom, trial_l10, list(key))
+
+    site_cap = max(2, int(os.environ.get("EE_L10_DONOR_GRAFT_SITE_CAP", "12")))
+    # safe sites first (their single champion graft already keeps the margin)
+    safe_first: list[int] = []
+    unsafe: list[int] = []
+    for i in diffs:
+        if evals >= budget:
+            break
+        trial = list(base)
+        trial[i] = anchor[i]
+        if _l10_of(trial) + 1e-6 >= champ_l10 + margin:
+            safe_first.append(i)
+        else:
+            unsafe.append(i)
+    sites = (safe_first + unsafe)[:site_cap]
+
+    # Stage 1: bridges = base + one champion word at a diff site (no margin).
+    bridges: list[list[int]] = [list(base)]
+    for i in sites:
+        trial = list(base)
+        trial[i] = anchor[i]
+        bridges.append(trial)
+
+    # Stage 2a: accept the bridges themselves.
+    for bridge in bridges:
+        if evals >= budget:
+            break
+        _accept(bridge)
+
+    # Stage 2b: champion/donor word applied on top of a bridge.
+    words_by_site = _eq_donor_words_by_site(anchor, base, donors)
+    for bridge in bridges:
+        if evals >= budget:
+            break
+        bridge_diffs = [i for i in sites if bridge[i] != anchor[i]]
+        for i in bridge_diffs:
+            for word in words_by_site.get(i, [anchor[i]]):
+                if evals >= budget:
+                    break
+                if word == bridge[i]:
+                    continue
+                trial = list(bridge)
+                trial[i] = int(word)
+                _accept(trial)
+
+    # Stage 2c: subsets of margin-safe champion grafts (prom-lift ladder).
+    subset_cap = max(0, int(os.environ.get("EE_L10_DONOR_GRAFT_SAFE_SITES", "10")))
+    subset_sites = safe_first[: min(len(safe_first), subset_cap)]
+    if len(subset_sites) >= 2:
+        for mask in range(1, 1 << len(subset_sites)):
+            if evals >= budget:
+                break
+            if mask & (mask - 1) == 0:
+                continue  # singletons were already accepted in stage 2a/2b
+            trial = list(base)
+            for bit, idx in enumerate(subset_sites):
+                if mask & (1 << bit):
+                    trial[idx] = anchor[idx]
+            _accept(trial)
+
+    if not accepted:
+        return []
+    ranked = list(accepted.values())
+    if champ_l10 < 0.85 - 1e-6:
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    else:
+        ranked.sort(key=lambda item: (item[1], item[0]), reverse=True)
+    out: list[list[int]] = []
+    for _prom, _l10, trial in ranked:
         out.append(list(trial))
         if len(out) >= max(1, int(max_variants)):
             break
@@ -2963,9 +2983,7 @@ def crossbreed_l10_prom_eq_refine_variants(
     for hi in high_l10[:2]:
         for prom_seed in prom_seeds[:3]:
             diff_positions = [
-                i
-                for i in range(champ_n)
-                if int(hi[i]) != int(anchor[i]) and int(prom_seed[i]) != int(anchor[i])
+                i for i in range(champ_n) if int(hi[i]) != int(anchor[i]) and int(prom_seed[i]) != int(anchor[i])
             ]
             if not diff_positions:
                 continue
@@ -3041,9 +3059,7 @@ def persist_l10_lift_bootstrap_intermediates(
         if key in seen:
             continue
         seen.add(key)
-        if record_scan_floor_growth_material(
-            list(champion), list(prog), cycle=int(cycle)
-        ):
+        if record_scan_floor_growth_material(list(champion), list(prog), cycle=int(cycle)):
             recorded += 1
             if recorded >= cap:
                 break
@@ -3072,11 +3088,7 @@ def collect_l10_lift_eq_refine_bootstrap_seeds(
     champ_n = len(anchor)
     cap = max(1, int(max_seeds))
     material = collect_growth_material_compress_parents(list(anchor), max_parents=16)
-    material_sig = tuple(
-        tuple(int(w) for w in prog)
-        for prog in material[:12]
-        if prog
-    )
+    material_sig = tuple(tuple(int(w) for w in prog) for prog in material[:12] if prog)
     anchor_key = tuple(int(x) for x in anchor)
     cache_key = (anchor_key, material_sig, cap)
     cached = _l10_lift_eq_bootstrap_cache.get(cache_key)
@@ -3095,9 +3107,7 @@ def collect_l10_lift_eq_refine_bootstrap_seeds(
     l10_material = [
         list(src)
         for src in material
-        if src
-        and len(src) > champ_n
-        and _curriculum_l10_cached(list(src)) > champ_l10 + 0.01
+        if src and len(src) > champ_n and _curriculum_l10_cached(list(src)) > champ_l10 + 0.01
     ]
     l10_material.sort(
         key=lambda prog: (
@@ -3111,11 +3121,9 @@ def collect_l10_lift_eq_refine_bootstrap_seeds(
     shrink_seeds: list[list[int]] = []
     for src in l10_material[:source_cap]:
         shrink_seeds.append(list(src))
-        for mid in enumerate_l10_lift_shrink_intermediates(
-            list(anchor), list(src), gate=gate
-        ):
+        for mid in enumerate_l10_lift_shrink_intermediates(list(anchor), list(src), gate=gate):
             shrink_seeds.append(list(mid))
-    material_cap = int(os.environ.get("EE_L10_LIFT_BOOTSTRAP_MATERIAL_CAP", "0"))
+    material_cap = int(os.environ.get("EE_L10_LIFT_BOOTSTRAP_MATERIAL_CAP", "4"))
     if material_cap > 0:
         try:
             persist_l10_lift_bootstrap_intermediates(
@@ -3136,9 +3144,7 @@ def collect_l10_lift_eq_refine_bootstrap_seeds(
             continue
         if _curriculum_l10_cached(list(src)) <= champ_l10 + 0.01:
             continue
-        for eq in collect_l10_lift_pair_drop_eq_programs(
-            list(anchor), list(src), gate=gate
-        ):
+        for eq in collect_l10_lift_pair_drop_eq_programs(list(anchor), list(src), gate=gate):
             key = tuple(int(x) for x in eq)
             if key in seen:
                 continue
@@ -3166,19 +3172,13 @@ def collect_l10_lift_eq_refine_bootstrap_seeds(
         reverse=True,
     )
     out = candidates[:cap]
-    _l10_lift_eq_bootstrap_cache[cache_key] = tuple(
-        tuple(int(x) for x in prog) for prog in out
-    )
+    _l10_lift_eq_bootstrap_cache[cache_key] = tuple(tuple(int(x) for x in prog) for prog in out)
     if len(_l10_lift_eq_bootstrap_cache) > 8:
         _l10_lift_eq_bootstrap_cache.pop(next(iter(_l10_lift_eq_bootstrap_cache)))
     save_l10_lift_eq_bootstrap_cache(list(anchor))
-    if out and len(list(anchor)) >= int(
-        os.environ.get("EE_EQ_REFINE_PERSIST_MIN_WORDS", "20")
-    ):
+    if out and len(list(anchor)) >= int(os.environ.get("EE_EQ_REFINE_PERSIST_MIN_WORDS", "20")):
         try:
-            record_scan_floor_eq_refine_seeds(
-                list(champion), [list(p) for p in out], cycle=0
-            )
+            record_scan_floor_eq_refine_seeds(list(champion), [list(p) for p in out], cycle=0)
         except (ImportError, TypeError, ValueError, OSError):
             pass
     return [list(prog) for prog in out]
@@ -3200,9 +3200,8 @@ def record_scan_floor_eq_refine_seeds(
     min_words = int(os.environ.get("EE_EQ_REFINE_PERSIST_MIN_WORDS", "20"))
     if len(anchor) < min_words:
         return
-    from evolution.terminal_stagnation import get_scan_floor_gate
-
     from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
+    from evolution.terminal_stagnation import get_scan_floor_gate
 
     gate = get_scan_floor_gate(anchor)
     champ_t = tuple(int(x) for x in anchor)
@@ -3296,9 +3295,7 @@ def should_skip_scan_floor_gen0_growth_inject(
 def scan_floor_growth_pool_cache_path() -> str:
     import os
 
-    return os.path.join(
-        _evolution_project_root(), ".agents", "scan_floor_growth_pool_cache.json"
-    )
+    return os.path.join(_evolution_project_root(), ".agents", "scan_floor_growth_pool_cache.json")
 
 
 def load_scan_floor_growth_pool_cache(
@@ -3328,15 +3325,11 @@ def load_scan_floor_growth_pool_cache(
     # legacy single-payload files are still read.
     candidates: list[dict] = []
     if isinstance(payload.get("entries"), list):
-        candidates.extend(
-            entry for entry in payload["entries"] if isinstance(entry, dict)
-        )
+        candidates.extend(entry for entry in payload["entries"] if isinstance(entry, dict))
     if "pool" in payload:
         candidates.append(payload)
     for candidate in candidates:
-        if not _eq_refine_payload_matches_plateau(
-            candidate, plateau_key, anchor
-        ):
+        if not _eq_refine_payload_matches_plateau(candidate, plateau_key, anchor):
             continue
         pool_raw = candidate.get("pool")
         if not isinstance(pool_raw, list) or not pool_raw:
@@ -3383,10 +3376,7 @@ def save_scan_floor_growth_pool_cache(
         "anchor": [int(x) for x in anchor],
         "cycle": int(cycle),
         "pool": [[int(x) for x in prog] for prog in pool],
-        "cross_keys": [
-            [int(x) for x in key]
-            for key in (cross_keys or ())
-        ],
+        "cross_keys": [[int(x) for x in key] for key in (cross_keys or ())],
     }
     # One entry per plateau: without this a transient growth-champion save
     # overwrote the stable champion's pool, so the first post-restart cycle
@@ -3399,17 +3389,13 @@ def save_scan_floor_growth_pool_cache(
             prior = None
         if isinstance(prior, dict):
             if isinstance(prior.get("entries"), list):
-                entries = [
-                    entry for entry in prior["entries"] if isinstance(entry, dict)
-                ]
+                entries = [entry for entry in prior["entries"] if isinstance(entry, dict)]
             elif "pool" in prior:
                 entries = [prior]
     kept: list[dict] = []
     for entry in entries:
         try:
-            same_identity = _eq_refine_payload_matches_plateau(
-                entry, plateau_key, anchor
-            )
+            same_identity = _eq_refine_payload_matches_plateau(entry, plateau_key, anchor)
         except (TypeError, ValueError):
             same_identity = False
         if not same_identity:
@@ -3617,9 +3603,7 @@ def load_l10_lift_eq_bootstrap_cache(champion: list[int]) -> dict:
     )
 
 
-def save_l10_lift_eq_bootstrap_cache(
-    champion: list[int], *, cycle: int = 0
-) -> None:
+def save_l10_lift_eq_bootstrap_cache(champion: list[int], *, cycle: int = 0) -> None:
     """Persist current l10-lift bootstrap entries for this anchor."""
     _save_anchor_keyed_cache(
         l10_lift_eq_bootstrap_cache_path(),
@@ -3704,9 +3688,7 @@ def load_eq_refine_late_merged_cache(
     stored_key = payload.get("late_cache_key")
     if not isinstance(stored_key, list):
         return None
-    if _normalize_late_cache_key(stored_key) != _normalize_late_cache_key(
-        late_cache_key
-    ):
+    if _normalize_late_cache_key(stored_key) != _normalize_late_cache_key(late_cache_key):
         return None
     seeds_raw = payload.get("merged")
     if not isinstance(seeds_raw, list) or not seeds_raw:
@@ -3765,14 +3747,10 @@ def should_skip_mg_stall_collect_for_warm_eq_refine(champion: list[int]) -> bool
     if not champion:
         return False
     seed_cap = max(2, int(os.environ.get("EE_SCAN_FLOOR_EQ_REFINE_SEED_CAP", "8")))
-    seeds = load_scan_floor_eq_refine_seeds(
-        list(champion), max_seeds=seed_cap, probe_material=False
-    )
+    seeds = load_scan_floor_eq_refine_seeds(list(champion), max_seeds=seed_cap, probe_material=False)
     if not seeds:
         return False
-    warm = warm_eq_refine_disk_seeds_sufficient(
-        list(champion), [list(s) for s in seeds], seed_cap=seed_cap
-    )
+    warm = warm_eq_refine_disk_seeds_sufficient(list(champion), [list(s) for s in seeds], seed_cap=seed_cap)
     force_late = os.environ.get("EE_EQ_REFINE_FORCE_LATE_PROBE", "0") == "1"
     late_key = (
         _eq_refine_plateau_key(list(champion)),
@@ -3800,11 +3778,7 @@ def warm_eq_refine_disk_seeds_sufficient(
     champ_l10 = _curriculum_l10_cached(list(champion))
     if champ_l10 >= 0.85 - 1e-6:
         return True
-    l10_lift = sum(
-        1
-        for prog in seeds
-        if _curriculum_l10_cached(list(prog)) > champ_l10 + 0.02
-    )
+    l10_lift = sum(1 for prog in seeds if _curriculum_l10_cached(list(prog)) > champ_l10 + 0.02)
     return l10_lift >= min(2, cap)
 
 
@@ -3832,16 +3806,10 @@ def collect_growth_material_projection_seeds(
         4,
         int(os.environ.get("EE_PROJECTION_MATERIAL_PARENT_CAP", "12")),
     )
-    material = collect_growth_material_compress_parents(
-        champ, max_parents=parent_cap
-    )
+    material = collect_growth_material_compress_parents(champ, max_parents=parent_cap)
     if not material:
         return []
-    material_sig = tuple(
-        tuple(int(w) for w in prog)
-        for prog in material[:16]
-        if prog
-    )
+    material_sig = tuple(tuple(int(w) for w in prog) for prog in material[:16] if prog)
     cache_key = (champ_t, int(max_seeds), material_sig)
     cached = _projection_seeds_cache.get(cache_key)
     if cached is None:
@@ -4004,10 +3972,7 @@ def inject_scan_floor_eq_refine_seed_challengers(
             return 0
         n_slots = min(len(seeds), len(challengers), seed_cap)
         slots = rng.sample(range(len(challengers)), n_slots)
-        rotated = [
-            seeds[(int(cycle_no) + int(generation) + i) % len(seeds)]
-            for i in range(n_slots)
-        ]
+        rotated = [seeds[(int(cycle_no) + int(generation) + i) % len(seeds)] for i in range(n_slots)]
         for slot, variant in zip(slots, rotated, strict=False):
             challengers[slot] = list(variant)
             if strategies is not None and slot < len(strategies):
@@ -4015,10 +3980,7 @@ def inject_scan_floor_eq_refine_seed_challengers(
         return n_slots
     try:
         from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
-        from evolution.terminal_stagnation import (
-            get_scan_floor_gate,
-            terminal_growth_material_locus_probe_variants,
-        )
+        from evolution.terminal_stagnation import get_scan_floor_gate, terminal_growth_material_locus_probe_variants
 
         gate = get_scan_floor_gate(list(champion))
         warm_disk = warm_eq_refine_disk_seeds_sufficient(
@@ -4036,9 +3998,7 @@ def inject_scan_floor_eq_refine_seed_challengers(
         )
         cached_merged = _eq_refine_late_merged_cache.get(late_cache_key)
         if cached_merged is None:
-            disk_merged = load_eq_refine_late_merged_cache(
-                list(champion), late_cache_key
-            )
+            disk_merged = load_eq_refine_late_merged_cache(list(champion), late_cache_key)
             if disk_merged is not None:
                 cached_merged = disk_merged
                 _eq_refine_late_merged_cache[late_cache_key] = disk_merged
@@ -4054,11 +4014,7 @@ def inject_scan_floor_eq_refine_seed_challengers(
                     locus_budget,
                     max(4, int(os.environ.get("EE_EQ_REFINE_WARM_LOCUS_BUDGET", "6"))),
                 )
-            skip_locus = (
-                warm_disk
-                and not force_late
-                and os.environ.get("EE_EQ_REFINE_WARM_SKIP_LOCUS", "1") == "1"
-            )
+            skip_locus = warm_disk and not force_late and os.environ.get("EE_EQ_REFINE_WARM_SKIP_LOCUS", "1") == "1"
             if skip_locus:
                 locus = []
             else:
@@ -4088,9 +4044,7 @@ def inject_scan_floor_eq_refine_seed_challengers(
             if merged:
                 champ_anchor = list(champion)
                 merged.sort(
-                    key=lambda variant: scan_floor_eq_inject_sort_key(
-                        champ_anchor, list(variant)
-                    ),
+                    key=lambda variant: scan_floor_eq_inject_sort_key(champ_anchor, list(variant)),
                     reverse=True,
                 )
                 skip_perturb = (
@@ -4103,9 +4057,13 @@ def inject_scan_floor_eq_refine_seed_challengers(
                         seed_cap=seed_cap,
                     )
                 )
-                perturb_budget = 0 if skip_perturb else max(
-                    0,
-                    int(os.environ.get("EE_SCAN_FLOOR_EQ_REFINE_ONE_STEP_PERTURB", "8")),
+                perturb_budget = (
+                    0
+                    if skip_perturb
+                    else max(
+                        0,
+                        int(os.environ.get("EE_SCAN_FLOOR_EQ_REFINE_ONE_STEP_PERTURB", "8")),
+                    )
                 )
                 if perturb_budget > 0:
                     try:
@@ -4114,11 +4072,7 @@ def inject_scan_floor_eq_refine_seed_challengers(
                         if _curriculum_l10_cached(list(champion)) < 0.85 - 1e-6:
                             perturb_budget = max(
                                 perturb_budget,
-                                int(
-                                    os.environ.get(
-                                        "EE_SCAN_FLOOR_L10_WEAK_EQ_PERTURB", "12"
-                                    )
-                                ),
+                                int(os.environ.get("EE_SCAN_FLOOR_L10_WEAK_EQ_PERTURB", "12")),
                             )
                     except ImportError:
                         pass
@@ -4132,11 +4086,7 @@ def inject_scan_floor_eq_refine_seed_challengers(
                     )
                     two_step_budget = max(
                         0,
-                        int(
-                            os.environ.get(
-                                "EE_SCAN_FLOOR_EQ_REFINE_TWO_STEP_PERTURB", "4"
-                            )
-                        ),
+                        int(os.environ.get("EE_SCAN_FLOOR_EQ_REFINE_TWO_STEP_PERTURB", "4")),
                     )
                     if two_step_budget > 0 and perturbed:
                         perturbed.extend(
@@ -4157,9 +4107,7 @@ def inject_scan_floor_eq_refine_seed_challengers(
                             seen.add(key)
                             merged.append(list(prog))
                         merged.sort(
-                            key=lambda variant: scan_floor_eq_inject_sort_key(
-                                champ_anchor, list(variant)
-                            ),
+                            key=lambda variant: scan_floor_eq_inject_sort_key(champ_anchor, list(variant)),
                             reverse=True,
                         )
                 seeds = merged
@@ -4186,10 +4134,7 @@ def inject_scan_floor_eq_refine_seed_challengers(
         seed_cap,
     )
     slots = rng.sample(range(len(challengers)), n_slots)
-    rotated = [
-        seeds[(int(cycle_no) + int(generation) + i) % len(seeds)]
-        for i in range(n_slots)
-    ]
+    rotated = [seeds[(int(cycle_no) + int(generation) + i) % len(seeds)] for i in range(n_slots)]
     for slot, variant in zip(slots, rotated, strict=False):
         challengers[slot] = list(variant)
         if strategies is not None and slot < len(strategies):
@@ -4230,11 +4175,7 @@ def load_scan_floor_eq_refine_seeds(
         seen.add(key)
         out.append([int(x) for x in prog])
     if champ_l10 < 0.85 - 1e-6:
-        l10_lift_disk = sum(
-            1
-            for prog in out
-            if _curriculum_l10_cached(list(prog)) > champ_l10 + 0.02
-        )
+        l10_lift_disk = sum(1 for prog in out if _curriculum_l10_cached(list(prog)) > champ_l10 + 0.02)
         need_bootstrap = l10_lift_disk < min(2, max(1, int(max_seeds)))
         if need_bootstrap:
             for prog in collect_l10_lift_eq_refine_bootstrap_seeds(
@@ -4280,16 +4221,10 @@ def load_scan_floor_eq_refine_seeds(
                     key = tuple(int(x) for x in prog)
                     if key in seen or not gate.qualifies(list(prog)):
                         continue
-                    diff = sum(
-                        1 for a, b in zip(anchor, prog) if int(a) != int(b)
-                    )
+                    diff = sum(1 for a, b in zip(anchor, prog) if int(a) != int(b))
                     material_ranked.append((prom, diff, list(prog)))
                     continue
-                diffs = [
-                    i
-                    for i in range(len(anchor))
-                    if int(prog[i]) != int(anchor[i])
-                ]
+                diffs = [i for i in range(len(anchor)) if int(prog[i]) != int(anchor[i])]
                 if not diffs or len(diffs) > 8:
                     continue
                 for idx in diffs[: max(1, int(max_seeds))]:
@@ -4318,9 +4253,7 @@ def load_scan_floor_eq_refine_seeds(
     try:
         from evolution.champion_rollback import collect_growth_material_compress_parents
 
-        material = collect_growth_material_compress_parents(
-            list(champion), max_parents=8
-        )
+        material = collect_growth_material_compress_parents(list(champion), max_parents=8)
         if material:
             boot = growth_material_diff_graft_variants(
                 list(champion),
@@ -4337,9 +4270,7 @@ def load_scan_floor_eq_refine_seeds(
                 if len(out) >= max(1, int(max_seeds)):
                     break
             if out:
-                record_scan_floor_eq_refine_seeds(
-                    list(champion), out, cycle=0
-                )
+                record_scan_floor_eq_refine_seeds(list(champion), out, cycle=0)
     except ImportError:
         return []
     return out
@@ -4389,17 +4320,12 @@ def _growth_crossover_candidate(
             if gate.qualifies(compressed) and tuple(compressed) != champ_t:
                 comp_pr = float(compact_l30_promotion_raw_fitness(compressed))
                 if (
-                    comp_pr > champ_pr + min_gain - 1e-6
-                    or comp_pr + 1e-6 >= champ_pr
-                ) and scan_floor_growth_completion_qualifies(
-                    champ, compressed, gate=gate
-                ):
+                    comp_pr > champ_pr + min_gain - 1e-6 or comp_pr + 1e-6 >= champ_pr
+                ) and scan_floor_growth_completion_qualifies(champ, compressed, gate=gate):
                     candidate = list(compressed)
     if tuple(candidate) == champ_t or len(candidate) > max_words:
         return None
-    if len(candidate) != len(champ) and not scan_floor_growth_heldout_qualifies(
-        champ, candidate
-    ):
+    if len(candidate) != len(champ) and not scan_floor_growth_heldout_qualifies(champ, candidate):
         return None
     if candidate[-1] != 0x0010_0073:
         candidate.append(0x0010_0073)
@@ -4511,20 +4437,14 @@ def build_scan_floor_growth_crossover_pool(
     equal_gate = [p for p in pool if len(p) == len(champ) and gate.qualifies(p)]
     if equal_gate:
         if champ_l10_weak:
-            l10_eq = [
-                p
-                for p in equal_gate
-                if _curriculum_l10_cached(p) > champ_l10 + 0.01
-            ]
+            l10_eq = [p for p in equal_gate if _curriculum_l10_cached(p) > champ_l10 + 0.01]
             if l10_eq:
                 rest = [p for p in pool if p not in l10_eq]
                 pool = l10_eq + rest
         else:
             rest = [p for p in pool if p not in equal_gate]
             pool = equal_gate + rest
-    _growth_crossover_pool_cache[cross_cache_key] = tuple(
-        tuple(int(w) for w in prog) for prog in pool
-    )
+    _growth_crossover_pool_cache[cross_cache_key] = tuple(tuple(int(w) for w in prog) for prog in pool)
     if len(_growth_crossover_pool_cache) > _GROWTH_CROSSOVER_CACHE_MAX:
         for stale in list(_growth_crossover_pool_cache.keys())[:-12]:
             if stale != cross_cache_key:
@@ -4580,6 +4500,7 @@ def scan_floor_growth_compress_sources(
             2,
             int(os.environ.get("EE_GROWTH_COMPRESS_TARGET_EXTRA_WORDS", "4")),
         )
+
         def _compress_source_rank(prog: list[int]) -> tuple:
             prog_pr = float(compact_l30_promotion_raw_fitness(list(prog)))
             growth_phase = prog_pr + 1e-6 < champ_pr
@@ -4672,11 +4593,7 @@ def compress_growth_probe_pool(
             continue
         seen.add(key)
         comp_pr = float(_compact_prom_raw_cached(comp)) if len(comp) == champ_n else 0.0
-        if (
-            len(comp) == champ_n
-            and gate.qualifies(comp)
-            and comp_pr + 1e-6 >= champ_pr
-        ):
+        if len(comp) == champ_n and gate.qualifies(comp) and comp_pr + 1e-6 >= champ_pr:
             front.append(list(comp))
             if comp_pr > champ_pr + 1e-6:
                 import logging
@@ -4696,9 +4613,7 @@ def compress_growth_probe_pool(
         rest.append(list(prog))
     result = front + rest
     if pool_key is not None:
-        _growth_compress_pool_cache[pool_key] = tuple(
-            tuple(int(w) for w in prog) for prog in result
-        )
+        _growth_compress_pool_cache[pool_key] = tuple(tuple(int(w) for w in prog) for prog in result)
         if len(_growth_compress_pool_cache) > _GROWTH_COMPRESS_CACHE_MAX:
             for stale in list(_growth_compress_pool_cache.keys())[:-12]:
                 if stale != pool_key:
@@ -4714,12 +4629,7 @@ def prime_scan_floor_growth_pool_cache(
     if not champion:
         return None
     plateau_key = _eq_refine_plateau_key(list(champion))
-    if (
-        existing is not None
-        and isinstance(existing, tuple)
-        and len(existing) == 3
-        and existing[0] == plateau_key
-    ):
+    if existing is not None and isinstance(existing, tuple) and len(existing) == 3 and existing[0] == plateau_key:
         return existing
     return load_scan_floor_growth_pool_cache(list(champion))
 
@@ -4740,11 +4650,7 @@ def select_growth_mg_anchor_fill(
         return list(champion)
     if len(fills) == 1:
         return list(fills[0])
-    if (
-        generation is not None
-        and inject_generation is not None
-        and int(generation) == int(inject_generation)
-    ):
+    if generation is not None and inject_generation is not None and int(generation) == int(inject_generation):
         anchor = scan_floor_anchor_program(list(champion))
         champ = list(champion)
         lcp = growth_anchor_lcp_prefix(champ, anchor)
@@ -4752,9 +4658,7 @@ def select_growth_mg_anchor_fill(
         for fill in fills:
             prog = list(fill)
             tail_diff = sum(
-                1
-                for i in range(min(lcp, len(prog)), min(len(prog), len(champ)))
-                if int(prog[i]) != int(champ[i])
+                1 for i in range(min(lcp, len(prog)), min(len(prog), len(champ))) if int(prog[i]) != int(champ[i])
             )
             ext = max(0, len(prog) - len(champ))
             scored.append(((tail_diff, ext, len(prog)), prog))
@@ -4806,11 +4710,7 @@ def expand_growth_anchor_prefix_counts_stalled(
     lcp = growth_anchor_lcp_prefix(list(champion), list(anchor))
     champ_n = len(champion)
     variants: list[int] = []
-    if (
-        generation is not None
-        and inject_generation is not None
-        and int(generation) == int(inject_generation)
-    ):
+    if generation is not None and inject_generation is not None and int(generation) == int(inject_generation):
         tail_words = max(
             8,
             int(os.environ.get("EE_SCAN_FLOOR_GROWTH_INJECT_MG_TAIL_WORDS", "18")),
@@ -4899,6 +4799,24 @@ def refine_eq_seed_one_step_perturb_variants(
                 continue
             seen.add(key)
             out.append(list(cross))
+        import os
+
+        donor_budget = max(2, int(os.environ.get("EE_L10_DONOR_GRAFT_VARIANTS", "4")))
+        donor_limit = graft_budget + donor_budget
+        for seed in seeds[:4]:
+            for graft in expand_l10_lift_eq_donor_grafts(
+                list(champion),
+                list(seed),
+                gate=gate,
+                max_variants=donor_budget,
+            ):
+                key = tuple(int(x) for x in graft)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(list(graft))
+            if len(out) >= donor_limit:
+                break
         for seed in seeds[:4]:
             for graft in expand_l10_lift_eq_champion_grafts(
                 list(champion),
@@ -4966,10 +4884,7 @@ def scan_floor_model_guided_inference_params(
             return (
                 growth_anchor_hex,
                 [prefix_count],
-                (
-                    f"growth-anchor-tail({len(growth_anchor_hex)}w→≤{champ_n + extra}w,"
-                    f"pc={prefix_count})"
-                ),
+                (f"growth-anchor-tail({len(growth_anchor_hex)}w→≤{champ_n + extra}w," f"pc={prefix_count})"),
             )
         prefix_count = max(1, champ_n - 1)
         return (
@@ -4987,9 +4902,7 @@ def scan_floor_model_guided_inference_params(
     )
     if champ_n < ref_lock:
         tail_opts = [6, 8, 10, 12, 14, 16]
-        rotated = tail_opts[
-            (int(cycle_offset) + int(generation)) % len(tail_opts)
-        ]
+        rotated = tail_opts[(int(cycle_offset) + int(generation)) % len(tail_opts)]
         tail = min(max(compact_tail, rotated), champ_n - 2)
         prefix_count = max(1, champ_n - tail)
     else:
@@ -5066,14 +4979,12 @@ def recent_scan_floor_growth_challenger_fills(
     ):
         return []
 
-    lb = lookback_cycles if lookback_cycles is not None else int(
-        os.environ.get("EE_SCAN_FLOOR_CHALLENGER_FILL_CYCLES", "60")
+    lb = (
+        lookback_cycles
+        if lookback_cycles is not None
+        else int(os.environ.get("EE_SCAN_FLOOR_CHALLENGER_FILL_CYCLES", "60"))
     )
-    max_words = (
-        int(word_margin)
-        if word_margin is not None
-        else scan_floor_growth_crossover_max_words(anchor_n)
-    )
+    max_words = int(word_margin) if word_margin is not None else scan_floor_growth_crossover_max_words(anchor_n)
     results = os.path.join(_evolution_project_root(), "multi_cycle_results.jsonl")
     if not os.path.isfile(results):
         return []
@@ -5123,14 +5034,8 @@ def collect_scan_floor_growth_crossover_fills(
     max_fills: int = 16,
 ) -> list[list[int]]:
     """Merge ranked growth fills with recorded growth material for scan-floor breeding."""
-    from evolution.champion_rollback import (
-        collect_growth_material_compress_parents,
-        collect_growth_material_parents,
-    )
-    from evolution.terminal_stagnation import (
-        _scan_floor_probe_stall_mode,
-        ranked_scan_floor_growth_fills,
-    )
+    from evolution.champion_rollback import collect_growth_material_compress_parents, collect_growth_material_parents
+    from evolution.terminal_stagnation import _scan_floor_probe_stall_mode, ranked_scan_floor_growth_fills
 
     anchor = scan_floor_anchor_program(list(champion))
     if not anchor:
@@ -5142,9 +5047,7 @@ def collect_scan_floor_growth_crossover_fills(
     compress_material: list[list[int]] = []
     growth_challengers: list[list[int]] = []
     if _scan_floor_probe_stall_mode(len(anchor)):
-        compress_material = collect_growth_material_compress_parents(
-            anchor, max_parents=cap
-        )
+        compress_material = collect_growth_material_compress_parents(anchor, max_parents=cap)
         from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
 
         try:
@@ -5165,24 +5068,16 @@ def collect_scan_floor_growth_crossover_fills(
         from evolution.terminal_stagnation import get_scan_floor_gate
 
         gate = get_scan_floor_gate(list(anchor))
-        for lift in collect_scan_floor_l10_lift_growth_candidates(
-            list(anchor), gate=gate
-        ):
+        for lift in collect_scan_floor_l10_lift_growth_candidates(list(anchor), gate=gate):
             key = tuple(int(x) for x in lift)
             if key in seen:
                 continue
             seen.add(key)
             merged.append(list(lift))
     growth_keys = {tuple(int(x) for x in p) for p in growth_challengers}
-    other_challengers = [
-        p for p in challengers if tuple(int(x) for x in p) not in growth_keys
-    ]
+    other_challengers = [p for p in challengers if tuple(int(x) for x in p) not in growth_keys]
     for prog in (
-        list(growth_challengers)
-        + list(compress_material)
-        + list(ranked)
-        + list(other_challengers)
-        + list(material)
+        list(growth_challengers) + list(compress_material) + list(ranked) + list(other_challengers) + list(material)
     ):
         if not prog:
             continue
@@ -5277,10 +5172,7 @@ def scan_floor_model_guided_slot_allowed(
     if explicit == "1":
         enabled = True
     else:
-        from evolution.epi_momentum_governor import (
-            promotion_raw_capability_stalled,
-            scan_floor_length_prom_stalled,
-        )
+        from evolution.epi_momentum_governor import promotion_raw_capability_stalled, scan_floor_length_prom_stalled
         from evolution.terminal_stagnation import _read_progress_state
 
         enabled = promotion_raw_capability_stalled(root)

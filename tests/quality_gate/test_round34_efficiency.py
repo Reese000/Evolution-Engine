@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import os
 import random
-import sys
 import tempfile
 from copy import copy
 

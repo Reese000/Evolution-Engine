@@ -60,6 +60,14 @@ def _sign32(val: int) -> int:
     return val
 
 
+def _l18_mask_load(rd: int = 22) -> list[dict]:
+    """Load 0x0000FFFF into rd via LUI+ADDI (12-bit ADDI cannot encode full mask)."""
+    return [
+        {"name": "LUI", "rd": rd, "imm": 0xF},
+        {"name": "ADDI", "rd": rd, "rs1": rd, "imm": 0xFFF},
+    ]
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Base TaskLevel ABC
 # ──────────────────────────────────────────────────────────────────────
@@ -1121,7 +1129,7 @@ class Level18(TaskLevel):
         # L18: x21 = (x1 XOR x2) AND 0xFFFF
         return base_ref + [
             {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},  # x21 = x1 ^ x2
-            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},  # x22 = mask
+            *_l18_mask_load(22),  # x22 = mask 0xFFFF
             {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},  # x21 = (x1^x2) & mask
         ]
 
@@ -1176,7 +1184,7 @@ class Level19(TaskLevel):
             {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
             # L18: XOR + AND
             {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
-            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+            *_l18_mask_load(22),
             {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
         ]
         # L19: BNE — if x1 != x2, x22 = x1+x2, else x22 = x1-x2
@@ -1211,7 +1219,6 @@ class Level20(TaskLevel):
         else:
             base[22] = _cap32(v1 - v2)  # L19
         # L20: store x1 to mem[0], XOR with x2, store result, load back
-        addr = 0
         stored = _cap32(v1)
         xored = _cap32(stored ^ v2)
         base[23] = xored
@@ -1246,7 +1253,7 @@ class Level20(TaskLevel):
             {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
             # L18: XOR + AND
             {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
-            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+            *_l18_mask_load(22),
             {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
             # L19: BNE (always taken since v1 != v2)
             {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},
@@ -1317,7 +1324,7 @@ class Level21(TaskLevel):
             {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
             # L18: XOR + AND
             {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
-            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+            *_l18_mask_load(22),
             {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
             # L19: BNE
             {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},
@@ -1391,17 +1398,15 @@ class Level22(TaskLevel):
         #      elif x1 < x2 then x25 = x1-x2
         #      else x25 = x1<<1
         l22_ref = [
-            {"name": "SLT", "rd": 25, "rs1": 2, "rs2": 1},  # x25 = (x2 < x1) = (x1 > x2)
-            {"name": "BEQ", "rs1": 25, "rs2": 0, "imm": 16},  # if x1 > x2, skip
+            {"name": "SLT", "rd": 25, "rs1": 2, "rs2": 1},  # x25 = (x1 > x2)
+            {"name": "BEQ", "rs1": 25, "rs2": 0, "imm": 12},  # if not x1>x2, check x1<x2
+            {"name": "ADD", "rd": 25, "rs1": 1, "rs2": 2},  # x25 = x1+x2
+            {"name": "BEQ", "rs1": 0, "rs2": 0, "imm": 24},  # done — skip elif/else
             {"name": "SLT", "rd": 25, "rs1": 1, "rs2": 2},  # x25 = (x1 < x2)
-            {"name": "BEQ", "rs1": 25, "rs2": 0, "imm": 20},  # if x1 < x2, skip
-            {"name": "SLLI", "rd": 25, "rs1": 1, "imm": 1},  # x25 = x1<<1 (else)
-            {"name": "JALR", "rd": 0, "rs1": 0, "imm": 0},  # jump to end
-            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},  # NOP (pad)
-            {"name": "ADD", "rd": 25, "rs1": 1, "rs2": 2},  # x25 = x1+x2 (x1>x2)
-            {"name": "JALR", "rd": 0, "rs1": 0, "imm": 0},  # jump to end
-            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},  # NOP (pad)
-            {"name": "SUB", "rd": 25, "rs1": 1, "rs2": 2},  # x25 = x1-x2 (x1<x2)
+            {"name": "BEQ", "rs1": 25, "rs2": 0, "imm": 12},  # if not x1<x2, else branch
+            {"name": "SUB", "rd": 25, "rs1": 1, "rs2": 2},  # x25 = x1-x2
+            {"name": "BEQ", "rs1": 0, "rs2": 0, "imm": 8},  # skip else
+            {"name": "SLLI", "rd": 25, "rs1": 1, "imm": 1},  # x25 = x1<<1 (x1==x2)
         ]
         # Build L0-L21 base
         base_ref = (
@@ -1420,7 +1425,7 @@ class Level22(TaskLevel):
                 {"name": "SW", "rd": 0, "rs1": 23, "rs2": 22, "imm": 0},
                 {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
                 {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
-                {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+                *_l18_mask_load(22),
                 {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
                 {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},
                 {"name": "ADD", "rd": 22, "rs1": 1, "rs2": 2},
@@ -1461,7 +1466,7 @@ class Level23(TaskLevel):
         else:
             base[25] = _cap32(v1 << 1)
         # L23: store x1 to mem[0], x2 to mem[4], load both, sum
-        addr0, addr4 = 0, 4
+        _addr0, _addr4 = 0, 4
         sum_val = _cap32(v1 + v2)
         base[26] = sum_val
         return {
@@ -1496,7 +1501,7 @@ class Level23(TaskLevel):
             {"name": "SW", "rd": 0, "rs1": 23, "rs2": 22, "imm": 0},
             {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
             {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
-            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+            *_l18_mask_load(22),
             {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
             {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},
             {"name": "ADD", "rd": 22, "rs1": 1, "rs2": 2},
@@ -1586,7 +1591,7 @@ class Level24(TaskLevel):
             {"name": "SW", "rd": 0, "rs1": 23, "rs2": 22, "imm": 0},
             {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
             {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
-            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+            *_l18_mask_load(22),
             {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
             {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},
             {"name": "ADD", "rd": 22, "rs1": 1, "rs2": 2},
@@ -1668,62 +1673,7 @@ class Level25(TaskLevel):
     @staticmethod
     def reference_solution() -> list[dict]:
         """L0-L24 base + L25: complex computation with all operations."""
-        # Reuse L24's reference, add L25 computation
-        base_ref = _base_ref() + [
-            {"name": "ADDI", "rd": 21, "rs1": 0, "imm": 1},
-            {"name": "SLLI", "rd": 21, "rs1": 21, "imm": 15},
-            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 1},
-            {"name": "SLLI", "rd": 22, "rs1": 22, "imm": 11},
-            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x213},
-            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 22},
-            {"name": "OR", "rd": 21, "rs1": 21, "rs2": 23},
-            {"name": "SLLI", "rd": 22, "rs1": 2, "imm": 20},
-            {"name": "OR", "rd": 22, "rs1": 22, "rs2": 21},
-            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0x40},
-            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 22, "imm": 0},
-            {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
-            {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
-            {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
-            {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
-            {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},
-            {"name": "ADD", "rd": 22, "rs1": 1, "rs2": 2},
-            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
-            {"name": "ADDI", "rd": 22, "rs1": 1, "imm": 0},
-            {"name": "SUB", "rd": 22, "rs1": 1, "rs2": 2},
-            {"name": "ADDI", "rd": 23, "rs1": 0, "imm": 0},
-            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 1, "imm": 0},
-            {"name": "XOR", "rd": 23, "rs1": 1, "rs2": 2},
-            {"name": "SW", "rd": 0, "rs1": 23, "rs2": 23, "imm": 4},
-            {"name": "LW", "rd": 23, "rs1": 23, "imm": 0},
-            {"name": "XOR", "rd": 24, "rs1": 1, "rs2": 2},
-            {"name": "SLLI", "rd": 24, "rs1": 24, "imm": 2},
-            {"name": "XOR", "rd": 24, "rs1": 24, "rs2": 1},
-            # L23: memory array
-            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0},
-            {"name": "SW", "rd": 0, "rs1": 25, "rs2": 1, "imm": 0},
-            {"name": "ADDI", "rd": 25, "rs1": 25, "imm": 4},
-            {"name": "SW", "rd": 0, "rs1": 25, "rs2": 2, "imm": 0},
-            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0},
-            {"name": "LW", "rd": 25, "rs1": 25, "imm": 0},
-            {"name": "LW", "rd": 26, "rs1": 25, "imm": 4},
-            {"name": "ADD", "rd": 26, "rs1": 25, "rs2": 26},
-            # L24: conditional memory
-            {"name": "SLT", "rd": 27, "rs1": 2, "rs2": 1},
-            {"name": "BEQ", "rs1": 27, "rs2": 0, "imm": 16},
-            {"name": "SUB", "rd": 27, "rs1": 1, "rs2": 2},
-            {"name": "JALR", "rd": 0, "rs1": 0, "imm": 0},
-            {"name": "ADDI", "rd": 0, "rs1": 0, "imm": 0},
-            {"name": "ADD", "rd": 27, "rs1": 1, "rs2": 2},
-        ]
-        # L25: x28 = (x1 XOR x2) + (x1 SLLI 1) + (x2 AND 0xFF)
-        return base_ref + [
-            {"name": "XOR", "rd": 28, "rs1": 1, "rs2": 2},  # x28 = x1 ^ x2
-            {"name": "SLLI", "rd": 25, "rs1": 1, "imm": 1},  # x25 = x1 << 1
-            {"name": "ADD", "rd": 28, "rs1": 28, "rs2": 25},  # x28 += x1<<1
-            {"name": "ADDI", "rd": 25, "rs1": 0, "imm": 0xFF},  # x25 = 0xFF
-            {"name": "AND", "rd": 26, "rs1": 2, "rs2": 25},  # x26 = x2 & 0xFF
-            {"name": "ADD", "rd": 28, "rs1": 28, "rs2": 26},  # x28 += x2&0xFF
-        ]
+        return _l25_base_ref()
 
 
 # ===========================================================================
@@ -1749,7 +1699,7 @@ def _l25_base_ref() -> list[dict]:
         {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
         # L18: XOR + AND
         {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
-        {"name": "ADDI", "rd": 22, "rs1": 0, "imm": 0x0000FFFF},
+        *_l18_mask_load(22),
         {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
         # L19: BNE
         {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},
@@ -2223,6 +2173,46 @@ LEVELS = {
     30: Level30,
 }
 
+# Registers checked by continuous verify — canonical for curriculum anti-plateau gates.
+LEVEL_VERIFY_REGS: dict[int, list[int]] = {
+    0: [3],
+    1: [3, 4],
+    2: [3, 4, 5],
+    3: [3, 4, 5, 6],
+    4: [3, 4, 5, 6, 7],
+    5: [3, 4, 5, 6, 7, 8],
+    6: [3, 4, 5, 6, 7, 8, 9],
+    7: [3, 4, 5, 6, 7, 8, 9, 10],
+    8: [3, 4, 5, 6, 7, 8, 9, 10, 11],
+    9: [3, 4, 5, 6, 7, 8, 9, 10, 12],
+    10: [3, 4, 5, 6, 7, 8, 9, 10, 12, 13],
+    11: [3, 4, 5, 6, 7, 8, 9, 14],
+    12: [3, 4, 5, 6, 7, 8, 9, 15],
+    13: [3, 4, 5, 6, 7, 8, 9, 16],
+    14: [3, 4, 5, 6, 7, 8, 9, 17],
+    15: [3, 4, 5, 6, 7, 8, 9, 18],
+    16: [3, 4, 5, 6, 7, 8, 9, 19],
+    17: [3, 4, 5, 6, 7, 8, 9, 20],
+    18: [3, 4, 5, 6, 7, 8, 9, 20, 21],
+    19: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22],
+    20: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23],
+    21: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24],
+    22: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25],
+    23: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26],
+    24: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27],
+    25: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28],
+    26: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29],
+    27: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+    28: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
+    29: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
+    30: [3, 4, 5, 6, 7, 8, 9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
+}
+
+
+def get_level_verify_reg_count(level: int) -> int:
+    regs = LEVEL_VERIFY_REGS.get(level)
+    return len(regs) if regs else 1
+
 
 def get_task_level(n: int):
     if n not in LEVELS:
@@ -2248,7 +2238,7 @@ def reference_solution(level: int, **kwargs) -> list[dict]:
 
 def generate_all_tasks(seed: int = 42):
     rng = random.Random(seed)
-    return [LEVELS[l](seed=rng.randint(0, 2**31)).generate_instance() for l in sorted(LEVELS.keys())]
+    return [LEVELS[lvl](seed=rng.randint(0, 2**31)).generate_instance() for lvl in sorted(LEVELS.keys())]
 
 
 # ===========================================================================
@@ -2258,6 +2248,7 @@ def generate_all_tasks(seed: int = 42):
 if __name__ == "__main__":
 
     from paths import ensure_project_on_path
+
     ensure_project_on_path()
 
     HAVE_ENCODE = False
@@ -2307,7 +2298,7 @@ if __name__ == "__main__":
                         decoded["name"] == instr_dict["name"].upper()
                     ), f"Round-trip mismatch: got {decoded['name']} expected {instr_dict['name']}"
                 print(f"    All {len(ref)} instructions encode/decode OK")
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, AssertionError) as e:
                 print(f"    REF ENCODE ERROR: {e}")
                 all_refs_valid = False
 
