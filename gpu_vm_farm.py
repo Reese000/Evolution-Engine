@@ -10,9 +10,24 @@ Key speedup: avoids 50+ subprocess spawns per generation (~2750/cycle).
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 
 import numpy as np
+
+# EE-W5: record VM wall time at the SOURCE.  Direct callers of
+# ``_execute_vm`` (terminal/scan-floor gate scoring calls this primitive
+# without going through ``VMFarm.evaluate``/``evaluate_batch``) would
+# otherwise be booked as orchestration time, which is exactly the
+# VM-vs-orchestration question the phase split exists to answer.  The
+# guard in ``timed_vm_eval`` is re-entrancy safe, so a call that already
+# runs inside a timed VMFarm batch is counted once, not twice.  The
+# nullcontext fallback keeps the evaluator usable if the instrumentation
+# module cannot be imported.
+try:
+    from evolution.phase_timing import timed_vm_eval
+except Exception:  # pragma: no cover -- instrumentation must never block eval
+    timed_vm_eval = nullcontext  # type: ignore[assignment]
 
 # Lazy CuPy import — only import when GPU is actually needed to avoid
 # grabbing ~8GB VRAM at module load time, which blocks PyTorch training.
@@ -304,6 +319,25 @@ def _sign_extend32(val: int) -> int:
 
 
 def _execute_vm(
+    program: list[int],
+    init_regs: dict[int, int],
+    init_mem: dict[int, int],
+    budget: int,
+) -> dict[str, Any]:
+    """Execute a single RV32I program in pure Python.
+
+    Wall time is recorded here, at the source (EE-W5): callers that reach
+    the VM without going through ``VMFarm.evaluate`` / ``evaluate_batch``
+    (terminal and scan-floor gate scoring) are then still accounted as
+    ``vm_eval`` instead of the surrounding orchestration phase, and the
+    re-entrancy guard keeps a call that is already inside a timed VMFarm
+    batch counted exactly once.
+    """
+    with timed_vm_eval():
+        return _execute_vm_inner(program, init_regs, init_mem, budget)
+
+
+def _execute_vm_inner(
     program: list[int],
     init_regs: dict[int, int],
     init_mem: dict[int, int],

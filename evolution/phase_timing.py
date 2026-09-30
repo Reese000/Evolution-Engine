@@ -83,9 +83,12 @@ def timed_vm_eval() -> Iterator[None]:
     twice and the per-generation partition would not sum to the
     generation wall time.  Depth is process-wide on purpose: a batch
     call timed on the main thread already covers the worker threads it
-    spawns.  (Concurrent *independent* VM calls from two threads would
-    sum to more than elapsed wall time; this engine runs evaluations
-    sequentially or as one batch fan-out, so that does not occur.)
+    spawns.  Two *independent* VM calls running concurrently while no
+    outer call is active would therefore be UNDER-counted: only the
+    first entrant records its elapsed time and the overlap is dropped.
+    This engine runs evaluations sequentially or as one batch fan-out,
+    so that does not occur (EE-W5 review N2: the earlier comment here
+    claimed the opposite).
     """
     global _vm_depth
     with _vm_lock:
@@ -99,6 +102,24 @@ def timed_vm_eval() -> Iterator[None]:
             _vm_depth -= 1
         if outermost:
             record_vm_eval(time.perf_counter() - start)
+
+
+_unknown_phases: set[str] = set()
+
+
+def _warn_unknown_phase(name: str) -> None:
+    """Warn once per unknown phase name.
+
+    A typo in ``_pt("...")`` would otherwise be silent: the block's time
+    simply falls into the ``unattributed`` residual (EE-W5 review N4).
+    """
+    if name in _unknown_phases:
+        return
+    _unknown_phases.add(name)
+    try:
+        sys.stderr.write(f"[phase_timing] unknown phase {name!r} -> unattributed\n")
+    except Exception:  # noqa: BLE001 -- warning must never raise
+        pass
 
 
 class PhaseTimer:
@@ -142,7 +163,11 @@ class PhaseTimer:
     @contextmanager
     def phase(self, name: str) -> Iterator[None]:
         """Attribute the enclosed block's non-VM wall time to ``name``."""
-        if not self.enabled or name not in self._net:
+        if not self.enabled:
+            yield
+            return
+        if name not in self._net:
+            _warn_unknown_phase(name)
             yield
             return
         vm_before, _ = vm_eval_totals()
@@ -172,7 +197,10 @@ class PhaseTimer:
             return None
         wall = time.perf_counter() - self._gen_start
         vm_now, calls_now = vm_eval_totals()
-        vm_seconds = max(0.0, vm_now - self._gen_vm_start)
+        # Clamp to this generation's wall: a VM batch spanning a generation
+        # boundary (or a concurrent recorder) could otherwise push `accounted`
+        # above `wall` and report a negative `unattributed` (EE-W5 review N1).
+        vm_seconds = min(max(0.0, vm_now - self._gen_vm_start), wall)
         vm_calls = max(0, calls_now - self._gen_start_calls)
 
         phases = {p: round(self._net[p], 4) for p in NAMED_PHASES}
@@ -188,7 +216,7 @@ class PhaseTimer:
         unattributed = wall - accounted
         phases["unattributed"] = round(unattributed, 4)
 
-        record: dict[str, Any] = {
+        reserved: dict[str, Any] = {
             "ts": round(time.time(), 3),
             "cycle": self._cycle,
             "generation": self._generation,
@@ -199,8 +227,14 @@ class PhaseTimer:
             "accounted_seconds": round(accounted, 4),
             "coverage_ratio": round(accounted / wall, 4) if wall > 0 else 1.0,
         }
+        record: dict[str, Any] = {}
         if extra:
-            record.update(extra)
+            # `extra` carries run-loop diagnostics (generations_stalled,
+            # champion_level).  It must not shadow the measurement keys:
+            # summary() reads them, so a clobbered `phase_seconds` would
+            # take the whole cycle result down with it (EE-W5 review S3).
+            record.update({k: v for k, v in extra.items() if k not in reserved})
+        record.update(reserved)
 
         self.records.append(record)
         self._reset_gen()
@@ -223,19 +257,43 @@ class PhaseTimer:
             with open(self._log_path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, sort_keys=True) + "\n")
             roll_log(self._log_path)
-        except (OSError, TypeError, ValueError) as exc:
-            # Instrumentation must never break evolution. OSError covers IO;
-            # TypeError/ValueError cover json.dumps on a non-serializable
-            # `extra` payload -- without them the error escapes end_generation
-            # and aborts the generation loop (EE-W5 review).
-            sys.stderr.write(f"[phase_timing] log disabled after emit failure: {exc!r}\n")
+        except Exception as exc:  # noqa: BLE001 -- see note below
+            # Instrumentation must never break evolution: any failure here
+            # (IO error, non-serializable `extra`, a bug in roll_log) has to
+            # disable the log rather than escape end_generation and abort the
+            # generation loop.  The narrower (OSError, TypeError, ValueError)
+            # tuple still let unrelated exceptions through (EE-W5 review S3).
+            try:
+                sys.stderr.write(f"[phase_timing] log disabled after emit failure: {exc!r}\n")
+            except Exception:  # noqa: BLE001 -- the reporter must not raise either
+                pass
             self._log_path = None
 
     # -- run-level summary ---------------------------------------------
     def summary(self, run_wall: float | None = None) -> dict[str, Any]:
-        """Additive per-phase summary for the cycle result dict."""
+        """Additive per-phase summary for the cycle result dict.
+
+        Never raises: the engine merges this into the cycle result *after*
+        the generation loop, and an exception here would be swallowed by the
+        runner's blanket handler and reported as ``evolution_crash``,
+        discarding a completed cycle's results (EE-W5 review S3).
+        """
         if not self.enabled:
             return {}
+        try:
+            return self._build_summary(run_wall)
+        except Exception as exc:  # noqa: BLE001 -- degrade, never fail the cycle
+            try:
+                sys.stderr.write(f"[phase_timing] summary degraded: {exc!r}\n")
+            except Exception:  # noqa: BLE001 -- the reporter must not raise either
+                pass
+            return {
+                "gen_phase_generations": len(self.records),
+                "gen_phase_seconds": 0.0,
+                "gen_phase_error": repr(exc),
+            }
+
+    def _build_summary(self, run_wall: float | None = None) -> dict[str, Any]:
         totals = {p: round(sum(r["phase_seconds"][p] for r in self.records), 3) for p in PHASES}
         gen_seconds = round(sum(r["generation_seconds"] for r in self.records), 3)
         vm_calls = sum(int(r.get("vm_eval_calls", 0)) for r in self.records)

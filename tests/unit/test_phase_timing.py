@@ -4,8 +4,11 @@ Invariants under test:
   * the four named phases + vm_eval form an EXACT partition of a
     generation's wall time (vm seconds are counted once, at the source,
     and subtracted from the enclosing orchestration phase);
+  * the source-level guard counts a nested VM call exactly once
+    (evaluate_batch -> evaluate, and direct `_execute_vm` callers);
   * one JSON line per generation lands in the rolling log;
-  * the run summary exposes only additive ``gen_phase_*`` keys.
+  * the run summary exposes only additive ``gen_phase_*`` keys and never
+    raises (a raise there would discard the completed cycle's results).
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from evolution.phase_timing import (
     PHASES,
     PhaseTimer,
     default_log_path,
+    record_vm_eval,
     reset_vm_eval,
     roll_log,
     timed_vm_eval,
@@ -209,9 +213,9 @@ def test_non_serializable_extra_does_not_escape(tmp_path):
     with timer.phase("mutation_propagation"):
         time.sleep(0.001)
     rec = timer.end_generation({"bad_payload": object()})
-    assert rec is not None                      # record still returned
+    assert rec is not None  # record still returned
     assert rec["bad_payload"] is not None
-    assert timer.log_path is None               # log disabled, not raised
+    assert timer.log_path is None  # log disabled, not raised
     # open(..., "a") creates the file before json.dumps raises, so it may
     # exist -- but no record line may have been written to it.
     log = tmp_path / "gen.jsonl"
@@ -232,7 +236,136 @@ def test_aborted_generation_does_not_leak_into_the_next():
     rec = timer.end_generation()
 
     phases = rec["phase_seconds"]
-    assert phases["mutation_propagation"] < 0.015   # 20ms of gen 0 must be gone
-    assert phases["unattributed"] >= -1e-9          # no negative residual
+    assert phases["mutation_propagation"] < 0.015  # 20ms of gen 0 must be gone
+    assert phases["unattributed"] >= -1e-9  # no negative residual
     assert 0.0 <= rec["coverage_ratio"] <= 1.0 + 1e-9
     assert rec["generation"] == 1
+
+
+# ---------------------------------------------------------------------------
+# EE-W5 review findings (B1 / S1 / N1 / N3 / N4)
+# ---------------------------------------------------------------------------
+
+
+def test_reentrant_timed_vm_eval_counts_the_outer_call_once():
+    """evaluate_batch -> evaluate must be timed once, not twice (S1).
+
+    The outer wrapper measures its OWN window, which *contains* the inner
+    call, so the recorded time is the outer window (~30ms here).  If the
+    guard were broken the inner window would be recorded as well: two
+    recordings and ~40ms total -- over-reported `vm_eval`, which on a real
+    cycle drives `unattributed` negative.
+    """
+    with timed_vm_eval():
+        time.sleep(0.020)
+        with timed_vm_eval():
+            time.sleep(0.010)
+    seconds, calls = vm_eval_totals()
+    assert calls == 1  # the guard, not the sleep, is the proof
+    assert seconds >= 0.029  # the outer window covers both sleeps
+    assert seconds < 0.037  # ...and NOT outer + inner (~0.040)
+
+
+def test_vm_work_outside_a_vmfarm_block_is_booked_as_vm_eval():
+    """Direct VM calls inside an orchestration phase move to vm_eval (B1).
+
+    Terminal/scan-floor gate scoring calls `gpu_vm_farm._execute_vm`
+    directly instead of `VMFarm.evaluate*`.  With the source-level wrapper
+    that time is subtracted from the enclosing `mutation_propagation` block
+    and reported under `vm_eval` -- otherwise the split would misreport
+    VM work as "Python orchestration", which is the verdict this card needs.
+    """
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timed_vm_eval():  # what _execute_vm now does at source
+            time.sleep(0.020)
+    rec = timer.end_generation()
+
+    phases = rec["phase_seconds"]
+    assert rec["vm_eval_seconds"] >= 0.020  # booked as VM
+    assert phases["mutation_propagation"] < 0.005  # not as orchestration
+    assert phases["unattributed"] >= -1e-9
+    assert rec["coverage_ratio"] <= 1.0 + 1e-9
+    # the partition still holds: nothing was double counted
+    assert sum(phases.values()) == pytest.approx(rec["generation_seconds"], abs=0.003)
+
+
+def test_execute_vm_records_wall_time_at_the_source():
+    """`gpu_vm_farm._execute_vm` itself is wrapped (B1 regression).
+
+    A direct call -- the path terminal/scan-floor gate scoring takes --
+    must increase the process-wide VM accumulator, so its cost lands in
+    `vm_eval` instead of the enclosing orchestration phase.  A straight-line
+    program is used because the VM short-circuits self-loops (a `jal x0,0`
+    reports the full budget in microseconds and would be too fast to
+    measure); 20k real instructions take ~15ms.
+    """
+    gpu_vm_farm = pytest.importorskip("gpu_vm_farm")
+    from mutation_proposer import EBREAK, make_rv32i
+
+    reset_vm_eval()
+    program = [make_rv32i("ADDI", rd=3, rs1=1, imm=0)] * 20000 + [EBREAK]
+    started = time.perf_counter()
+    result = gpu_vm_farm._execute_vm(program, {1: 1}, {}, 100000)
+    elapsed = time.perf_counter() - started
+
+    assert isinstance(result, dict)
+    seconds, calls = vm_eval_totals()
+    assert calls == 1  # the source wrapper recorded it
+    assert seconds >= 0.005  # real work, not a self-loop short-circuit
+    assert seconds <= elapsed + 0.01  # the wrapper brackets the call
+
+
+def test_vm_seconds_are_clamped_to_the_generation_wall():
+    """VM time recorded past a generation boundary cannot go negative (N1)."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        record_vm_eval(5.0)  # a batch that "spans" the boundary
+        time.sleep(0.001)
+    rec = timer.end_generation()
+
+    assert rec["vm_eval_seconds"] <= rec["generation_seconds"] + 1e-9
+    assert rec["phase_seconds"]["unattributed"] >= -1e-9
+    assert rec["coverage_ratio"] <= 1.0 + 1e-9
+
+
+def test_extra_cannot_shadow_measurement_keys():
+    """`extra` diagnostics must not overwrite the measurement fields (S3)."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        time.sleep(0.005)
+    rec = timer.end_generation({"generations_stalled": 3, "phase_seconds": "evil", "generation_seconds": -1})
+    assert isinstance(rec["phase_seconds"], dict)  # reserved key wins
+    assert rec["generation_seconds"] > 0  # reserved key wins
+    assert rec["generations_stalled"] == 3  # non-colliding extra kept
+
+
+def test_summary_never_raises_on_a_corrupt_record():
+    """A malformed record degrades the summary instead of killing the cycle (S3)."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    timer.end_generation()
+    timer.records[0]["phase_seconds"] = "corrupted"
+
+    summary = timer.summary(run_wall=1.0)  # must not raise
+    assert summary["gen_phase_generations"] == 1
+    assert all(k.startswith("gen_phase_") for k in summary)
+
+
+def test_unknown_phase_name_warns_once(capsys):
+    """A typo in `_pt("...")` is reported instead of silently lost (N4)."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("phase_typo_never_registered"):
+        pass
+    with timer.phase("phase_typo_never_registered"):
+        pass
+    rec = timer.end_generation()
+
+    err = capsys.readouterr().err
+    assert "phase_typo_never_registered" in err
+    assert err.count("phase_typo_never_registered") == 1  # warned once
+    assert rec["phase_seconds"]["unattributed"] >= 0.0  # fell into residual
