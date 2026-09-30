@@ -11,12 +11,9 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import math
 import os
 import random
 import sys
-import tempfile
-from typing import Any, Dict
 
 import pytest
 
@@ -32,11 +29,11 @@ from config import EvolutionSection
 # ══════════════════════════════════════════════════════════════════════════════
 # Lazy imports — one-time, cached by Python
 # ══════════════════════════════════════════════════════════════════════════════
-from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, compute_qd_axes
+from evolution_engine import EvolutionConfig
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from metrics import MetricsCollector
 from monitoring_alerts import AlertManager
-from mutation_proposer import EBREAK, NOP, DirectedMutator, generate_seed_program, make_rv32i
+from mutation_proposer import EBREAK, DirectedMutator, generate_seed_program
 from novelty import SparseArchive
 from progression_tracker import ProgressionTracker
 from qd_archive import MAPElitesArchive
@@ -137,6 +134,7 @@ _PIPELINE_METHOD_FILES: dict[str, str] = {
     "send_monoculture_alert": "monitoring_alerts.py",
     "send_recovery_stuck_alert": "monitoring_alerts.py",
     "get_plateau_analysis": "evolution/mutation_helpers.py",
+    "manage_capacity": "evolution/qd_archive_mixin.py",
 }
 
 
@@ -645,7 +643,7 @@ class TestFinalStats:
 
                     test_funcs = re.findall(r"def (test_\w+)", content)
                     total_tests += len(test_funcs)
-                except Exception:
+                except (OSError, ValueError):
                     pass
         assert total_tests > 2000, f"Total test count {total_tests} is not above 2000"
 

@@ -11,7 +11,6 @@ Covers:
 
 import os
 import random
-import sys
 
 import pytest
 
@@ -280,7 +279,7 @@ class TestOldChampionArchival:
         engine = _make_engine()
 
         # Simulate a champion replacement
-        old_champion = list(engine.champion)
+        list(engine.champion)
         old_fitness = engine.champion_fitness
 
         # New champion (slightly better)

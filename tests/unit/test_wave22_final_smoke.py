@@ -6,11 +6,6 @@ surfaces are wired correctly. No actual evolution is run.
 """
 from __future__ import annotations
 
-import os
-import sys
-
-import pytest
-
 # Ensure project root is on sys.path
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine

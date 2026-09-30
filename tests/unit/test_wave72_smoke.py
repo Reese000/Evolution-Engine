@@ -10,14 +10,10 @@ Does NOT modify any existing files.
 """
 from __future__ import annotations
 
-import os
 import random
 import sys
 from collections import deque
-from dataclasses import fields as dc_fields
 from pathlib import Path
-
-import pytest
 
 # ── path setup ────────────────────────────────────────────────────────────────
 _ROOT = Path(__file__).resolve().parent.parent.parent
@@ -237,6 +233,4 @@ class TestConfigHealth:
         """Default config should produce no validation warnings."""
         config = EvolutionSection()
         warnings = config.validate_config()
-        assert len(warnings) == 0, (
-            f"Default config produced unexpected warnings: {warnings}"
-        )
+        assert len(warnings) == 0, f"Default config produced unexpected warnings: {warnings}"

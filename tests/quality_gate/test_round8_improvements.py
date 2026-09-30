@@ -614,7 +614,7 @@ class TestMetaControllerCacheInvalidation:
                 generations_completed=50,
             )
             mc.update_cycle(snap)
-        result1 = mc.detect_stagnation()
+        mc.detect_stagnation()
         # Cache is set after detect_stagnation with >= 2 snapshots
         assert mc._cached_stagnation is not None
         assert mc._cached_stagnation_len == 3
@@ -636,7 +636,7 @@ class TestMetaControllerCacheInvalidation:
         mc.update_cycle(snap4)
         # After update_cycle, _cached_stagnation_len should be invalidated (-1)
         assert mc._cached_stagnation_len == -1
-        result2 = mc.detect_stagnation()
+        mc.detect_stagnation()
         # Now cache is updated to length 4
         assert mc._cached_stagnation_len == 4
 

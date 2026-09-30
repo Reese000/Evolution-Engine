@@ -9,7 +9,6 @@ Tests:
 from __future__ import annotations
 
 import os
-import sys
 
 # Ensure USERNAME is set on Windows — torch's getuser() falls back to
 # the pwd module which does not exist on Windows.

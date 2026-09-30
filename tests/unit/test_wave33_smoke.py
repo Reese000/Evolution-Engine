@@ -8,8 +8,6 @@ types.  No actual evolution runs.
 
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
@@ -117,9 +115,7 @@ class TestConfigHealth:
             "max_consecutive_same_strategy",
             "total_config_fields",
         }
-        assert expected_keys.issubset(summary.keys()), (
-            f"Missing keys: {expected_keys - summary.keys()}"
-        )
+        assert expected_keys.issubset(summary.keys()), f"Missing keys: {expected_keys - summary.keys()}"
 
     def test_validate_config_returns_list(self):
         """validate_config returns a list."""

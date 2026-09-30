@@ -6,8 +6,6 @@ return correct shapes without running any actual evolution.
 """
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
 
 # ══════════════════════════════════════════════════════════════════════════════

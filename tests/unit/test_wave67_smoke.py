@@ -8,8 +8,6 @@ evolution is run.
 
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
@@ -77,9 +75,7 @@ class TestEngineHealth:
         for key in expected_keys:
             assert key in diag, f"Missing key in diagnostics: {key}"
 
-    def test_engine_get_performance_metrics_returns_dict(
-        self, engine: EvolutionEngine
-    ):
+    def test_engine_get_performance_metrics_returns_dict(self, engine: EvolutionEngine):
         """get_performance_metrics returns a dict with expected keys."""
         metrics = engine.get_performance_metrics()
         assert isinstance(metrics, dict)

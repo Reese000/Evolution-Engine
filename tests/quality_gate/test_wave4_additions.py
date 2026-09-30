@@ -13,22 +13,18 @@ Tests cover:
 """
 from __future__ import annotations
 
-import math
-import os
-import sys
-import time
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from champion_archive import ChampionArchive, ChampionEntry
-from meta_controller import MetaController, StagnationResult, TelemetrySnapshot, TuningAction
-from novelty import SparseArchive
+from champion_archive import ChampionArchive
+from meta_controller import MetaController, TelemetrySnapshot, TuningAction
 from strategy_archive import StrategyArchive
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. TestTimeWeightedSuccessRate
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestTimeWeightedSuccessRate:
     """Tests for StrategyArchive.time_weighted_success_rate()."""
@@ -67,9 +63,7 @@ class TestTimeWeightedSuccessRate:
         rate_long_hl = sa.time_weighted_success_rate("STRAT_B", decay_halflife=100)
 
         # Short halflife emphasizes the 2 recent successes more → higher rate
-        assert rate_short_hl > rate_long_hl, (
-            f"Short halflife ({rate_short_hl}) should exceed long ({rate_long_hl})"
-        )
+        assert rate_short_hl > rate_long_hl, f"Short halflife ({rate_short_hl}) should exceed long ({rate_long_hl})"
 
     def test_all_successes(self):
         """All successes should yield a rate near 1.0."""
@@ -91,6 +85,7 @@ class TestTimeWeightedSuccessRate:
 # ══════════════════════════════════════════════════════════════════════
 # 2. TestDominanceReport
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestDominanceReport:
     """Tests for StrategyArchive.get_dominance_report()."""
@@ -142,6 +137,7 @@ class TestDominanceReport:
 # 3. TestQualityWeightedPrune
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestQualityWeightedPrune:
     """Tests for ChampionArchive.quality_weighted_prune()."""
 
@@ -150,11 +146,9 @@ class TestQualityWeightedPrune:
         ca = ChampionArchive(path="/tmp/test_cwprune.jsonl", max_size=100)
         # Add 15 entries — some low fitness, some high
         for i in range(10):
-            ca.add([0x00000013] * (i + 1), level=10, fitness=10.0 + i,
-                   cycle=1, generation=i)
+            ca.add([0x00000013] * (i + 1), level=10, fitness=10.0 + i, cycle=1, generation=i)
         for i in range(5):
-            ca.add([0x00000013] * (i + 50), level=10, fitness=500.0 + i,
-                   cycle=1, generation=100 + i)
+            ca.add([0x00000013] * (i + 50), level=10, fitness=500.0 + i, cycle=1, generation=100 + i)
         assert ca.size == 15
 
         # Manually set max_size to force over-capacity pruning
@@ -167,8 +161,7 @@ class TestQualityWeightedPrune:
         """quality_weighted_prune should return the number of entries removed."""
         ca = ChampionArchive(path="/tmp/test_cwprune2.jsonl", max_size=3)
         for i in range(10):
-            ca.add([0x00000013] * (i + 1), level=10, fitness=float(i),
-                   cycle=1, generation=i)
+            ca.add([0x00000013] * (i + 1), level=10, fitness=float(i), cycle=1, generation=i)
         count = ca.quality_weighted_prune()
         assert isinstance(count, int)
         assert count >= 0
@@ -177,8 +170,7 @@ class TestQualityWeightedPrune:
         """When under max_size, nothing should be removed."""
         ca = ChampionArchive(path="/tmp/test_cwprune3.jsonl", max_size=50)
         for i in range(5):
-            ca.add([0x00000013] * (i + 1), level=10, fitness=100.0,
-                   cycle=1, generation=i)
+            ca.add([0x00000013] * (i + 1), level=10, fitness=100.0, cycle=1, generation=i)
         removed = ca.quality_weighted_prune()
         assert removed == 0
         assert ca.size == 5
@@ -188,12 +180,10 @@ class TestQualityWeightedPrune:
         ca = ChampionArchive(path="/tmp/test_cwprune4.jsonl", max_size=3)
         # Add foundational entries (level 0-6) with low fitness
         for i in range(3):
-            ca.add([0x00000013] * (i + 1), level=i, fitness=10.0,
-                   cycle=1, generation=i)
+            ca.add([0x00000013] * (i + 1), level=i, fitness=10.0, cycle=1, generation=i)
         # Add high-level entries with high fitness
         for i in range(5):
-            ca.add([0x00000013] * (i + 10), level=10, fitness=100.0 + i,
-                   cycle=1, generation=10 + i)
+            ca.add([0x00000013] * (i + 10), level=10, fitness=100.0 + i, cycle=1, generation=10 + i)
 
         ca.quality_weighted_prune()
         # Foundational entries should survive
@@ -205,6 +195,7 @@ class TestQualityWeightedPrune:
 # 4. TestDiversityReport
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestDiversityReport:
     """Tests for ChampionArchive.get_diversity_report()."""
 
@@ -212,11 +203,9 @@ class TestDiversityReport:
         """Report should correctly aggregate across multiple levels."""
         ca = ChampionArchive(path="/tmp/test_divrep.jsonl", max_size=100)
         for i in range(5):
-            ca.add([0x00000013] * (i + 5), level=3, fitness=100.0,
-                   cycle=1, generation=i)
+            ca.add([0x00000013] * (i + 5), level=3, fitness=100.0, cycle=1, generation=i)
         for i in range(5):
-            ca.add([0x00000013] * (i + 10), level=10, fitness=200.0,
-                   cycle=1, generation=i)
+            ca.add([0x00000013] * (i + 10), level=10, fitness=200.0, cycle=1, generation=i)
 
         report = ca.get_diversity_report()
         assert report["total_champions"] == 10
@@ -239,16 +228,14 @@ class TestDiversityReport:
         ca = ChampionArchive(path="/tmp/test_divrep_var.jsonl", max_size=100)
         # Uniform length programs
         for i in range(10):
-            ca.add([0x00000013] * 5, level=10, fitness=100.0,
-                   cycle=1, generation=i)
+            ca.add([0x00000013] * 5, level=10, fitness=100.0, cycle=1, generation=i)
         report = ca.get_diversity_report()
         assert report["program_length_variance"] == 0.0
 
         # Now add programs with varied lengths
         ca2 = ChampionArchive(path="/tmp/test_divrep_var2.jsonl", max_size=100)
         for i in range(10):
-            ca2.add([0x00000013] * (i + 1), level=10, fitness=100.0,
-                    cycle=1, generation=i)
+            ca2.add([0x00000013] * (i + 1), level=10, fitness=100.0, cycle=1, generation=i)
         report2 = ca2.get_diversity_report()
         assert report2["program_length_variance"] > 0.0
 
@@ -256,6 +243,7 @@ class TestDiversityReport:
 # ══════════════════════════════════════════════════════════════════════
 # 5. TestRecoveryConfidence
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestRecoveryConfidence:
     """Tests for MetaController.get_recovery_confidence()."""
@@ -266,10 +254,7 @@ class TestRecoveryConfidence:
         mc.recovery_mode = True
         # Add consecutive recovery tuning log entries
         for i in range(recovery_cycles):
-            mc._tuning_log.append(
-                TuningAction("recovery", "param", None, 0.5,
-                             f"recovery_cycle_{i}", cycle=i + 1)
-            )
+            mc._tuning_log.append(TuningAction("recovery", "param", None, 0.5, f"recovery_cycle_{i}", cycle=i + 1))
         return mc
 
     def test_recovering_state(self):
@@ -287,11 +272,18 @@ class TestRecoveryConfidence:
         for i in range(5):
             mc.telemetry.append(
                 TelemetrySnapshot(
-                    cycle=i + 1, fitness=100.0, level=0,
-                    champion_words=10, val_loss=1.0, diversity=0.5,
-                    novelty_size=0, qd_occupied=0, qd_total=100,
-                    traces_count=0, retrained=False,
-                    generations_completed=50
+                    cycle=i + 1,
+                    fitness=100.0,
+                    level=0,
+                    champion_words=10,
+                    val_loss=1.0,
+                    diversity=0.5,
+                    novelty_size=0,
+                    qd_occupied=0,
+                    qd_total=100,
+                    traces_count=0,
+                    retrained=False,
+                    generations_completed=50,
                 )
             )
         result = mc.get_recovery_confidence()
@@ -314,11 +306,18 @@ class TestRecoveryConfidence:
         for i in range(4):
             mc.telemetry.append(
                 TelemetrySnapshot(
-                    cycle=i + 1, fitness=100.0 + i * 10, level=0,
-                    champion_words=10, val_loss=1.0, diversity=0.5,
-                    novelty_size=0, qd_occupied=0, qd_total=100,
-                    traces_count=0, retrained=False,
-                    generations_completed=50
+                    cycle=i + 1,
+                    fitness=100.0 + i * 10,
+                    level=0,
+                    champion_words=10,
+                    val_loss=1.0,
+                    diversity=0.5,
+                    novelty_size=0,
+                    qd_occupied=0,
+                    qd_total=100,
+                    traces_count=0,
+                    retrained=False,
+                    generations_completed=50,
                 )
             )
         result = mc.get_recovery_confidence()
@@ -330,6 +329,7 @@ class TestRecoveryConfidence:
 # 6. TestTuningEscalationHistory
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestTuningEscalationHistory:
     """Tests for MetaController.get_tuning_escalation_history()."""
 
@@ -337,12 +337,9 @@ class TestTuningEscalationHistory:
         """Events should be returned in chronological order."""
         mc = MetaController(checkpoint_dir="/tmp/mc_escalation_test")
         mc._tuning_log = [
-            TuningAction("evolution", "mutation_rate", 0.5, 0.55,
-                         "stagnation: fitness_plateau", cycle=1),
-            TuningAction("retrain", "retrain_lr", 3e-4, 1.5e-4,
-                         "regression: val_loss_spike", cycle=2),
-            TuningAction("evolution", "mutation_rate", 0.55, 0.65,
-                         "stagnation: diversity_collapse", cycle=3),
+            TuningAction("evolution", "mutation_rate", 0.5, 0.55, "stagnation: fitness_plateau", cycle=1),
+            TuningAction("retrain", "retrain_lr", 3e-4, 1.5e-4, "regression: val_loss_spike", cycle=2),
+            TuningAction("evolution", "mutation_rate", 0.55, 0.65, "stagnation: diversity_collapse", cycle=3),
         ]
 
         history = mc.get_tuning_escalation_history()
@@ -364,8 +361,7 @@ class TestTuningEscalationHistory:
         """action_taken should be in domain.param = new_value format."""
         mc = MetaController(checkpoint_dir="/tmp/mc_escalation_test3")
         mc._tuning_log = [
-            TuningAction("retrain", "retrain_lr", 3e-4, 1e-4,
-                         "stagnation: fitness_plateau", cycle=1),
+            TuningAction("retrain", "retrain_lr", 3e-4, 1e-4, "stagnation: fitness_plateau", cycle=1),
         ]
         history = mc.get_tuning_escalation_history()
         assert history[0]["action_taken"] == "retrain.retrain_lr = 0.0001"
@@ -375,12 +371,12 @@ class TestTuningEscalationHistory:
 # 7. TestPipelineAdaptiveExploration
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestPipelineAdaptiveExploration:
     """Pipeline integration test: _choose_mutation_strategy calls adaptive_exploration_bonus."""
 
     def test_calls_adaptive_exploration_bonus(self):
         """Verify adaptive_exploration_bonus is called during strategy selection."""
-        from mutation_proposer import MutationStrategy
         from tests.conftest import make_engine
 
         engine = make_engine(with_archive=True)
@@ -410,10 +406,7 @@ class TestPipelineAdaptiveExploration:
             engine.strategy_archive.record("HYBRID", level=0, success=True, generation=i)
 
         # Force a high bonus that will trigger the override path
-        with patch.object(
-            engine.strategy_archive, "adaptive_exploration_bonus",
-            return_value=0.9
-        ):
+        with patch.object(engine.strategy_archive, "adaptive_exploration_bonus", return_value=0.9):
             # Run multiple times — the override should fire when rng < 0.9
             strategies_used = set()
             for _ in range(20):
@@ -422,14 +415,13 @@ class TestPipelineAdaptiveExploration:
 
             # With a 0.9 bonus and many iterations, we should see at least 2
             # different strategies (the override forces a random non-GROW)
-            assert len(strategies_used) >= 2, (
-                f"Expected strategy diversity, got: {strategies_used}"
-            )
+            assert len(strategies_used) >= 2, f"Expected strategy diversity, got: {strategies_used}"
 
 
 # ══════════════════════════════════════════════════════════════════════
 # 8. TestPipelineNoveltyCapacity
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestPipelineNoveltyCapacity:
     """Pipeline integration test: _update_novelty_archive calls manage_capacity."""

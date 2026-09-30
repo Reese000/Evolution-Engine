@@ -10,7 +10,6 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
-import os
 import re
 import sys
 from pathlib import Path
@@ -65,44 +64,49 @@ def _get_source_lines(name: str) -> list[str]:
 # Test 1: Module Docstrings
 # ═════════════════════════════════════════════════════════════════════════
 
+
 class TestModuleDocstrings:
     """Verify all enhanced modules have docstrings."""
 
-    @pytest.mark.parametrize("module_name", [
-        "meta_controller",
-        "strategy_archive",
-        "champion_archive",
-        "novelty",
-        "qd_archive",
-        "mutation_proposer",
-        "monitoring_alerts",
-        "metrics",
-        "data_rotation",
-        "progression_tracker",
-        "config",
-    ])
+    @pytest.mark.parametrize(
+        "module_name",
+        [
+            "meta_controller",
+            "strategy_archive",
+            "champion_archive",
+            "novelty",
+            "qd_archive",
+            "mutation_proposer",
+            "monitoring_alerts",
+            "metrics",
+            "data_rotation",
+            "progression_tracker",
+            "config",
+        ],
+    )
     def test_module_has_docstring(self, module_name):
         """Each enhanced module must have a non-empty module-level docstring."""
         source = _get_source(module_name)
         tree = ast.parse(source, filename=f"{module_name}.py")
         docstring = ast.get_docstring(tree)
-        assert docstring, (
-            f"Module '{module_name}' is missing a module-level docstring"
-        )
+        assert docstring, f"Module '{module_name}' is missing a module-level docstring"
 
-    @pytest.mark.parametrize("module_name", [
-        "meta_controller",
-        "strategy_archive",
-        "champion_archive",
-        "novelty",
-        "qd_archive",
-        "mutation_proposer",
-        "monitoring_alerts",
-        "metrics",
-        "data_rotation",
-        "progression_tracker",
-        "config",
-    ])
+    @pytest.mark.parametrize(
+        "module_name",
+        [
+            "meta_controller",
+            "strategy_archive",
+            "champion_archive",
+            "novelty",
+            "qd_archive",
+            "mutation_proposer",
+            "monitoring_alerts",
+            "metrics",
+            "data_rotation",
+            "progression_tracker",
+            "config",
+        ],
+    )
     def test_module_file_exists(self, module_name):
         """Verify the module source file exists on disk."""
         path = _MOD_PATHS[module_name]
@@ -179,14 +183,11 @@ class TestMethodDocstrings:
                 if docstring:
                     docstring_found = True
                 found = True
-                    # Don't break — check all matches (e.g., static methods)
+                # Don't break — check all matches (e.g., static methods)
 
-        assert found, (
-            f"Method '{method_name}' not found in module '{mod_name}'"
-        )
+        assert found, f"Method '{method_name}' not found in module '{mod_name}'"
         assert docstring_found, (
-            f"Method '{method_name}' in module '{mod_name}' "
-            f"(class={class_name}) is missing a docstring"
+            f"Method '{method_name}' in module '{mod_name}' " f"(class={class_name}) is missing a docstring"
         )
 
 
@@ -273,12 +274,14 @@ def _get_method_ast_node(
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.ClassDef) and class_name and node.name == class_name:
             for item in ast.iter_child_nodes(node):
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if item.name == method_name:
-                        return item
-        elif class_name is None and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name == method_name:
-                return node
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method_name:
+                    return item
+        elif (
+            class_name is None
+            and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == method_name
+        ):
+            return node
     return None
 
 
@@ -293,17 +296,14 @@ class TestCodeQuality:
     def test_no_todo_fixme_hack(self, mod_name, method_name, class_name):
         """New methods must not contain TODO, FIXME, or HACK markers."""
         node = _get_method_ast_node(mod_name, method_name, class_name)
-        assert node is not None, (
-            f"Could not find '{method_name}' in '{mod_name}' "
-            f"(class={class_name})"
-        )
+        assert node is not None, f"Could not find '{method_name}' in '{mod_name}' " f"(class={class_name})"
 
         # Get the source lines of the method body
         source = _get_source(mod_name)
         lines = source.splitlines()
         start = node.lineno - 1  # 0-indexed
         end = node.end_lineno if hasattr(node, "end_lineno") else start + 50
-        method_body = "\n".join(lines[start:end])
+        "\n".join(lines[start:end])
 
         # Strip comments to avoid false positives in docstrings
         # Check each line for TODO/FIXME/HACK (case-insensitive)
@@ -311,15 +311,12 @@ class TestCodeQuality:
         for i, line in enumerate(lines[start:end], start=start + 1):
             stripped = line.strip()
             # Skip lines that are part of a docstring (triple-quoted)
-            if stripped.startswith(("#", '"', "'")):
-                # Only flag comments containing these markers
-                if re.search(r"\b(TODO|FIXME|HACK)\b", stripped, re.IGNORECASE):
-                    violations.append(f"  Line {i}: {stripped}")
+            if stripped.startswith(("#", '"', "'")) and re.search(r"\b(TODO|FIXME|HACK)\b", stripped, re.IGNORECASE):
+                violations.append(f"  Line {i}: {stripped}")
 
-        assert not violations, (
-            f"Method '{method_name}' in '{mod_name}' contains "
-            f"TODO/FIXME/HACK markers:\n" + "\n".join(violations)
-        )
+        assert (
+            not violations
+        ), f"Method '{method_name}' in '{mod_name}' contains " f"TODO/FIXME/HACK markers:\n" + "\n".join(violations)
 
     @pytest.mark.parametrize(
         "mod_name,method_name,class_name",
@@ -328,19 +325,14 @@ class TestCodeQuality:
     )
     def test_snake_case_naming(self, mod_name, method_name, class_name):
         """Method names must follow snake_case convention."""
-        assert re.match(
-            r"^[a-z][a-z0-9]*(_[a-z0-9]+)*$", method_name
-        ), (
-            f"Method name '{method_name}' in '{mod_name}' "
-            f"does not follow snake_case convention"
+        assert re.match(r"^[a-z][a-z0-9]*(_[a-z0-9]+)*$", method_name), (
+            f"Method name '{method_name}' in '{mod_name}' " f"does not follow snake_case convention"
         )
 
     def test_all_enhanced_modules_exist(self):
         """Verify all enhanced module files exist."""
         for mod_name, path in _MOD_PATHS.items():
-            assert path.is_file(), (
-                f"Enhanced module '{mod_name}' not found at {path}"
-            )
+            assert path.is_file(), f"Enhanced module '{mod_name}' not found at {path}"
 
     def test_module_docstrings_are_meaningful(self):
         """Module docstrings should have at least 10 characters."""
@@ -381,22 +373,13 @@ class TestCodeQuality:
             node = _get_method_ast_node(mod_name, method_name, class_name)
             assert node is not None
             docstring = ast.get_docstring(node)
-            assert docstring, (
-                f"Method '{method_name}' in '{mod_name}' has no docstring"
-            )
+            assert docstring, f"Method '{method_name}' in '{mod_name}' has no docstring"
             # Should mention Args or Parameters or have parameter descriptions
-            has_params_section = any(
-                kw in docstring.lower()
-                for kw in ("args", "parameters", "params", "attributes")
-            )
+            has_params_section = any(kw in docstring.lower() for kw in ("args", "parameters", "params", "attributes"))
             # Also accept if all params are mentioned by name in the docstring
             args_node = node.args
-            param_names = [
-                a.arg for a in args_node.args if a.arg != "self"
-            ]
-            has_param_mentions = any(
-                pname in docstring for pname in param_names
-            )
+            param_names = [a.arg for a in args_node.args if a.arg != "self"]
+            has_param_mentions = any(pname in docstring for pname in param_names)
             assert has_params_section or has_param_mentions, (
                 f"Method '{method_name}' in '{mod_name}' has parameters "
                 f"{param_names} but docstring doesn't document them"

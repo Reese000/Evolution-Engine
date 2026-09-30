@@ -7,12 +7,9 @@ method signatures, and return types. No actual evolution is executed.
 
 from __future__ import annotations
 
-import types
-
-import pytest
+from typing import ClassVar
 
 from config import EvolutionSection
-from evolution_engine import EvolutionConfig
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TestEngineHealth
@@ -24,7 +21,7 @@ class TestEngineHealth:
 
     # -- attributes present on a default-config engine -----------------------
 
-    EXPECTED_ATTRS: list[str] = [
+    EXPECTED_ATTRS: ClassVar[list[str]] = [
         "config",
         "rng",
         "champion",

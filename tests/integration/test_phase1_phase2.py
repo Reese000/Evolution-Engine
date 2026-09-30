@@ -30,24 +30,29 @@ class TestVMFarmImport(unittest.TestCase):
 
     def test_eval_result_importable(self):
         from vm_farm import EvalResult
+
         self.assertTrue(hasattr(EvalResult, "_fields") or hasattr(EvalResult, "__annotations__"))
 
     def test_eval_result_namedtuple(self):
         from vm_farm import EvalResult
+
         er = EvalResult(success=True, registers={}, memory={}, trace=[], cycles=0, error=None, blocked_writes=[])
         self.assertTrue(er.success)
         self.assertEqual(er.cycles, 0)
 
     def test_run_one_evaluation_callable(self):
         from vm_farm import _run_one_evaluation
+
         self.assertTrue(callable(_run_one_evaluation))
 
     def test_gpu_vm_farm_importable(self):
-        from gpu_vm_farm import GpuVMFarm, _execute_vm
+        from gpu_vm_farm import _execute_vm
+
         self.assertTrue(callable(_execute_vm))
 
     def test_execute_vm_basic(self):
         from gpu_vm_farm import _execute_vm
+
         # Simple program: ADDI x10, x0, 42; EBREAK
         program = [
             0x02A00513,  # ADDI x10, x0, 42
@@ -64,16 +69,19 @@ class TestPaths(unittest.TestCase):
 
     def test_project_root(self):
         from paths import PROJECT_ROOT
+
         self.assertTrue(PROJECT_ROOT.is_dir())
 
     def test_milestone_dirs_exist_as_paths(self):
         from paths import CONFIG_DIR, MILESTONE1_DIR
+
         # These may not exist in all environments, but should be Path objects
         self.assertIsInstance(CONFIG_DIR, Path)
         self.assertIsInstance(MILESTONE1_DIR, Path)
 
     def test_ensure_project_on_path(self):
         from paths import PROJECT_ROOT, ensure_project_on_path
+
         before = len(sys.path)
         ensure_project_on_path()
         after = len(sys.path)
@@ -83,6 +91,7 @@ class TestPaths(unittest.TestCase):
 
     def test_config_paths(self):
         from paths import ENGINE_CONFIG, TOOL_LIBRARY
+
         self.assertTrue(ENGINE_CONFIG.is_file())
         self.assertTrue(TOOL_LIBRARY.is_file())
 
@@ -92,6 +101,7 @@ class TestConfigFiles(unittest.TestCase):
 
     def test_engine_config_valid_json(self):
         from paths import ENGINE_CONFIG
+
         with open(ENGINE_CONFIG) as f:
             cfg = json.load(f)
         self.assertIn("evolution", cfg)
@@ -101,6 +111,7 @@ class TestConfigFiles(unittest.TestCase):
 
     def test_tool_library_valid_json(self):
         from paths import TOOL_LIBRARY
+
         with open(TOOL_LIBRARY) as f:
             lib = json.load(f)
         self.assertIn("instructions", lib)
@@ -108,6 +119,7 @@ class TestConfigFiles(unittest.TestCase):
 
     def test_engine_config_has_required_fields(self):
         from paths import ENGINE_CONFIG
+
         with open(ENGINE_CONFIG) as f:
             cfg = json.load(f)
         evo = cfg["evolution"]
@@ -118,6 +130,7 @@ class TestConfigFiles(unittest.TestCase):
 
     def test_autonomous_runner_config_section(self):
         from paths import ENGINE_CONFIG
+
         with open(ENGINE_CONFIG) as f:
             cfg = json.load(f)
         ar = cfg["autonomous_runner"]
@@ -130,13 +143,15 @@ class TestEvolutionEngineImport(unittest.TestCase):
     """evolution_engine.py imports cleanly."""
 
     def test_import(self):
-        from evolution_engine import EvolutionConfig, EvolutionEngine, VMFarm
+        from evolution_engine import EvolutionConfig, EvolutionEngine
+
         self.assertTrue(callable(EvolutionEngine))
         config = EvolutionConfig()
         self.assertEqual(config.population_size, 50)
 
     def test_evolution_config_defaults(self):
         from evolution_engine import EvolutionConfig
+
         config = EvolutionConfig()
         self.assertEqual(config.max_generations, 200)
         self.assertAlmostEqual(config.mutation_rate, 0.3)
@@ -145,11 +160,13 @@ class TestEvolutionEngineImport(unittest.TestCase):
 
     def test_vm_farm_wrapper(self):
         from evolution_engine import VMFarm
+
         vm = VMFarm(num_workers=1)
         self.assertEqual(vm.num_workers, 1)
 
     def test_compute_qd_axes(self):
         from evolution_engine import compute_qd_axes
+
         # Simple program with ADD (ALU_REG category)
         program = [0x003100B3]  # ADD x1, x2, x3
         trace = {"final_regs": {1: 5, 2: 3}}
@@ -162,11 +179,13 @@ class TestMutationProposerImport(unittest.TestCase):
     """mutation_proposer.py imports cleanly."""
 
     def test_import(self):
-        from mutation_proposer import DirectedMutator, MutationStrategy, TraceAnalyzer
+        from mutation_proposer import TraceAnalyzer
+
         self.assertTrue(callable(TraceAnalyzer.analyze))
 
     def test_mutation_strategy_enum(self):
         from mutation_proposer import MutationStrategy
+
         self.assertEqual(MutationStrategy.RANDOM.value, "RANDOM")
         self.assertEqual(MutationStrategy.GROW.value, "GROW")
         self.assertEqual(MutationStrategy.HYBRID.value, "HYBRID")
@@ -174,6 +193,7 @@ class TestMutationProposerImport(unittest.TestCase):
 
     def test_trace_analyzer_empty(self):
         from mutation_proposer import TraceAnalyzer
+
         analysis = TraceAnalyzer.analyze(trace=[], expected={}, inputs={})
         self.assertEqual(analysis.divergence_type, "unknown")
 
@@ -181,6 +201,7 @@ class TestMutationProposerImport(unittest.TestCase):
         import random
 
         from mutation_proposer import DirectedMutator, validate_mutation
+
         rng = random.Random(42)
         program = [0x02A00513, 0x00100073]  # ADDI x10, x0, 42; EBREAK
         mutated, _desc = DirectedMutator.stochastic_perturbation(program, rng)
@@ -193,6 +214,7 @@ class TestStrategyArchive(unittest.TestCase):
 
     def test_record_and_recommend(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         # Record diverse strategies
         for i in range(50):
@@ -204,6 +226,7 @@ class TestStrategyArchive(unittest.TestCase):
 
     def test_skip_strategy(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for i in range(30):
             sa.record("GROW", level=0, success=True, generation=i)
@@ -213,6 +236,7 @@ class TestStrategyArchive(unittest.TestCase):
 
     def test_decay_level_records(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for i in range(20):
             sa.record("GROW", level=5, success=True, generation=i)
@@ -329,12 +353,14 @@ class TestAutonomousRunner(unittest.TestCase):
 
     def test_instantiation(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         self.assertIsNotNone(runner._config)
         self.assertEqual(runner._state["current_cycle"], 0)
 
     def test_default_state(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         state = runner._default_state()
         self.assertIn("current_cycle", state)
@@ -344,6 +370,7 @@ class TestAutonomousRunner(unittest.TestCase):
 
     def test_save_load_state(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         runner._state["current_cycle"] = 5
         runner._state["best_fitness"] = 42.5
@@ -364,6 +391,7 @@ class TestAutonomousRunner(unittest.TestCase):
 
     def test_should_stop_max_cycles(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         runner._config["max_cycles"] = 5
         runner._state["current_cycle"] = 5
@@ -371,6 +399,7 @@ class TestAutonomousRunner(unittest.TestCase):
 
     def test_should_stop_target_fitness(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         runner._config["target_fitness"] = 100.0
         runner._state["best_fitness"] = 150.0
@@ -378,6 +407,7 @@ class TestAutonomousRunner(unittest.TestCase):
 
     def test_should_stop_stop_file(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         stop_file = os.path.join(PROJECT_ROOT, runner._config["stop_file"])
         try:
@@ -389,6 +419,7 @@ class TestAutonomousRunner(unittest.TestCase):
 
     def test_health_monitor_writes_file(self):
         from autonomous_runner import HealthMonitor
+
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = os.path.join(tmpdir, "state.json")
             hm = HealthMonitor(state_path=state_file)
@@ -411,6 +442,7 @@ class TestAutonomousRunner(unittest.TestCase):
 
     def test_shutdown_signal(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         self.assertFalse(runner._shutdown_requested)
         runner._request_shutdown(_signal_mod.SIGINT, None)
@@ -418,6 +450,7 @@ class TestAutonomousRunner(unittest.TestCase):
 
     def test_oom_handler_reduces_population(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         runner._config["evolution"]["population_size"] = 50
         runner._handle_oom(MemoryError("test"), 1)
@@ -428,27 +461,40 @@ class TestMetaController(unittest.TestCase):
     """MetaController integration with runner."""
 
     def test_import(self):
-        from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
+        from meta_controller import MetaController
+
         self.assertTrue(callable(MetaController))
 
     def test_stagnation_detection(self):
         from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
+
         mc = MetaController(checkpoint_dir="/tmp/test_mc")
         # Simulate 5 stagnant cycles
         for c in range(1, 6):
             snap = TelemetrySnapshot(
-                cycle=c, fitness=-1.0, level=3, champion_words=10,
-                val_loss=2.0, diversity=0.3, novelty_size=0, qd_occupied=0,
-                qd_total=100, traces_count=0, retrained=False,
+                cycle=c,
+                fitness=-1.0,
+                level=3,
+                champion_words=10,
+                val_loss=2.0,
+                diversity=0.3,
+                novelty_size=0,
+                qd_occupied=0,
+                qd_total=100,
+                traces_count=0,
+                retrained=False,
                 generations_completed=50,
             )
             mc.update_cycle(snap)
         state = mc.detect_stagnation()
-        self.assertIn(state, [
-            StagnationResult.LEVEL_STALLED,
-            StagnationResult.FITNESS_PLATEAU,
-            StagnationResult.COMPOUND_STALL,
-        ])
+        self.assertIn(
+            state,
+            [
+                StagnationResult.LEVEL_STALLED,
+                StagnationResult.FITNESS_PLATEAU,
+                StagnationResult.COMPOUND_STALL,
+            ],
+        )
 
 
 class TestChampionAnchor(unittest.TestCase):
@@ -456,6 +502,7 @@ class TestChampionAnchor(unittest.TestCase):
 
     def test_save_load_roundtrip(self):
         from champion_anchor import ChampionAnchor
+
         with tempfile.TemporaryDirectory() as tmpdir:
             ca = ChampionAnchor(champions_dir=tmpdir)
             program = [0x02A00513, 0x00100073]

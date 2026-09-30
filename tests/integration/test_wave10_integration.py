@@ -7,18 +7,16 @@ Tests cover:
   4. TestMetricsAnomalyCorrelation — MetricsCollector anomaly detection and correlation
   5. TestProgressionTrackerFullCycle — ProgressionTracker plateau analysis and window comparison
 """
+
 from __future__ import annotations
 
-import math
 import os
-import sys
 import tempfile
-from typing import Dict, List
 
 import pytest
 
 from champion_archive import ChampionArchive
-from meta_controller import MetaController, StagnationResult, TelemetrySnapshot, TuningAction
+from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from metrics import MetricsCollector
 from progression_tracker import CycleMetrics, ProgressionTracker
 from strategy_archive import StrategyArchive
@@ -26,6 +24,7 @@ from strategy_archive import StrategyArchive
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_snapshot(
     cycle: int,
@@ -447,7 +446,6 @@ class TestChampionArchiveFullCycle:
                     cycle=i,
                 )
             # Archive should be at most max_size
-            initial_size = ca.size
             pruned = ca.quality_weighted_prune()
             assert isinstance(pruned, int)
             assert ca.size <= 10
@@ -529,9 +527,7 @@ class TestMetricsAnomalyCorrelation:
 
     def _make_mc_with_data(self, n: int = 30) -> MetricsCollector:
         """Create a MetricsCollector with n cycles of synthetic data."""
-        tmpfile = tempfile.NamedTemporaryFile(
-            suffix=".jsonl", delete=False, prefix="metrics_test_"
-        )
+        tmpfile = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, prefix="metrics_test_")  # noqa: SIM115
         tmpfile.close()
         mc = MetricsCollector(path=tmpfile.name)
         for i in range(n):
@@ -541,13 +537,15 @@ class TestMetricsAnomalyCorrelation:
                 fitness = 500.0  # outlier spike
             if i == 25:
                 fitness = 10.0  # outlier dip
-            mc.record_cycle({
-                "cycle": i,
-                "fitness": fitness,
-                "level": 5 + i // 5,
-                "diversity": 0.3 + (i % 10) * 0.05,
-                "val_loss": 3.0 - i * 0.02,
-            })
+            mc.record_cycle(
+                {
+                    "cycle": i,
+                    "fitness": fitness,
+                    "level": 5 + i // 5,
+                    "diversity": 0.3 + (i % 10) * 0.05,
+                    "val_loss": 3.0 - i * 0.02,
+                }
+            )
         return mc
 
     def test_record_and_history(self):
@@ -582,25 +580,23 @@ class TestMetricsAnomalyCorrelation:
             assert isinstance(a["z_score"], float)
 
     def test_detect_anomalies_empty_metric(self):
-        tmpfile = tempfile.NamedTemporaryFile(
-            suffix=".jsonl", delete=False, prefix="metrics_empty_"
-        )
+        tmpfile = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, prefix="metrics_empty_")  # noqa: SIM115
         tmpfile.close()
         mc = MetricsCollector(path=tmpfile.name)
         anomalies = mc.detect_anomalies("nonexistent", window=10)
         assert anomalies == []
 
     def test_correlate_metrics_positive(self):
-        mc = MetricsCollector(
-            path=tempfile.mktemp(suffix=".jsonl", prefix="corr_")
-        )
+        mc = MetricsCollector(path=tempfile.mktemp(suffix=".jsonl", prefix="corr_"))
         # Create two positively correlated metrics
         for i in range(20):
-            mc.record_cycle({
-                "cycle": i,
-                "fitness": 100 + i * 10,
-                "level": 5 + i,
-            })
+            mc.record_cycle(
+                {
+                    "cycle": i,
+                    "fitness": 100 + i * 10,
+                    "level": 5 + i,
+                }
+            )
         result = mc.correlate_metrics("fitness", "level", window=20)
         assert isinstance(result, dict)
         assert "correlation" in result
@@ -613,24 +609,22 @@ class TestMetricsAnomalyCorrelation:
         assert result["direction"] == "positive"
 
     def test_correlate_metrics_negative(self):
-        mc = MetricsCollector(
-            path=tempfile.mktemp(suffix=".jsonl", prefix="corr_neg_")
-        )
+        mc = MetricsCollector(path=tempfile.mktemp(suffix=".jsonl", prefix="corr_neg_"))
         # Create two negatively correlated metrics
         for i in range(20):
-            mc.record_cycle({
-                "cycle": i,
-                "fitness": 200 - i * 10,
-                "val_loss": 1.0 + i * 0.2,
-            })
+            mc.record_cycle(
+                {
+                    "cycle": i,
+                    "fitness": 200 - i * 10,
+                    "val_loss": 1.0 + i * 0.2,
+                }
+            )
         result = mc.correlate_metrics("fitness", "val_loss", window=20)
         assert result["correlation"] < -0.5
         assert result["direction"] == "negative"
 
     def test_correlate_metrics_insufficient_data(self):
-        mc = MetricsCollector(
-            path=tempfile.mktemp(suffix=".jsonl", prefix="corr_short_")
-        )
+        mc = MetricsCollector(path=tempfile.mktemp(suffix=".jsonl", prefix="corr_short_"))
         mc.record_cycle({"cycle": 0, "fitness": 100})
         result = mc.correlate_metrics("fitness", "fitness", window=10)
         assert result["sample_size"] < 2
@@ -638,15 +632,15 @@ class TestMetricsAnomalyCorrelation:
         assert result["strength"] == "none"
 
     def test_correlate_metrics_strength_categories(self):
-        mc = MetricsCollector(
-            path=tempfile.mktemp(suffix=".jsonl", prefix="corr_str_")
-        )
+        mc = MetricsCollector(path=tempfile.mktemp(suffix=".jsonl", prefix="corr_str_"))
         for i in range(20):
-            mc.record_cycle({
-                "cycle": i,
-                "metric_a": 50 + i * 10,
-                "metric_b": 50 + i * 10,  # identical -> perfect correlation
-            })
+            mc.record_cycle(
+                {
+                    "cycle": i,
+                    "metric_a": 50 + i * 10,
+                    "metric_b": 50 + i * 10,  # identical -> perfect correlation
+                }
+            )
         result = mc.correlate_metrics("metric_a", "metric_b")
         assert result["strength"] == "strong"
         assert result["correlation"] == pytest.approx(1.0, abs=0.01)
@@ -672,9 +666,7 @@ class TestProgressionTrackerFullCycle:
     def _make_tracker_with_data(self, n: int = 15, plateau_start: int = 10) -> ProgressionTracker:
         """Create a ProgressionTracker with n cycles.
         First plateau_start cycles improve, last ones plateau."""
-        tmpfile = tempfile.NamedTemporaryFile(
-            suffix=".jsonl", delete=False, prefix="progression_test_"
-        )
+        tmpfile = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, prefix="progression_test_")  # noqa: SIM115
         tmpfile.close()
         pt = ProgressionTracker(path=tmpfile.name)
         for i in range(n):
@@ -684,12 +676,14 @@ class TestProgressionTrackerFullCycle:
             else:
                 fitness = 150.0  # plateau
                 words = 150
-            pt.record(_make_cycle_metrics(
-                cycle=i,
-                fitness=fitness,
-                words=words,
-                val_loss=3.0 - i * 0.05 if i < plateau_start else 1.0,
-            ))
+            pt.record(
+                _make_cycle_metrics(
+                    cycle=i,
+                    fitness=fitness,
+                    words=words,
+                    val_loss=3.0 - i * 0.05 if i < plateau_start else 1.0,
+                )
+            )
         return pt
 
     def test_record_and_history(self):
@@ -732,17 +726,20 @@ class TestProgressionTrackerFullCycle:
         result = pt.compare_windows("fitness", window_a=5, window_b=5)
         assert isinstance(result, dict)
         required_keys = {
-            "metric", "window_a_mean", "window_b_mean",
-            "improvement", "percent_change", "direction",
-            "window_a_stddev", "window_b_stddev",
+            "metric",
+            "window_a_mean",
+            "window_b_mean",
+            "improvement",
+            "percent_change",
+            "direction",
+            "window_a_stddev",
+            "window_b_stddev",
         }
         assert required_keys.issubset(result.keys())
 
     def test_compare_windows_improving(self):
         """First 5 cycles flat, last 5 cycles higher -> improving."""
-        tmpfile = tempfile.NamedTemporaryFile(
-            suffix=".jsonl", delete=False, prefix="compare_test_"
-        )
+        tmpfile = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, prefix="compare_test_")  # noqa: SIM115
         tmpfile.close()
         pt = ProgressionTracker(path=tmpfile.name)
         # Older window: flat at 100
@@ -759,9 +756,7 @@ class TestProgressionTrackerFullCycle:
         assert result["window_b_mean"] == pytest.approx(100.0)
 
     def test_compare_windows_declining(self):
-        tmpfile = tempfile.NamedTemporaryFile(
-            suffix=".jsonl", delete=False, prefix="compare_decl_"
-        )
+        tmpfile = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, prefix="compare_decl_")  # noqa: SIM115
         tmpfile.close()
         pt = ProgressionTracker(path=tmpfile.name)
         # Older: high
@@ -776,9 +771,7 @@ class TestProgressionTrackerFullCycle:
         assert result["improvement"] < 0
 
     def test_compare_windows_stable(self):
-        tmpfile = tempfile.NamedTemporaryFile(
-            suffix=".jsonl", delete=False, prefix="compare_stab_"
-        )
+        tmpfile = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, prefix="compare_stab_")  # noqa: SIM115
         tmpfile.close()
         pt = ProgressionTracker(path=tmpfile.name)
         for i in range(10):
@@ -789,9 +782,7 @@ class TestProgressionTrackerFullCycle:
         assert result["improvement"] == pytest.approx(0.0, abs=0.01)
 
     def test_compare_windows_empty_tracker(self):
-        tmpfile = tempfile.NamedTemporaryFile(
-            suffix=".jsonl", delete=False, prefix="compare_empty_"
-        )
+        tmpfile = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, prefix="compare_empty_")  # noqa: SIM115
         tmpfile.close()
         pt = ProgressionTracker(path=tmpfile.name)
         result = pt.compare_windows("fitness")

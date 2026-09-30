@@ -11,19 +11,15 @@ Three test classes:
 """
 from __future__ import annotations
 
-import math
 import os
 import random
-import sys
 import tempfile
 import time
-
-import pytest
 
 # ── Path setup ──────────────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from champion_archive import ChampionArchive, ChampionEntry, _hash_program
+from champion_archive import ChampionArchive
 from metrics import MetricsCollector
 from strategy_archive import StrategyArchive
 
@@ -92,9 +88,10 @@ class TestMethodCallOverhead:
             return result
 
         _timed("SA.record", lambda: sa.record("RANDOM", 0, True, 0))
-        _timed("SA.record_batch", lambda: sa.record_batch([
-            {"strategy": "TASK_AWARE", "level": 1, "success": True, "gen": 0}
-        ]))
+        _timed(
+            "SA.record_batch",
+            lambda: sa.record_batch([{"strategy": "TASK_AWARE", "level": 1, "success": True, "gen": 0}]),
+        )
         _timed("SA.success_rate", lambda: sa.success_rate("RANDOM"))
         _timed("SA.time_weighted_success_rate", lambda: sa.time_weighted_success_rate("RANDOM"))
         _timed("SA.exploration_bonus", lambda: sa.exploration_bonus("RANDOM", 0))
@@ -144,9 +141,7 @@ class TestMethodCallOverhead:
         _timed("MC.clear", lambda: mc.clear())
 
         print(f"\n  Total method-call overhead: {total_time:.4f}s (limit 5s)")
-        assert total_time < 5.0, (
-            f"Total overhead {total_time:.2f}s exceeds 5s budget"
-        )
+        assert total_time < 5.0, f"Total overhead {total_time:.2f}s exceeds 5s budget"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -200,9 +195,7 @@ class TestArchiveScalability:
         _timed("CA.get_quality_distribution", lambda: ca.get_quality_distribution())
 
         print(f"\n  Total archive scalability time: {total_time:.4f}s (limit 2s)")
-        assert total_time < 2.0, (
-            f"Total archive time {total_time:.2f}s exceeds 2s budget"
-        )
+        assert total_time < 2.0, f"Total archive time {total_time:.2f}s exceeds 2s budget"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -224,13 +217,15 @@ class TestMetricsScalability:
         # Record 1000 cycles
         t0 = time.perf_counter()
         for i in range(1000):
-            mc.record_cycle({
-                "cycle": i,
-                "fitness": 100.0 + rng.gauss(0, 10) + i * 0.05,
-                "level": min(i // 80, 13),
-                "diversity": rng.random(),
-                "val_loss": max(0.01, 1.0 - i * 0.001 + rng.gauss(0, 0.05)),
-            })
+            mc.record_cycle(
+                {
+                    "cycle": i,
+                    "fitness": 100.0 + rng.gauss(0, 10) + i * 0.05,
+                    "level": min(i // 80, 13),
+                    "diversity": rng.random(),
+                    "val_loss": max(0.01, 1.0 - i * 0.001 + rng.gauss(0, 0.05)),
+                }
+            )
         build_mc = time.perf_counter() - t0
         total_time += build_mc
         assert mc.count_records() == 1000
@@ -253,6 +248,4 @@ class TestMetricsScalability:
         _timed("MC.get_history(last_n=100)", lambda: mc.get_history(last_n=100))
 
         print(f"\n  Total metrics scalability time: {total_time:.4f}s (limit 3s)")
-        assert total_time < 3.0, (
-            f"Total metrics time {total_time:.2f}s exceeds 3s budget"
-        )
+        assert total_time < 3.0, f"Total metrics time {total_time:.2f}s exceeds 3s budget"

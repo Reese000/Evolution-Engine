@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import os
 import sys
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any
 
 import pytest
 
@@ -170,6 +169,7 @@ _PIPELINE_METHOD_FILES: dict[str, str] = {
     "send_monoculture_alert": "monitoring_alerts.py",
     "send_recovery_stuck_alert": "monitoring_alerts.py",
     "get_plateau_analysis": "evolution/mutation_helpers.py",
+    "manage_capacity": "evolution/qd_archive_mixin.py",
 }
 
 

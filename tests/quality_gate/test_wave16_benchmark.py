@@ -10,9 +10,6 @@ import os
 import sys
 import tempfile
 import time
-from typing import Dict, List
-
-import pytest
 
 # Path setup — add project root to sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,6 +29,7 @@ from strategy_archive import StrategyArchive
 # ═══════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def _snap(
     cycle: int,
@@ -66,6 +64,7 @@ STRATEGIES = ["RANDOM", "TASK_AWARE", "DIRECTED", "PERTURBATION_CAPPED"]
 # 1. TestMetaControllerPerformance
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestMetaControllerPerformance:
     """Benchmark MetaController stagnation detection and trend analysis."""
 
@@ -76,12 +75,14 @@ class TestMetaControllerPerformance:
 
             # Add 100 telemetry entries
             for i in range(100):
-                mc.update_cycle(_snap(
-                    cycle=i,
-                    fitness=1.0 + (i % 20) * 0.1,
-                    level=i // 10,
-                    diversity=0.5 + (i % 5) * 0.05,
-                ))
+                mc.update_cycle(
+                    _snap(
+                        cycle=i,
+                        fitness=1.0 + (i % 20) * 0.1,
+                        level=i // 10,
+                        diversity=0.5 + (i % 5) * 0.05,
+                    )
+                )
 
             # Time detect_stagnation
             t0 = time.perf_counter()
@@ -98,12 +99,14 @@ class TestMetaControllerPerformance:
 
             # Add 100 telemetry entries
             for i in range(100):
-                mc.update_cycle(_snap(
-                    cycle=i,
-                    fitness=1.0 + i * 0.02,
-                    level=i // 10,
-                    diversity=0.5 + (i % 5) * 0.05,
-                ))
+                mc.update_cycle(
+                    _snap(
+                        cycle=i,
+                        fitness=1.0 + i * 0.02,
+                        level=i // 10,
+                        diversity=0.5 + (i % 5) * 0.05,
+                    )
+                )
 
             # Time get_cross_cycle_trends
             t0 = time.perf_counter()
@@ -120,6 +123,7 @@ class TestMetaControllerPerformance:
 # 2. TestStrategyArchivePerformance
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestStrategyArchivePerformance:
     """Benchmark StrategyArchive recommendation and reporting."""
 
@@ -129,6 +133,7 @@ class TestStrategyArchivePerformance:
 
         # Record 500 outcomes across multiple strategies and levels
         import random
+
         rng = random.Random(42)
         for i in range(500):
             sa.record(
@@ -151,6 +156,7 @@ class TestStrategyArchivePerformance:
         sa = StrategyArchive()
 
         import random
+
         rng = random.Random(42)
         for i in range(500):
             sa.record(
@@ -175,6 +181,7 @@ class TestStrategyArchivePerformance:
         sa = StrategyArchive()
 
         import random
+
         rng = random.Random(42)
         for i in range(500):
             sa.record(
@@ -197,6 +204,7 @@ class TestStrategyArchivePerformance:
 # ═══════════════════════════════════════════════════════════════════════
 # 3. TestFitnessComputationPerformance
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class TestFitnessComputationPerformance:
     """Benchmark EvolutionEngine._compute_fitness on 100 programs."""
@@ -223,21 +231,20 @@ class TestFitnessComputationPerformance:
         # Time 100 _compute_fitness calls
         t0 = time.perf_counter()
         for prog, trace in zip(programs, traces):
-            result = engine._compute_fitness(prog, trace)
+            engine._compute_fitness(prog, trace)
         elapsed = time.perf_counter() - t0
 
         avg_ms = (elapsed / 100) * 1000  # Convert to ms
 
         assert len(programs) == 100
         assert elapsed > 0
-        assert avg_ms < 1.0, (
-            f"Average _compute_fitness took {avg_ms:.4f}ms per call, expected < 1ms"
-        )
+        assert avg_ms < 1.0, f"Average _compute_fitness took {avg_ms:.4f}ms per call, expected < 1ms"
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # 4. TestMetricsCollectorPerformance
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class TestMetricsCollectorPerformance:
     """Benchmark MetricsCollector anomaly detection and correlation."""
@@ -250,13 +257,16 @@ class TestMetricsCollectorPerformance:
 
             # Record 200 cycles
             import random
+
             rng = random.Random(42)
             for i in range(200):
-                mc.record_cycle({
-                    "cycle": i,
-                    "fitness": 1.0 + rng.gauss(0, 0.1),
-                    "level": rng.randint(0, 5),
-                })
+                mc.record_cycle(
+                    {
+                        "cycle": i,
+                        "fitness": 1.0 + rng.gauss(0, 0.1),
+                        "level": rng.randint(0, 5),
+                    }
+                )
 
             # Time detect_anomalies
             t0 = time.perf_counter()
@@ -274,13 +284,16 @@ class TestMetricsCollectorPerformance:
 
             # Record 200 cycles
             import random
+
             rng = random.Random(42)
             for i in range(200):
-                mc.record_cycle({
-                    "cycle": i,
-                    "fitness": 1.0 + rng.gauss(0, 0.1),
-                    "level": rng.randint(0, 5),
-                })
+                mc.record_cycle(
+                    {
+                        "cycle": i,
+                        "fitness": 1.0 + rng.gauss(0, 0.1),
+                        "level": rng.randint(0, 5),
+                    }
+                )
 
             # Time correlate_metrics
             t0 = time.perf_counter()

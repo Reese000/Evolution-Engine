@@ -13,7 +13,7 @@ import random
 import sys
 import tempfile
 import time
-from typing import List
+from typing import ClassVar
 
 import pytest
 
@@ -35,7 +35,7 @@ from strategy_archive import StrategyArchive
 class TestLargeScaleStrategyArchive:
     """Stress-test StrategyArchive with 2000 records, 15 levels, 8 strategies."""
 
-    STRATEGIES = [
+    STRATEGIES: ClassVar[list[str]] = [
         "RANDOM",
         "TASK_AWARE",
         "PERTURBATION_CAPPED",
@@ -308,7 +308,7 @@ class TestLargeScaleStrategyArchive:
 class TestLargeScaleMetrics:
     """Stress-test MetricsCollector with 500 cycles of realistic data."""
 
-    METRIC_KEYS = ["fitness", "val_loss", "level", "diversity", "mutation_rate"]
+    METRIC_KEYS: ClassVar[list[str]] = ["fitness", "val_loss", "level", "diversity", "mutation_rate"]
 
     def _populate_collector(self, n_cycles: int = 500, seed: int = 42) -> MetricsCollector:
         """Build a MetricsCollector with realistic cycle data."""

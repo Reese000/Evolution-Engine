@@ -616,6 +616,7 @@ class TestEvolutionConfigValidation:
         import pytest
 
         from evolution_engine import EvolutionConfig
+
         with pytest.raises(ValueError, match="population_size"):
             EvolutionConfig(population_size=0)
 
@@ -623,6 +624,7 @@ class TestEvolutionConfigValidation:
         import pytest
 
         from evolution_engine import EvolutionConfig
+
         with pytest.raises(ValueError, match="max_generations"):
             EvolutionConfig(max_generations=0)
 
@@ -630,6 +632,7 @@ class TestEvolutionConfigValidation:
         import pytest
 
         from evolution_engine import EvolutionConfig
+
         with pytest.raises(ValueError, match="mutation_rate"):
             EvolutionConfig(mutation_rate=-0.1)
 
@@ -637,6 +640,7 @@ class TestEvolutionConfigValidation:
         import pytest
 
         from evolution_engine import EvolutionConfig
+
         with pytest.raises(ValueError, match="mutation_rate"):
             EvolutionConfig(mutation_rate=1.5)
 
@@ -644,6 +648,7 @@ class TestEvolutionConfigValidation:
         import pytest
 
         from evolution_engine import EvolutionConfig
+
         with pytest.raises(ValueError, match="elite_ratio"):
             EvolutionConfig(elite_ratio=1.5)
 
@@ -651,6 +656,7 @@ class TestEvolutionConfigValidation:
         import pytest
 
         from evolution_engine import EvolutionConfig
+
         with pytest.raises(ValueError, match="tournament_size"):
             EvolutionConfig(tournament_size=1)
 
@@ -658,6 +664,7 @@ class TestEvolutionConfigValidation:
         import pytest
 
         from evolution_engine import EvolutionConfig
+
         with pytest.raises(ValueError, match="retrain_lr"):
             EvolutionConfig(retrain_lr=0.0)
 
@@ -852,7 +859,7 @@ class TestChooseMutationStrategyCap:
         # With no archive, _choose_mutation_strategy returns HYBRID
         # The cap logic sets skip_strat but since there's no archive,
         # the skip has no effect. What we verify is the counter reset.
-        strat = engine._choose_mutation_strategy(0)
+        engine._choose_mutation_strategy(0)
         # Counter should have been reset
         assert engine._consecutive_same_strategy <= 1
 
@@ -864,7 +871,7 @@ class TestChooseMutationStrategyCap:
         # So at level 5, cap is 10 (not triggered at 6)
         engine._consecutive_same_strategy = 6
         engine._last_strategy_used = "HYBRID"
-        strat = engine._choose_mutation_strategy(0)
+        engine._choose_mutation_strategy(0)
         # 6 < 10 so cap is NOT triggered
         assert engine._consecutive_same_strategy == 7  # incremented, not reset
 

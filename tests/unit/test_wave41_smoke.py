@@ -9,8 +9,6 @@ All tests are fast and do NOT run actual evolution.
 """
 from __future__ import annotations
 
-import pytest
-
 from config import Config
 from evolution_engine import EvolutionConfig, EvolutionEngine
 

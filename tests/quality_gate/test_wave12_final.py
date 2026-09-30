@@ -13,21 +13,17 @@ All tests import from source files directly, are focused and fast.
 """
 from __future__ import annotations
 
-import os
-import sys
-import tempfile
-
 import pytest
 
 from champion_archive import ChampionArchive
 
 # ── Path setup ──────────────────────────────────────────────────────────
-from config import Config, EvolutionSection, load_config
+from config import Config, EvolutionSection
 from meta_controller import MetaController, TelemetrySnapshot, TuningAction
 from metrics import MetricsCollector
 from mutation_proposer import DirectedMutator
 from novelty import SparseArchive
-from progression_tracker import CycleMetrics, ProgressionTracker
+from progression_tracker import ProgressionTracker
 from qd_archive import MAPElitesArchive
 from strategy_archive import StrategyArchive
 
@@ -612,6 +608,7 @@ class TestEndToEndMethodAvailability:
     def test_data_rotation_has_get_disk_usage(self):
         """data_rotation module has get_disk_usage function."""
         from data_rotation import get_disk_usage
+
         assert callable(get_disk_usage)
 
     def test_progression_tracker_has_get_plateau_analysis(self):

@@ -9,8 +9,6 @@ Uses a fresh (randomly initialized) model — no checkpoint needed.
 Tests are CPU-only and lightweight.
 """
 
-import os
-import sys
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -163,17 +161,13 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
         """_replace_with_model_guided lazily initializes PrefixGenerator."""
         import tempfile
 
-        from evolution_engine import EvolutionEngine
-
         with tempfile.TemporaryDirectory() as tmpdir:
             engine = self._make_engine(tmpdir)
             # No prefix generator yet
             self.assertIsNone(engine._prefix_generator)
 
             # Create a list of challengers
-            challengers = [
-                [0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)
-            ]
+            challengers = [[0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)]
             engine._last_challengers = challengers
 
             # Mock the PrefixGenerator to avoid model loading
@@ -182,10 +176,11 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
                 ["0x02a00093", "0x03a00113", "0x00100073"],
             ]
 
-            with patch("prefix_generator.PrefixGenerator", return_value=mock_pg):
-                # Also ensure the checkpoint path check doesn't fail
-                with patch("os.path.isfile", return_value=True):
-                    engine._replace_with_model_guided(challengers, model_ratio=0.2)
+            with (
+                patch("prefix_generator.PrefixGenerator", return_value=mock_pg),
+                patch("os.path.isfile", return_value=True),
+            ):
+                engine._replace_with_model_guided(challengers, model_ratio=0.2)
 
             # PrefixGenerator should now be set
             self.assertIsNotNone(engine._prefix_generator)
@@ -196,11 +191,9 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             engine = self._make_engine(tmpdir)
-            challengers = [
-                [0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)
-            ]
+            challengers = [[0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)]
             engine._last_challengers = list(challengers)  # copy
-            original_challengers = [c[:] for c in challengers]  # deep copy
+            [c[:] for c in challengers]  # deep copy
 
             mock_pg = MagicMock()
             # Return 2 completions (each is list of hex strings)
@@ -209,11 +202,11 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
                 ["0x02a00093", "0x002080b3", "0x00100073"],
             ]
 
-            with patch("prefix_generator.PrefixGenerator", return_value=mock_pg):
-                with patch("os.path.isfile", return_value=True):
-                    replaced = engine._replace_with_model_guided(
-                        challengers, model_ratio=0.2
-                    )
+            with (
+                patch("prefix_generator.PrefixGenerator", return_value=mock_pg),
+                patch("os.path.isfile", return_value=True),
+            ):
+                replaced = engine._replace_with_model_guided(challengers, model_ratio=0.2)
 
             # At least one challenger should have been replaced
             self.assertGreater(len(replaced), 0)
@@ -229,9 +222,7 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             engine = self._make_engine(tmpdir)
             engine.champion = None
-            challengers = [
-                [0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)
-            ]
+            challengers = [[0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)]
             result = engine._replace_with_model_guided(challengers, model_ratio=0.2)
             self.assertEqual(result, [])
 
@@ -242,9 +233,7 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             engine = self._make_engine(tmpdir)
             engine.config.model_guided_ratio = 0
-            challengers = [
-                [0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)
-            ]
+            challengers = [[0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)]
             result = engine._replace_with_model_guided(challengers, model_ratio=0.2)
             self.assertEqual(result, [])
 
@@ -255,9 +244,7 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             engine = self._make_engine(tmpdir)
             engine.config.model_guided_ratio = 0.2
-            challengers = [
-                [0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)
-            ]
+            challengers = [[0x02A00093, 0x03A00113, 0x00100073] for _ in range(10)]
             # Mock _replace_with_model_guided to track calls
             with patch.object(engine, "_replace_with_model_guided", return_value=[0, 1]):
                 engine._apply_model_guided_slots(challengers)

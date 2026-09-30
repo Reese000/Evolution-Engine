@@ -13,18 +13,15 @@ All tests are fast, deterministic, and do NOT modify existing files.
 
 from __future__ import annotations
 
-import json
 import os
 import random
 
 # Path setup
-import sys
 import tempfile
-from typing import Any
 
 import pytest
 
-from champion_archive import ChampionArchive, ChampionEntry, _hash_program
+from champion_archive import ChampionArchive, ChampionEntry
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
 from meta_controller import MetaController, StagnationResult, TelemetrySnapshot
 from mutation_proposer import (
@@ -45,6 +42,7 @@ from strategy_archive import StrategyArchive
 # ═══════════════════════════════════════════════════════════════════════
 # Shared fixtures
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @pytest.fixture
 def rng():
@@ -81,6 +79,7 @@ def tmp_dir():
 # ═══════════════════════════════════════════════════════════════════════
 # 1. TestCoreEvolutionBehavior
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class TestCoreEvolutionBehavior:
     """Ensure EvolutionConfig defaults, EvolutionEngine creation,
@@ -144,6 +143,7 @@ class TestCoreEvolutionBehavior:
     def test_evolution_engine_creation(self):
         """EvolutionEngine can be created via conftest make_engine."""
         from tests.conftest import make_engine
+
         engine = make_engine()
         assert isinstance(engine, EvolutionEngine)
         assert engine.config is not None
@@ -155,6 +155,7 @@ class TestCoreEvolutionBehavior:
     def test_evolution_engine_with_archive(self):
         """EvolutionEngine with strategy archive."""
         from tests.conftest import make_engine
+
         engine = make_engine(with_archive=True)
         assert engine.strategy_archive is not None
         assert isinstance(engine.strategy_archive, StrategyArchive)
@@ -209,6 +210,7 @@ class TestCoreEvolutionBehavior:
 # ═══════════════════════════════════════════════════════════════════════
 # 2. TestMutationProposerUnchanged
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class TestMutationProposerUnchanged:
     """Ensure mutation proposer functions still work correctly."""
@@ -369,6 +371,7 @@ class TestMutationProposerUnchanged:
 # 3. TestArchiveSerialization
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestArchiveSerialization:
     """Ensure archive save/load roundtrips and operations work."""
 
@@ -427,7 +430,11 @@ class TestArchiveSerialization:
         # Add a champion
         program = [make_rv32i("ADDI", rd=10, rs1=0, imm=42), EBREAK]
         added = archive.add(
-            program=program, level=5, fitness=100.0, cycle=1, generation=10,
+            program=program,
+            level=5,
+            fitness=100.0,
+            cycle=1,
+            generation=10,
         )
         assert added is True
         assert archive.size == 1
@@ -435,7 +442,11 @@ class TestArchiveSerialization:
         # Add another
         program2 = [make_rv32i("ADD", rd=11, rs1=10, rs2=0), EBREAK]
         archive.add(
-            program=program2, level=8, fitness=200.0, cycle=2, generation=20,
+            program=program2,
+            level=8,
+            fitness=200.0,
+            cycle=2,
+            generation=20,
         )
         assert archive.size == 2
 
@@ -541,6 +552,7 @@ class TestArchiveSerialization:
 # 4. TestMetaControllerBackwardCompat
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestMetaControllerBackwardCompat:
     """Ensure MetaController API hasn't changed."""
 
@@ -602,8 +614,14 @@ class TestMetaControllerBackwardCompat:
 
     def test_stagnation_result_members(self):
         """StagnationResult has expected members."""
-        expected = {"normal", "fitness_plateau", "level_stalled",
-                    "val_loss_regression", "diversity_collapse", "compound_stall"}
+        expected = {
+            "normal",
+            "fitness_plateau",
+            "level_stalled",
+            "val_loss_regression",
+            "diversity_collapse",
+            "compound_stall",
+        }
         actual = {member.value for member in StagnationResult}
         assert expected == actual
 

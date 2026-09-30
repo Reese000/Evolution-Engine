@@ -6,14 +6,13 @@ their key methods return the expected types. No actual evolution is run.
 """
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. Engine health
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestEngineHealth:
     """Verify that EvolutionEngine can be created and its diagnostic
@@ -97,6 +96,7 @@ class TestEngineHealth:
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. Config health
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestConfigHealth:
     """Verify EvolutionConfig (dataclass) and EvolutionSection (config.py)

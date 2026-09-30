@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import ClassVar
 
 import pytest
 
@@ -49,7 +50,7 @@ class TestEngineHealth:
 
     # ── attributes ────────────────────────────────────────────────────────
 
-    _EXPECTED_ATTRS = [
+    _EXPECTED_ATTRS: ClassVar[list[str]] = [
         "config",
         "rng",
         "champion_level",
@@ -105,9 +106,7 @@ class TestEngineHealth:
             "champion_words",
             "generations_stalled",
         }
-        assert expected_keys.issubset(diag.keys()), (
-            f"Missing keys: {expected_keys - diag.keys()}"
-        )
+        assert expected_keys.issubset(diag.keys()), f"Missing keys: {expected_keys - diag.keys()}"
 
     # ── get_performance_metrics ──────────────────────────────────────────
 
@@ -127,9 +126,7 @@ class TestEngineHealth:
             "total_recurrent_examples",
             "hof_size",
         }
-        assert expected_keys.issubset(metrics.keys()), (
-            f"Missing keys: {expected_keys - metrics.keys()}"
-        )
+        assert expected_keys.issubset(metrics.keys()), f"Missing keys: {expected_keys - metrics.keys()}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -157,7 +154,7 @@ class TestConfigHealth:
 
     # ── get_config_summary ───────────────────────────────────────────────
 
-    _SUMMARY_KEYS = {
+    _SUMMARY_KEYS: ClassVar[set[str]] = {
         "seed",
         "use_gpu",
         "auto_curriculum",
@@ -175,9 +172,7 @@ class TestConfigHealth:
         """get_config_summary returns a dict containing all expected keys."""
         summary = config.get_config_summary()
         assert isinstance(summary, dict)
-        assert self._SUMMARY_KEYS.issubset(summary.keys()), (
-            f"Missing keys: {self._SUMMARY_KEYS - summary.keys()}"
-        )
+        assert self._SUMMARY_KEYS.issubset(summary.keys()), f"Missing keys: {self._SUMMARY_KEYS - summary.keys()}"
 
     def test_config_summary_values_match_defaults(self, config):
         """Summary values match the dataclass defaults."""
@@ -188,9 +183,7 @@ class TestConfigHealth:
         assert summary["mutation_rate"] == 0.3
         assert summary["novelty_weight"] == 0.3
         assert summary["qd_bonus_weight"] == 0.1
-        assert summary["total_config_fields"] == len(
-            EvolutionSection.__dataclass_fields__
-        )
+        assert summary["total_config_fields"] == len(EvolutionSection.__dataclass_fields__)
 
     # ── validate_config ──────────────────────────────────────────────────
 

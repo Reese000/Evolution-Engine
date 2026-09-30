@@ -6,13 +6,12 @@ with defaults and expose the expected interface.  No evolution is run.
 """
 from __future__ import annotations
 
-import pytest
-
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestEngineHealth:
     """Verify EvolutionEngine basic construction and interface via conftest fixture."""
@@ -52,8 +51,13 @@ class TestEngineHealth:
         diag = engine.get_run_diagnostics()
         assert isinstance(diag, dict)
         # Core diagnostic keys that must always be present
-        for key in ("champion_level", "current_generation", "champion_fitness",
-                     "generations_stalled", "champion_words"):
+        for key in (
+            "champion_level",
+            "current_generation",
+            "champion_fitness",
+            "generations_stalled",
+            "champion_words",
+        ):
             assert key in diag, f"diagnostics missing key: {key}"
 
     def test_engine_get_performance_metrics_returns_dict(self, engine: EvolutionEngine) -> None:
@@ -78,6 +82,7 @@ class TestEngineHealth:
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. TestConfigHealth
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestConfigHealth:
     """Verify EvolutionConfig construction, attribute access, and validation."""
@@ -106,9 +111,15 @@ class TestConfigHealth:
         summary = vars(cfg)
         assert isinstance(summary, dict)
         # Must contain the most important config knobs
-        for key in ("population_size", "max_generations", "mutation_rate",
-                     "elite_ratio", "eval_budget", "novelty_weight",
-                     "qd_bonus_weight"):
+        for key in (
+            "population_size",
+            "max_generations",
+            "mutation_rate",
+            "elite_ratio",
+            "eval_budget",
+            "novelty_weight",
+            "qd_bonus_weight",
+        ):
             assert key in summary, f"config summary missing key: {key}"
 
     def test_config_validate_returns_no_errors_on_defaults(self) -> None:
@@ -138,6 +149,4 @@ class TestConfigHealth:
             logger.removeHandler(handler)
             output = handler.stream.getvalue()
             # Default elite_ratio is 0.1 so the elite_ratio==0.0 warning should not fire
-            assert "elite_ratio=0.0" not in output, (
-                f"Unexpected warning on default config: {output}"
-            )
+            assert "elite_ratio=0.0" not in output, f"Unexpected warning on default config: {output}"

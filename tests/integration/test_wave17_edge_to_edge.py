@@ -8,9 +8,6 @@ champion archive management.
 from __future__ import annotations
 
 import os
-import sys
-import tempfile
-from typing import List
 
 import pytest
 
@@ -21,6 +18,7 @@ from strategy_archive import StrategyArchive
 # ═══════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def _snap(
     cycle: int,
@@ -62,6 +60,7 @@ def _make_champion_archive(tmpdir: str) -> ChampionArchive:
 # 1. TestMetaControllerToEvolution
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestMetaControllerToEvolution:
     """MetaController → detect_stagnation → tune_evolution_params pipeline."""
 
@@ -96,13 +95,15 @@ class TestMetaControllerToEvolution:
 
         # Feed 7 cycles of declining fitness with val_loss present
         for c in range(1, 8):
-            mc.update_cycle(_snap(
-                cycle=c,
-                fitness=10.0 - c * 0.5,  # steadily declining
-                level=c,
-                val_loss=2.0 + c * 0.3,  # loss increasing
-                diversity=0.3,
-            ))
+            mc.update_cycle(
+                _snap(
+                    cycle=c,
+                    fitness=10.0 - c * 0.5,  # steadily declining
+                    level=c,
+                    val_loss=2.0 + c * 0.3,  # loss increasing
+                    diversity=0.3,
+                )
+            )
 
         trends = mc.get_cross_cycle_trends()
         assert "fitness" in trends
@@ -110,13 +111,15 @@ class TestMetaControllerToEvolution:
 
         # Feed enough cycles for suggest_parameter_reset to act
         for c in range(8, 15):
-            mc.update_cycle(_snap(
-                cycle=c,
-                fitness=10.0 - c * 0.5,
-                level=c,
-                val_loss=2.0 + c * 0.3,
-                diversity=0.3,
-            ))
+            mc.update_cycle(
+                _snap(
+                    cycle=c,
+                    fitness=10.0 - c * 0.5,
+                    level=c,
+                    val_loss=2.0 + c * 0.3,
+                    diversity=0.3,
+                )
+            )
 
         suggestion = mc.suggest_parameter_reset()
         # With 14 cycles and strongly declining fitness, reset is likely
@@ -174,6 +177,7 @@ class TestMetaControllerToEvolution:
 # 2. TestStrategyArchiveToEvolution
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestStrategyArchiveToEvolution:
     """StrategyArchive → record → recommend_strategy pipeline."""
 
@@ -229,9 +233,7 @@ class TestStrategyArchiveToEvolution:
         weak_bonus = archive.adaptive_exploration_bonus("WEAK_STRAT", level=0, base_bonus=0.1)
         strong_bonus = archive.adaptive_exploration_bonus("STRONG_STRAT", level=1, base_bonus=0.1)
 
-        assert weak_bonus > strong_bonus, (
-            f"Weak strategy should get higher bonus: {weak_bonus} vs {strong_bonus}"
-        )
+        assert weak_bonus > strong_bonus, f"Weak strategy should get higher bonus: {weak_bonus} vs {strong_bonus}"
         assert weak_bonus == pytest.approx(0.2, abs=1e-6), "Underperforming should get 2x base"
         assert strong_bonus == pytest.approx(0.05, abs=1e-6), "Well-performing should get 0.5x base"
 
@@ -265,6 +267,7 @@ class TestStrategyArchiveToEvolution:
 # ═══════════════════════════════════════════════════════════════════════
 # 3. TestChampionArchiveToEvolution
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class TestChampionArchiveToEvolution:
     """ChampionArchive → add → diversity_aware_select → prune pipeline."""
@@ -325,20 +328,15 @@ class TestChampionArchiveToEvolution:
             program = [0x00000013] * (3 + i % 5) + [i & 0xFF]
             archive.add(program, level=level, fitness=50.0 + i * 2, cycle=i + 1)
 
-        before = archive.size
         removed = archive.quality_weighted_prune()
         after = archive.size
 
         assert removed >= 0, "Should report number of entries removed"
         # Archive should be at or under max_size after pruning
-        assert after <= archive.max_size + 1, (
-            f"Archive {after} should be <= max_size {archive.max_size} after prune"
-        )
+        assert after <= archive.max_size + 1, f"Archive {after} should be <= max_size {archive.max_size} after prune"
 
         # Foundational entries (L0-L6) should be preserved
-        foundational_count = sum(
-            1 for e in archive.entries if e.level in range(7)
-        )
+        foundational_count = sum(1 for e in archive.entries if e.level in range(7))
         assert foundational_count > 0, "Foundational entries should survive pruning"
 
     def test_get_diversity_report_provides_insights(self, tmp_path):

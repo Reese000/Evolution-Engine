@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -256,6 +256,54 @@ def quality_aware_rotate_checkpoints(keep_n: int = 5, fitness_scores: dict[str, 
 # ── Recurrent Data Rotation ──────────────────────────────────────────
 
 
+def _rotate_current_file(data_file: Path, result: dict) -> bool:
+    """Rotate the current recurrent data file to a timestamped backup."""
+    import shutil
+
+    timestamp = datetime.now(timezone.utc).strftime(_TIMESTAMP_FMT)
+    backup_name = f"recurrent_data.jsonl.{timestamp}"
+    backup_path = data_file.parent / backup_name
+    try:
+        # Use shutil.move for cross-platform compatibility (Windows temp dirs)
+        shutil.move(str(data_file), str(backup_path))
+        result["rotated"] = True
+        result["backup_path"] = str(backup_path)
+        logger.info("Rotated recurrent data (%.2f MB) -> %s", backup_path.stat().st_size / (1024 * 1024), backup_name)
+        return True
+    except OSError as exc:
+        logger.error("Failed to rotate recurrent data file: %s", exc)
+        return False
+
+
+def _create_fresh_file(data_file: Path) -> None:
+    """Create a fresh empty recurrent data file."""
+    try:
+        data_file.touch()
+        logger.info("Created fresh recurrent_data.jsonl")
+    except OSError as exc:
+        logger.error("Failed to create fresh recurrent_data.jsonl: %s", exc)
+
+
+def _prune_old_backups(recurrent_dir: Path, result: dict) -> None:
+    """Prune old recurrent data backups beyond DEFAULT_RECURRENT_BACKUPS."""
+    backup_pattern = re.compile(r"^recurrent_data\.jsonl\.\d{8}_\d{6}$")
+    backups: list[Path] = []
+    for entry in recurrent_dir.iterdir():
+        if not entry.is_file():
+            continue
+        if backup_pattern.match(entry.name):
+            backups.append(entry)
+    backups.sort(key=lambda p: -p.stat().st_mtime)
+    if len(backups) > DEFAULT_RECURRENT_BACKUPS:
+        for old_backup in backups[DEFAULT_RECURRENT_BACKUPS:]:
+            try:
+                old_backup.unlink()
+                result["deleted"].append(str(old_backup))
+                logger.info("Pruned old recurrent backup: %s", old_backup.name)
+            except OSError as exc:
+                logger.warning("Failed to prune backup %s: %s", old_backup.name, exc)
+
+
 def rotate_recurrent_data(
     max_mb: int = DEFAULT_RECURRENT_MAX_MB,
 ) -> dict:
@@ -276,65 +324,20 @@ def rotate_recurrent_data(
           - ``deleted`` (list[str]): paths of pruned old backups.
     """
     result: dict = {"rotated": False, "backup_path": None, "deleted": []}
-
     recurrent_dir = Path(M1_RECURRENT)
     data_file = recurrent_dir / "recurrent_data.jsonl"
-
     if not data_file.is_file():
         logger.info("No recurrent data file found at %s, skipping.", data_file)
         return result
-
     size_bytes = data_file.stat().st_size
     size_mb = size_bytes / (1024 * 1024)
-
     if size_mb < max_mb:
         logger.info("Recurrent data is %.2f MB (under %d MB limit), skipping.", size_mb, max_mb)
         return result
-
-    # ── Rotate current file to timestamped backup ─────────────────────
-
-    timestamp = datetime.now().strftime(_TIMESTAMP_FMT)
-    backup_name = f"recurrent_data.jsonl.{timestamp}"
-    backup_path = recurrent_dir / backup_name
-
-    try:
-        data_file.rename(backup_path)
-        result["rotated"] = True
-        result["backup_path"] = str(backup_path)
-        logger.info("Rotated recurrent data (%.2f MB) -> %s", size_mb, backup_name)
-    except OSError as exc:
-        logger.error("Failed to rotate recurrent data file: %s", exc)
+    if not _rotate_current_file(data_file, result):
         return result
-
-    # Create a fresh empty file
-    try:
-        data_file.touch()
-        logger.info("Created fresh recurrent_data.jsonl")
-    except OSError as exc:
-        logger.error("Failed to create fresh recurrent_data.jsonl: %s", exc)
-
-    # ── Prune old backups ─────────────────────────────────────────────
-
-    backup_pattern = re.compile(r"^recurrent_data\.jsonl\.\d{8}_\d{6}$")
-    backups: list[Path] = []
-    for entry in recurrent_dir.iterdir():
-        if not entry.is_file():
-            continue
-        if backup_pattern.match(entry.name):
-            backups.append(entry)
-
-    # Sort newest-first
-    backups.sort(key=lambda p: -p.stat().st_mtime)
-
-    if len(backups) > DEFAULT_RECURRENT_BACKUPS:
-        for old_backup in backups[DEFAULT_RECURRENT_BACKUPS:]:
-            try:
-                old_backup.unlink()
-                result["deleted"].append(str(old_backup))
-                logger.info("Pruned old recurrent backup: %s", old_backup.name)
-            except OSError as exc:
-                logger.warning("Failed to prune backup %s: %s", old_backup.name, exc)
-
+    _create_fresh_file(data_file)
+    _prune_old_backups(recurrent_dir, result)
     return result
 
 

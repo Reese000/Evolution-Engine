@@ -11,6 +11,7 @@ Key speedup: avoids 50+ subprocess spawns per generation (~2750/cycle).
 from __future__ import annotations
 
 from contextlib import nullcontext
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -106,7 +107,7 @@ def get_gpu_vram_info() -> dict[str, Any]:
     _ensure_cupy()
     if HAS_CUDA and cp is not None:
         try:
-            mem = cp.get_default_memory_pool()
+            cp.get_default_memory_pool()
             total = cp.cuda.Device().mem_info[1] / (1024 * 1024)
             used = cp.cuda.Device().mem_info[0] / (1024 * 1024)
             free = total - used
@@ -121,7 +122,7 @@ def get_gpu_vram_info() -> dict[str, Any]:
                 }
             )
             return info
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             pass
 
     return info
@@ -316,6 +317,82 @@ def _sign_extend32(val: int) -> int:
     return val
 
 
+def _decode_insn(word: int) -> tuple[int, int, int, int, int, int, int, int, int]:
+    """Precompute opcode fields and the immediate used by this opcode."""
+    if word == EBREAK:
+        return (0, 0, 0, 0, 0, 0, 0, 0, word)
+    opcode = word & 0x7F
+    rd = (word >> 7) & 0x1F
+    funct3 = (word >> 12) & 0x07
+    rs1 = (word >> 15) & 0x1F
+    rs2 = (word >> 20) & 0x1F
+    funct7 = (word >> 25) & 0x7F
+    if opcode in (OP_OP_IMM, OP_LOAD, OP_JALR):
+        imm = _sign_extend((word >> 20) & _MASK12, 12)
+    elif opcode == OP_STORE:
+        imm = _sign_extend(((word >> 25) & 0x7F) << 5 | ((word >> 7) & 0x1F), 12)
+    elif opcode == OP_BRANCH:
+        imm = _sign_extend(
+            (word >> 31) << 12 | ((word >> 7) & 1) << 11 | ((word >> 25) & 0x3F) << 5 | ((word >> 8) & 0xF) << 1,
+            13,
+        )
+    elif opcode == OP_JAL:
+        imm = _sign_extend(
+            ((word >> 31) & 1) << 20
+            | ((word >> 12) & 0xFF) << 12
+            | ((word >> 20) & 1) << 11
+            | ((word >> 21) & 0x3FF) << 1,
+            21,
+        )
+    elif opcode in (OP_LUI, OP_AUIPC):
+        imm = ((word >> 12) & _MASK20) << 12
+    else:
+        imm = 0
+    return (1, opcode, rd, funct3, rs1, rs2, funct7, imm, word)
+
+
+@lru_cache(maxsize=512)
+def _decode_program(prog: tuple[int, ...]) -> tuple[tuple[int, int, int, int, int, int, int, int, int], ...]:
+    return tuple(_decode_insn(int(w)) for w in prog)
+
+
+def _vm_result_from_parts(
+    success: bool,
+    registers: tuple[tuple[int, int], ...],
+    memory: tuple[tuple[int, int], ...],
+    cycles: int,
+    error: str | None,
+    blocked_writes: int,
+) -> dict[str, Any]:
+    return {
+        "success": success,
+        "registers": dict(registers),
+        "memory": dict(memory),
+        "trace": [],
+        "cycles": cycles,
+        "error": error,
+        "blocked_writes": blocked_writes,
+    }
+
+
+@lru_cache(maxsize=1024)
+def _execute_vm_cached(
+    program: tuple[int, ...],
+    init_regs: tuple[tuple[int, int], ...],
+    init_mem: tuple[tuple[int, int], ...],
+    budget: int,
+) -> tuple:
+    result = _execute_vm(list(program), dict(init_regs), dict(init_mem), budget)
+    return (
+        bool(result["success"]),
+        tuple(sorted((int(k), int(v)) for k, v in (result.get("registers") or {}).items())),
+        tuple(sorted((int(k), int(v)) for k, v in (result.get("memory") or {}).items())),
+        int(result["cycles"]),
+        result.get("error"),
+        int(result.get("blocked_writes") or 0),
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  Pure-Python RV32I VM
 # ══════════════════════════════════════════════════════════════════════
@@ -387,13 +464,16 @@ def _execute_vm_inner(
     # on every iteration -- CPython resolves globals via dict lookup each time).
     _regs = regs
     _mem = memory
-    _prog = program
-    _prog_len = len(program)
+    _decoded = _decode_program(tuple(int(w) for w in program))
+    _prog_len = len(_decoded)
     _m32 = MASK32
     _se = _sign_extend
     _se32 = _sign_extend32
     _mem_get = _mem.get
 
+    stuck_window = 32
+    pc_ring = [0] * stuck_window
+    regs_mark: list[int] | None = None
     try:
         while cycles < budget:
             # Instruction fetch -- removed redundant word_offset < 0 check
@@ -403,25 +483,26 @@ def _execute_vm_inner(
                 error_msg = f"PC out of range: {pc:#x}"
                 break
 
-            word = _prog[word_offset]
-            if word == EBREAK:
+            kind, opcode, rd, funct3, rs1, rs2, funct7, imm, word = _decoded[word_offset]
+            if kind == 0:
                 break
 
             cycles += 1
+            pc_ring[cycles % stuck_window] = word_offset
+            if cycles == stuck_window:
+                regs_mark = _regs[:]
+            elif regs_mark is not None and cycles >= stuck_window * 2 and (cycles % stuck_window) == 0:
+                nuniq = len(set(pc_ring))
+                if nuniq <= 8 and _regs == regs_mark:
+                    cycles = budget
+                    break
+                regs_mark = _regs[:]
             pc += 4
-
-            opcode = word & 0x7F
-            rd = (word >> 7) & 0x1F
-            funct3 = (word >> 12) & 0x07
-            rs1 = (word >> 15) & 0x1F
-            rs2 = (word >> 20) & 0x1F
-            funct7 = (word >> 25) & 0x7F
 
             v_rs1 = _regs[rs1]
             v_rs2 = _regs[rs2]
 
             if opcode == OP_OP_IMM:
-                imm = _se((word >> 20) & _MASK12, 12)
                 if funct3 == F3_ADD_SUB:
                     result = (v_rs1 + imm) & _m32
                 elif funct3 == F3_SLL:
@@ -479,7 +560,6 @@ def _execute_vm_inner(
                     _regs[rd] = result
 
             elif opcode == OP_LOAD:
-                imm = _se((word >> 20) & _MASK12, 12)
                 addr = (v_rs1 + imm) & _m32
                 val = _mem_get(addr, 0)
                 if funct3 == F3_LW:
@@ -499,7 +579,6 @@ def _execute_vm_inner(
                     _regs[rd] = result & _m32
 
             elif opcode == OP_STORE:
-                imm = _se(((word >> 25) & 0x7F) << 5 | ((word >> 7) & 0x1F), 12)
                 addr = (v_rs1 + imm) & _m32
                 val = v_rs2 & _m32
                 if funct3 == F3_SW:
@@ -515,15 +594,6 @@ def _execute_vm_inner(
                     break
 
             elif opcode == OP_BRANCH:
-                # Branch immediate: bit 31 -> 12, bit 7 -> 11, bits 30:25 -> 10:5, bits 11:8 -> 4:1
-                # (word >> 31) already isolates bit 31 (no & 1 needed).
-                imm = _se(
-                    (word >> 31) << 12
-                    | ((word >> 7) & 1) << 11
-                    | ((word >> 25) & 0x3F) << 5
-                    | ((word >> 8) & 0xF) << 1,
-                    13,
-                )
                 branch = False
                 if funct3 == F3_BEQ:
                     branch = v_rs1 == v_rs2
@@ -544,30 +614,22 @@ def _execute_vm_inner(
                     pc = (pc - 4 + imm) & _m32
 
             elif opcode == OP_JAL:
-                imm = _se(
-                    ((word >> 31) & 1) << 20
-                    | ((word >> 12) & 0xFF) << 12
-                    | ((word >> 20) & 1) << 11
-                    | ((word >> 21) & 0x3FF) << 1,
-                    21,
-                )
                 if rd != 0:
                     _regs[rd] = pc  # already incremented
                 pc = (pc - 4 + imm) & _m32
 
             elif opcode == OP_JALR:
-                imm = _se((word >> 20) & _MASK12, 12)
                 if rd != 0:
                     _regs[rd] = pc
                 pc = ((v_rs1 + imm) & ~1) & _m32
 
             elif opcode == OP_LUI:
                 if rd != 0:
-                    _regs[rd] = ((word >> 12) & _MASK20) << 12 & _m32
+                    _regs[rd] = imm & _m32
 
             elif opcode == OP_AUIPC:
                 if rd != 0:
-                    _regs[rd] = (pc - 4 + ((word >> 12) & _MASK20) << 12) & _m32
+                    _regs[rd] = (pc - 4 + imm) & _m32
 
             elif opcode == OP_ECALL:
                 break
@@ -581,7 +643,7 @@ def _execute_vm_inner(
 
             # x0 is never written: all write paths already guard rd != 0.
 
-    except Exception as e:
+    except (RuntimeError, ValueError, KeyError) as e:
         error_msg = f"VM exception: {e}"
 
     # Build register dict (only non-zero registers).
@@ -599,6 +661,69 @@ def _execute_vm_inner(
     }
 
 
+def _vector_spin_cap(programs: list[list[int]], budget: int) -> int:
+    """Numpy cycle cap from compact programs only.
+
+    A long diversity mutant must not raise vectorized cycles for the whole
+    batch. Leftover lanes still run the scalar VM at the full budget.
+    """
+    spin_len_cap = 96
+    typical = 0
+    for prog in programs:
+        n = len(prog)
+        if n <= spin_len_cap and n > typical:
+            typical = n
+    if typical <= 0:
+        typical = spin_len_cap
+    return min(int(budget), max(320, 5 * int(typical)))
+
+
+def _freeze_vm_input(inp: dict[str, Any]) -> tuple:
+    regs = inp.get("registers") or {}
+    mem = inp.get("memory") or {}
+    return (
+        tuple(sorted((int(k), int(v)) for k, v in regs.items())),
+        tuple(sorted((int(k), int(v)) for k, v in mem.items())),
+    )
+
+
+def _dedupe_vm_batch(
+    programs: list[list[int]], inputs_list: list[dict[str, Any]]
+) -> tuple[list[int], list[list[int]], list[dict[str, Any]]] | None:
+    """Map each slot to a unique (program, input) index, or None if already unique."""
+    first: dict[tuple, int] = {}
+    remap: list[int] = []
+    uniq_p: list[list[int]] = []
+    uniq_i: list[dict[str, Any]] = []
+    for i, prog in enumerate(programs):
+        inp = inputs_list[i] if i < len(inputs_list) else {}
+        key = (tuple(int(w) for w in prog), _freeze_vm_input(inp))
+        slot = first.get(key)
+        if slot is None:
+            slot = len(uniq_p)
+            first[key] = slot
+            uniq_p.append(prog)
+            uniq_i.append(inp)
+        remap.append(slot)
+    if len(uniq_p) == len(programs):
+        return None
+    return remap, uniq_p, uniq_i
+
+
+def _scatter_unique_results(remap: list[int], unique_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    for slot in remap:
+        src = unique_results[slot]
+        out.append(
+            {
+                **src,
+                "registers": dict(src.get("registers") or {}),
+                "memory": dict(src.get("memory") or {}),
+            }
+        )
+    return out
+
+
 def _execute_vm_batch_numpy(
     programs: list[list[int]],
     inputs_list: list[dict[str, Any]],
@@ -612,13 +737,25 @@ def _execute_vm_batch_numpy(
     N = len(programs)
     if N == 0:
         return []
+    if N > 1:
+        deduped = _dedupe_vm_batch(programs, inputs_list)
+        if deduped is not None:
+            remap, uniq_p, uniq_i = deduped
+            return _scatter_unique_results(remap, _execute_vm_batch_numpy(uniq_p, uniq_i, budget))
 
     # Find max program length for array padding
-    max_len = max(len(p) for p in programs)
+    # Long programs skip the vector path and use leftover scalar at full budget
+    # so they cannot widen prog_arr or raise numpy cost for compact lanes.
+    vector_len_cap = 96
+    compact_lens = [len(p) for p in programs if len(p) <= vector_len_cap]
+    max_len = max(compact_lens) if compact_lens else 1
+    long_lane = [len(p) > vector_len_cap for p in programs]
 
     # Pad programs into 2D array (N, max_len), using EBREAK for padding
     prog_arr = np.full((N, max_len), EBREAK, dtype=np.int64)
     for i, prog in enumerate(programs):
+        if long_lane[i]:
+            continue
         prog_arr[i, : len(prog)] = prog
 
     # Initialize register files: (N, 32) array
@@ -642,6 +779,9 @@ def _execute_vm_batch_numpy(
     # Per-program state arrays
     pcs = np.zeros(N, dtype=np.int64)
     active = np.ones(N, dtype=bool)  # True = still executing
+    for i, is_long in enumerate(long_lane):
+        if is_long:
+            active[i] = False
     cycle_counts = np.zeros(N, dtype=np.int64)
     errors: list[str | None] = [None] * N
 
@@ -655,15 +795,28 @@ def _execute_vm_batch_numpy(
         return np.where(val & (1 << (bits - 1)), val - (1 << bits), val)
 
     def _wb(mask, results):
-        """Write back results to registers where mask is True."""
-        targets = mask & (rd != 0)
+        """Write back results to registers for ops matching mask."""
+        masked_idx = idx[mask]
+        rd_m = rd[mask]
+        targets = rd_m != 0
         if np.any(targets):
-            regs[idx[targets], rd[targets]] = results[targets] & M32
+            regs[masked_idx[targets], rd_m[targets]] = results[targets] & M32
 
-    # Main execution loop
+    # Vectorized stepping has high per-cycle Python overhead. Programs that
+    # halt quickly (typical L30 straight-line) finish here. Remaining spinners
+    # are finished with the scalar VM from scratch at the same budget so
+    # traces match a full-budget run without dragging the whole batch.
+    # Cap length used for spin_cap so one long diversity mutant cannot raise
+    # numpy cycles for every lane (leftover scalar still uses full budget).
+    spin_cap = _vector_spin_cap(programs, budget)
+    stuck_window = 32
+    pc_ring = np.zeros((stuck_window, N), dtype=np.int64)
+    regs_mark = None
     for cycle in range(budget):
         # Check if any programs are still active
         if not np.any(active):
+            break
+        if cycle >= spin_cap:
             break
 
         # Get indices of active programs
@@ -835,9 +988,8 @@ def _execute_vm_batch_numpy(
             results = np.zeros(np.sum(m), dtype=np.int64)
 
             # Per-program memory access (sparse, can't vectorize)
-            for j, ii in enumerate(idx):
-                if not m[j]:
-                    continue
+            masked_idx = idx[m]
+            for j, ii in enumerate(masked_idx):
                 addr = int(addrs[j])
                 val = memory_list[ii].get(addr, 0)
                 ft = int(f3[j])
@@ -867,11 +1019,11 @@ def _execute_vm_batch_numpy(
             f3 = funct3[m]
 
             # Per-program memory access
-            for j, ii in enumerate(idx):
-                if not m[j]:
-                    continue
+            masked_idx = idx[m]
+            rs2_m = v_rs2[m]
+            for j, ii in enumerate(masked_idx):
                 addr = int(addrs[j])
-                val = int(v_rs2[m][j]) & M32
+                val = int(rs2_m[j]) & M32
                 ft = int(f3[j])
                 old = memory_list[ii].get(addr, 0) & M32
                 if ft == F3_SW:
@@ -972,7 +1124,10 @@ def _execute_vm_batch_numpy(
             imm = ((words[m] >> 12) & 0xFFFFF) << 12
             targets = m & (rd != 0)
             if np.any(targets):
-                regs[idx[targets], rd[targets]] = imm[targets - m[targets] + np.where(m)[0]] & M32
+                rd_m = rd[m]
+                targets_actual = rd_m != 0
+                if np.any(targets_actual):
+                    regs[idx[m][targets_actual], rd_m[targets_actual]] = imm[targets_actual] & M32
 
         # ===== OP_AUIPC =====
         mask_auipc = opcode == OP_AUIPC
@@ -983,9 +1138,10 @@ def _execute_vm_batch_numpy(
             if np.any(targets):
                 # PC was already advanced, need to subtract 4
                 result = (pcs[idx[m]] - 4 + imm) & M32
-                targets_actual = targets & (rd != 0)
+                rd_m = rd[m]
+                targets_actual = rd_m != 0
                 if np.any(targets_actual):
-                    regs[idx[m][targets_actual], rd[m][targets_actual]] = result[targets_actual]
+                    regs[idx[m][targets_actual], rd_m[targets_actual]] = result[targets_actual]
 
         # ===== OP_ECALL =====
         mask_ecall = opcode == OP_ECALL
@@ -1003,9 +1159,50 @@ def _execute_vm_batch_numpy(
             if errors[ii] is not None:
                 active[ii] = False
 
+        pc_ring[cycle % stuck_window] = pcs
+        if cycle == spin_cap - stuck_window:
+            regs_mark = regs.copy()
+
     # Build results
     results_list = []
+    leftover_cache: dict[tuple, dict] = {}
     for i in range(N):
+        if bool(active[i]) or long_lane[i]:
+            if bool(active[i]) and not long_lane[i]:
+                nuniq = len({int(p) for p in pc_ring[:, i]})
+                regs_frozen = regs_mark is not None and np.array_equal(regs[i], regs_mark[i])
+                if nuniq <= 8 and regs_frozen:
+                    # Tight control-flow spin with unchanged registers: same as a
+                    # full-budget timeout. Loops that still write regs stay scalar.
+                    reg_dict = {int(r): int(regs[i, r]) for r in range(1, 32) if regs[i, r] != 0}
+                    results_list.append(
+                        {
+                            "success": errors[i] is None,
+                            "registers": reg_dict,
+                            "memory": memory_list[i],
+                            "trace": [],
+                            "cycles": int(budget),
+                            "error": errors[i],
+                            "blocked_writes": 0,
+                        }
+                    )
+                    continue
+            inp = inputs_list[i] if i < len(inputs_list) else {}
+            frozen_regs = tuple(sorted((int(k), int(v)) for k, v in (inp.get("registers") or {}).items()))
+            frozen_mem = tuple(sorted((int(k), int(v)) for k, v in (inp.get("memory") or {}).items()))
+            key = (tuple(int(w) for w in programs[i]), frozen_regs, frozen_mem, int(budget))
+            cached = leftover_cache.get(key)
+            if cached is None:
+                cached = _vm_result_from_parts(*_execute_vm_cached(*key))
+                leftover_cache[key] = cached
+            results_list.append(
+                {
+                    **cached,
+                    "registers": dict(cached.get("registers") or {}),
+                    "memory": dict(cached.get("memory") or {}),
+                }
+            )
+            continue
         # Build register dict (only non-zero)
         reg_dict = {int(r): int(regs[i, r]) for r in range(1, 32) if regs[i, r] != 0}
 
@@ -1073,7 +1270,7 @@ class GpuVMFarm:
         if self._use_cupy and cp is not None:
             try:
                 return self._evaluate_batch_cupy(programs, inputs_list, budget)
-            except Exception:
+            except (RuntimeError, ValueError, TypeError):
                 pass
         # NumPy vectorized path (always available)
         return _execute_vm_batch_numpy(programs, inputs_list, budget)
@@ -1177,7 +1374,7 @@ class VMFactory:
             self._backend = GpuVMFarm(batch_size=self.batch_size, budget=self.budget)
             self._gpu_available = True
             self._backend_type = "gpu"
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             self._fallback_reason = f"GPU init failed: {e}"
             self._init_cpu()
 

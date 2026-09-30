@@ -10,7 +10,6 @@ Covers:
 """
 
 import os
-import sys
 import tempfile
 from pathlib import Path
 
@@ -36,7 +35,6 @@ class TestCheckpointManager:
             assert "checkpoint_best.pt" in path
 
             # Load it back
-            from checkpoint_manager import CheckpointMismatchError
 
             ckpt, meta = mgr.load(config_name="small")
             assert ckpt is not None

@@ -24,6 +24,7 @@ from evolution_engine import EvolutionConfig, EvolutionEngine
 # 1. TestEngineHealth — engine creation, attributes, callable methods
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestEngineHealth:
     """Verify EvolutionEngine can be created and has all expected attributes."""
 

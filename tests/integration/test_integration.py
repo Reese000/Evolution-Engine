@@ -15,7 +15,6 @@ rather than requiring GPU hardware or full model checkpoints.
 import json
 import os
 import signal
-import sys
 import tempfile
 import time
 import unittest
@@ -788,7 +787,7 @@ class TestRetrainFailureRecovery(unittest.TestCase):
                 }
             )
 
-            result = runner._run_retrain_with_recovery(1, {}, max_attempts=2)
+            runner._run_retrain_with_recovery(1, {}, max_attempts=2)
             # After NaN, LR should have been halved
             self.assertLess(runner._retrain_config.retrain_lr, original_lr)
 

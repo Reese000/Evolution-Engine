@@ -17,7 +17,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from milestone1.training.scaling.types import TrendSnapshot
@@ -104,7 +104,12 @@ class ProgressionTracker:
                         continue
                     d = json.loads(line)
                     self.history.append(CycleMetrics(**d))
-        except Exception:
+        except (
+            OSError,
+            json.JSONDecodeError,
+            ValueError,
+            KeyError,
+        ):  # Intentional: history file may be corrupted; skip
             pass
 
     def record(self, metrics: CycleMetrics) -> None:
@@ -163,7 +168,7 @@ class ProgressionTracker:
         ft = self.fitness_trend()
         vt = self.val_loss_trend()
         wt = self.words_trend()
-        mg_avg = self.mg_ratio_avg()
+        self.mg_ratio_avg()
 
         if ft < 0:
             suggestions["action"] = "increase_exploration"
@@ -202,6 +207,45 @@ class ProgressionTracker:
             else:
                 break
         return count
+
+    def _compute_structural_diversity(self, window: int) -> float:
+        """Compute structural diversity score from mg_ratio, fitness, and words trends."""
+        mg_avg = self.mg_ratio_avg(window)
+        ft = self.fitness_trend(window)
+        wt = self.words_trend(window)
+        ft_norm = max(0.0, min(1.0, (ft + 10.0) / 20.0))
+        wt_norm = max(0.0, min(1.0, (wt + 5.0) / 10.0))
+        structural_diversity = mg_avg * 0.4 + ft_norm * 0.3 + wt_norm * 0.3
+        return max(0.0, min(1.0, structural_diversity))
+
+    def _detect_bottleneck(self, structural_diversity: float, lvl: int, pc: int) -> str:
+        """Detect the structural bottleneck based on diversity and level."""
+        if structural_diversity < 0.3:
+            if lvl < 7:
+                return "loops"
+            elif lvl < 12:
+                return "memory"
+            else:
+                return "diversity"
+        return "none"
+
+    def _compute_scale_factor(self, structural_diversity: float) -> float:
+        """Compute scale factor from structural diversity."""
+        if structural_diversity <= 0.3:
+            return 2.0 - (structural_diversity / 0.3) * 1.0
+        elif structural_diversity >= 0.7:
+            return 1.0 - ((structural_diversity - 0.7) / 0.3) * 0.5
+        return 1.0
+
+    def _compute_feature_pressures(self, bottleneck: str) -> tuple[float, float, float]:
+        """Compute per-feature pressures from bottleneck."""
+        if bottleneck == "loops":
+            return 0.6, 0.2, 0.2
+        elif bottleneck == "memory":
+            return 0.2, 0.6, 0.2
+        elif bottleneck == "diversity":
+            return 0.2, 0.2, 0.6
+        return 0.33, 0.33, 0.34
 
     def analyze_population_patterns(self, window: int = 5) -> dict[str, Any]:
         """Analyze structural patterns in the population across recent cycles.
@@ -248,82 +292,12 @@ class ProgressionTracker:
                 "div_pressure": 0.34,
             }
 
-        # --- Structural diversity score -----------------------------------
-        # Combine three signals into a single [0, 1] diversity metric:
-        #   1. mg_ratio_avg — proxy for exploration / behavioural diversity
-        #   2. fitness_trend — improving fitness implies structural progress
-        #   3. words_trend — growing programs imply structural complexity
-        mg_avg = self.mg_ratio_avg(window)
-        ft = self.fitness_trend(window)
-        wt = self.words_trend(window)
-
-        # Normalise fitness trend: clamp to [-10, +10] and map to [0, 1]
-        ft_norm = max(0.0, min(1.0, (ft + 10.0) / 20.0))
-        # Normalise words trend: clamp to [-5, +5] and map to [0, 1]
-        wt_norm = max(0.0, min(1.0, (wt + 5.0) / 10.0))
-
-        # Weighted combination: mg_ratio is the strongest signal
-        structural_diversity = mg_avg * 0.4 + ft_norm * 0.3 + wt_norm * 0.3
-        structural_diversity = max(0.0, min(1.0, structural_diversity))
-
-        # --- Structural bottleneck detection ------------------------------
-        # Determine which feature is most lacking based on level and trends
+        structural_diversity = self._compute_structural_diversity(window)
         lvl = recent[-1].level if recent else 0
         pc = self.plateau_cycles()
-
-        if structural_diversity < 0.3 and pc >= 3:
-            # Stuck and structurally homogeneous — identify the primary gap
-            if lvl < 7:
-                bottleneck = "loops"
-            elif lvl < 12:
-                bottleneck = "memory"
-            else:
-                bottleneck = "diversity"
-        elif structural_diversity < 0.3:
-            # Low diversity but not yet plateaued — secondary bottleneck
-            if lvl < 7:
-                bottleneck = "loops"
-            elif lvl < 12:
-                bottleneck = "memory"
-            else:
-                bottleneck = "diversity"
-        elif structural_diversity > 0.7:
-            bottleneck = "none"
-        else:
-            # Medium diversity — no clear bottleneck
-            bottleneck = "none"
-
-        # --- Scale factor -------------------------------------------------
-        # Inversely related to structural diversity:
-        #   diversity < 0.3 → scale up to 2.0x (push harder)
-        #   diversity > 0.7 → scale down to 0.5x (back off)
-        #   middle         → linear interpolation
-        if structural_diversity <= 0.3:
-            scale_factor = 2.0 - (structural_diversity / 0.3) * 1.0  # 2.0 → 1.0
-        elif structural_diversity >= 0.7:
-            scale_factor = 1.0 - ((structural_diversity - 0.7) / 0.3) * 0.5  # 1.0 → 0.5
-        else:
-            scale_factor = 1.0  # neutral zone [0.3, 0.7]
-
-        # --- Per-feature pressure -----------------------------------------
-        # Pressure is highest for the bottlenecked feature at its level
-        if bottleneck == "loops":
-            loop_pressure = 0.6
-            mem_pressure = 0.2
-            div_pressure = 0.2
-        elif bottleneck == "memory":
-            loop_pressure = 0.2
-            mem_pressure = 0.6
-            div_pressure = 0.2
-        elif bottleneck == "diversity":
-            loop_pressure = 0.2
-            mem_pressure = 0.2
-            div_pressure = 0.6
-        else:
-            # No bottleneck — equal pressure
-            loop_pressure = 0.33
-            mem_pressure = 0.33
-            div_pressure = 0.34
+        bottleneck = self._detect_bottleneck(structural_diversity, lvl, pc)
+        scale_factor = self._compute_scale_factor(structural_diversity)
+        loop_pressure, mem_pressure, div_pressure = self._compute_feature_pressures(bottleneck)
 
         return {
             "structural_diversity_score": structural_diversity,
@@ -411,12 +385,42 @@ class ProgressionTracker:
             "status": status,
         }
 
-    def compare_windows(
-        self,
-        metric: str,
-        window_a: int = 5,
-        window_b: int = 5,
-    ) -> dict[str, Any]:
+    def _split_windows(self, window_a: int, window_b: int) -> tuple[list[CycleMetrics], list[CycleMetrics]]:
+        """Split history into older (window_b) and newer (window_a) slices."""
+        if not self.history:
+            return [], []
+        needed = window_a + window_b
+        if len(self.history) < needed:
+            total = len(self.history)
+            window_b_actual = min(window_b, total)
+            window_a_actual = min(window_a, total - window_b_actual)
+        else:
+            window_a_actual = window_a
+            window_b_actual = window_b
+        start_b = len(self.history) - window_a_actual - window_b_actual
+        end_b = start_b + window_b_actual
+        slice_b = self.history[start_b:end_b]  # older window
+        slice_a = self.history[end_b:]  # newer window
+        return slice_b, slice_a
+
+    def _extract_metric_values(self, entries: list[CycleMetrics], attr_name: str) -> list[float]:
+        """Extract metric values from entries."""
+        values = []
+        for m in entries:
+            v = getattr(m, attr_name, None)
+            if v is not None:
+                values.append(float(v))
+        return values
+
+    def _compute_window_stats(self, values: list[float]) -> tuple[float, float]:
+        """Compute mean and stddev for a list of values."""
+        if not values:
+            return 0.0, 0.0
+        mean = sum(values) / len(values)
+        variance = sum((v - mean) ** 2 for v in values) / len(values)
+        return mean, variance**0.5
+
+    def compare_windows(self, metric: str, window_a: int = 5, window_b: int = 5) -> dict[str, Any]:
         """Compare a metric across two consecutive time windows.
 
         *window_b* is the older slice, *window_a* the newer.
@@ -452,42 +456,12 @@ class ProgressionTracker:
                 "window_b_stddev": 0.0,
             }
 
-        needed = window_a + window_b
-        if len(self.history) < needed:
-            # Fall back: use whatever is available, split as evenly as possible
-            total = len(self.history)
-            window_b_actual = min(window_b, total)
-            window_a_actual = min(window_a, total - window_b_actual)
-        else:
-            window_a_actual = window_a
-            window_b_actual = window_b
+        slice_b, slice_a = self._split_windows(window_a, window_b)
+        vals_b = self._extract_metric_values(slice_b, metric)
+        vals_a = self._extract_metric_values(slice_a, metric)
 
-        # Slice: older (window_b) then newer (window_a)
-        start_b = len(self.history) - window_a_actual - window_b_actual
-        end_b = start_b + window_b_actual
-        slice_b = self.history[start_b:end_b]  # older window
-        slice_a = self.history[end_b:]  # newer window
-
-        def _extract(entries: list, attr_name: str) -> list[float]:
-            values = []
-            for m in entries:
-                v = getattr(m, attr_name, None)
-                if v is not None:
-                    values.append(float(v))
-            return values
-
-        vals_b = _extract(slice_b, metric)
-        vals_a = _extract(slice_a, metric)
-
-        def _stats(values: list[float]):
-            if not values:
-                return 0.0, 0.0
-            mean = sum(values) / len(values)
-            variance = sum((v - mean) ** 2 for v in values) / len(values)
-            return mean, variance**0.5
-
-        mean_b, std_b = _stats(vals_b)
-        mean_a, std_a = _stats(vals_a)
+        mean_b, std_b = self._compute_window_stats(vals_b)
+        mean_a, std_a = self._compute_window_stats(vals_a)
 
         improvement = mean_a - mean_b
         percent_change = (improvement / mean_b * 100) if mean_b != 0 else 0.0
@@ -618,6 +592,91 @@ class TuningPolicy:
         last = self._last_adjusted.get(param, -999)
         return not current_cycle - last < self.cooldown
 
+    def _rule_fitness_plateau(
+        self,
+        pc: int,
+        ft: float,
+        stagnant: bool,
+        current_config: dict[str, Any],
+    ) -> list[TuningAdjustment]:
+        """Rule 1: Fitness plateau adjustment."""
+        if not (pc >= 5 or (ft < 0 and stagnant)):
+            return []
+        cur_mu = current_config.get("mutation_rate", 0.3)
+        new_mu = min(cur_mu + 0.1, 0.8)
+        return [
+            TuningAdjustment(
+                parameter="mutation_rate",
+                value=new_mu,
+                reason=f"fitness plateau ({pc} cycles, slope={ft:.2f})",
+                magnitude=abs(new_mu - cur_mu),
+            )
+        ]
+
+    def _rule_val_loss_increasing(self, vt: float, current_config: dict[str, Any]) -> list[TuningAdjustment]:
+        """Rule 2: val_loss increasing adjustment."""
+        if vt <= 0.001:
+            return []
+        cur_epochs = current_config.get("retrain_max_epochs", 50)
+        new_epochs = min(cur_epochs + 10, 100)
+        return [
+            TuningAdjustment(
+                parameter="retrain_max_epochs",
+                value=new_epochs,
+                reason=f"val_loss increasing ({vt:.4f}/cycle)",
+                magnitude=abs(new_epochs - cur_epochs),
+            )
+        ]
+
+    def _rule_val_loss_decreasing(self, vt: float, current_config: dict[str, Any]) -> list[TuningAdjustment]:
+        """Rule 3: val_loss decreasing well adjustment."""
+        if vt >= -0.01:
+            return []
+        cur_epochs = current_config.get("retrain_max_epochs", 50)
+        new_epochs = max(cur_epochs - 5, 10)
+        return [
+            TuningAdjustment(
+                parameter="retrain_max_epochs",
+                value=new_epochs,
+                reason=f"val_loss decreasing well ({vt:.4f}/cycle), prevent overfitting",
+                magnitude=abs(new_epochs - cur_epochs),
+            )
+        ]
+
+    def _rule_diversity_dropping(
+        self, ft: float, mg_avg: float, current_config: dict[str, Any]
+    ) -> list[TuningAdjustment]:
+        """Rule 4: Archive diversity dropping adjustment."""
+        if not (mg_avg < 0.15 or (ft < 0 and mg_avg < 0.3)):
+            return []
+        cur_mu = current_config.get("mutation_rate", 0.3)
+        new_mu = min(cur_mu + 0.15, 0.8)
+        return [
+            TuningAdjustment(
+                parameter="mutation_rate",
+                value=new_mu,
+                reason=f"diversity dropping (mg_ratio={mg_avg:.3f})",
+                magnitude=abs(new_mu - cur_mu),
+            )
+        ]
+
+    def _rule_word_stagnation(
+        self, wt: float, stagnant: bool, current_config: dict[str, Any]
+    ) -> list[TuningAdjustment]:
+        """Rule 5: Word count stagnation adjustment."""
+        if not (wt < 0.5 and stagnant):
+            return []
+        cur_curriculum = current_config.get("curriculum_stall_threshold", 3)
+        new_curriculum = max(cur_curriculum - 1, 1)
+        return [
+            TuningAdjustment(
+                parameter="curriculum_stall_threshold",
+                value=new_curriculum,
+                reason=f"word stagnation (wt={wt:.2f}, stagnant)",
+                magnitude=abs(new_curriculum - cur_curriculum),
+            )
+        ]
+
     def compute_adjustments(
         self,
         tracker: ProgressionTracker,
@@ -651,76 +710,13 @@ class TuningPolicy:
         stagnant = tracker.is_stagnant()
 
         candidates: list[TuningAdjustment] = []
+        candidates.extend(self._rule_fitness_plateau(pc, ft, stagnant, current_config))
+        candidates.extend(self._rule_val_loss_increasing(vt, current_config))
+        candidates.extend(self._rule_val_loss_decreasing(vt, current_config))
+        candidates.extend(self._rule_diversity_dropping(ft, mg_avg, current_config))
+        candidates.extend(self._rule_word_stagnation(wt, stagnant, current_config))
 
-        # -- Rule 1: Fitness plateau ---------------------------------
-        if pc >= 5 or (ft < 0 and stagnant):
-            cur_mu = current_config.get("mutation_rate", 0.3)
-            new_mu = min(cur_mu + 0.1, 0.8)
-            candidates.append(
-                TuningAdjustment(
-                    parameter="mutation_rate",
-                    value=new_mu,
-                    reason=f"fitness plateau ({pc} cycles, slope={ft:.2f})",
-                    magnitude=abs(new_mu - cur_mu),
-                )
-            )
-
-        # -- Rule 2: val_loss increasing -----------------------------
-        if vt > 0.001:
-            cur_epochs = current_config.get("retrain_max_epochs", 50)
-            new_epochs = min(cur_epochs + 10, 100)
-            candidates.append(
-                TuningAdjustment(
-                    parameter="retrain_max_epochs",
-                    value=new_epochs,
-                    reason=f"val_loss increasing ({vt:.4f}/cycle)",
-                    magnitude=abs(new_epochs - cur_epochs),
-                )
-            )
-
-        # -- Rule 3: val_loss decreasing well ------------------------
-        if vt < -0.01:
-            cur_epochs = current_config.get("retrain_max_epochs", 50)
-            new_epochs = max(cur_epochs - 5, 10)
-            candidates.append(
-                TuningAdjustment(
-                    parameter="retrain_max_epochs",
-                    value=new_epochs,
-                    reason=f"val_loss decreasing well ({vt:.4f}/cycle), prevent overfitting",
-                    magnitude=abs(new_epochs - cur_epochs),
-                )
-            )
-
-        # -- Rule 4: Archive diversity dropping ----------------------
-        if mg_avg < 0.15 or (ft < 0 and mg_avg < 0.3):
-            cur_mu = current_config.get("mutation_rate", 0.3)
-            new_mu = min(cur_mu + 0.15, 0.8)
-            candidates.append(
-                TuningAdjustment(
-                    parameter="mutation_rate",
-                    value=new_mu,
-                    reason=f"diversity dropping (mg_ratio={mg_avg:.3f})",
-                    magnitude=abs(new_mu - cur_mu),
-                )
-            )
-
-        # -- Rule 5: Word count stagnation ---------------------------
-        if wt < 0.5 and stagnant:
-            cur_curriculum = current_config.get("curriculum_stall_threshold", 3)
-            new_curriculum = max(cur_curriculum - 1, 1)
-            candidates.append(
-                TuningAdjustment(
-                    parameter="curriculum_stall_threshold",
-                    value=new_curriculum,
-                    reason=f"word stagnation (wt={wt:.2f}, stagnant)",
-                    magnitude=abs(new_curriculum - cur_curriculum),
-                )
-            )
-
-        # Filter by eligibility
         eligible = [c for c in candidates if self._eligible(c.parameter, current_cycle)]
-
-        # Return at most one (highest priority = first in list)
         return eligible[:1]
 
     def record_applied(self, adjustment: TuningAdjustment, cycle: int) -> None:
@@ -754,7 +750,7 @@ class ParameterActuator:
     """
 
     # Parameter bounds: (min, max)
-    BOUNDS: dict[str, tuple[float, float]] = {
+    BOUNDS: ClassVar[dict[str, tuple[float, float]]] = {
         "mutation_rate": (0.05, 0.8),
         "crossover_rate": (0.0, 0.5),
         "elite_ratio": (0.01, 0.3),

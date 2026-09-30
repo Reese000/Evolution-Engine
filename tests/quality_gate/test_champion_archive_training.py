@@ -6,10 +6,6 @@ champion programs into recurrent_data.jsonl for training.
 
 import json
 import os
-import sys
-import tempfile
-
-import pytest
 
 # Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -110,7 +106,7 @@ class TestMergeArchiveToRecurrent:
         import run_multi_cycle as rmc
 
         os.makedirs(tmp_path / "champions", exist_ok=True)
-        archive_path = str(tmp_path / "champions" / "archive.jsonl")
+        str(tmp_path / "champions" / "archive.jsonl")
         # Don't create the archive file
 
         recurrent_dir = str(tmp_path / "recurrent_data")

@@ -6,10 +6,8 @@ and their diagnostic/reporting APIs return the expected shapes.
 """
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
-from evolution_engine import EvolutionConfig, EvolutionEngine
+from evolution_engine import EvolutionEngine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TestEngineHealth
@@ -72,9 +70,7 @@ class TestEngineHealth:
         for key in required_keys:
             assert key in diag, f"Missing diagnostic key: {key}"
 
-    def test_get_performance_metrics_returns_dict(
-        self, engine: EvolutionEngine
-    ) -> None:
+    def test_get_performance_metrics_returns_dict(self, engine: EvolutionEngine) -> None:
         """get_performance_metrics returns a dict with expected keys."""
         metrics = engine.get_performance_metrics()
         assert isinstance(metrics, dict)
