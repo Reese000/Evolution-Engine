@@ -27,6 +27,7 @@ the cycle result as additive ``gen_phase_sub_*`` keys.
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import threading
@@ -48,14 +49,30 @@ NAMED_PHASES: tuple[str, ...] = PHASES[:-1]
 
 #: Sub-phases that partition ``mutation_propagation`` (EE-W6).
 #:
+#: Names are metric keys, so they are stable once shipped.  Mapping for the
+#: card's candidate list and for the sibling lane's markers (whose records
+#: carry them in ``subphase_seconds``; see SUBPHASE_RECORD_KEY):
+#:
+#: ================ ============ ==========================
+#: this card        sibling lane block wrapped
+#: ================ ============ ==========================
+#: generation_init  gen_init      ``_run_generation_init``
+#: challenger_      generate_     ``_generate_challengers()``
+#:   generation      challengers
+#: diversity_topup  topup_        ``_maybe_topup_scan_floor_diversity()``
+#:   (card: same)     diversity
+#: length_capping   (none)       scan-floor cap try/except block
+#: dedupe           dedupe       ``dedupe_programs_for_eval()``
+#: ================ ============ ==========================
+#:
 #: ``generation_init`` and ``challenger_generation`` exist at every revision;
-#: the scan-floor blocks (``diversity_topup``, ``length_capping``, ``dedupe``)
-#: only exist once that lane's code is present -- a sub-phase whose block never
-#: runs simply never appears in a record.  ``unattributed`` is RESERVED: it is
-#: the residual (``mutation_propagation`` minus the named sub-phases) and is
-#: computed at ``end_generation``, never marked.  Marking an unlisted name
-#: warns once and leaves its time in the residual, exactly like an unknown
-#: phase name (``_warn_unknown_phase``).
+#: the scan-floor blocks only exist once that lane's code is present -- a
+#: sub-phase whose block never runs is still emitted, as 0.0, so consumers get
+#: a stable key set.  ``unattributed`` is RESERVED: it is the residual
+#: (``mutation_propagation`` minus the named sub-phases) and is computed at
+#: ``end_generation``, never marked.  Marking an unlisted name warns once and
+#: leaves its time in the residual, exactly like an unknown phase name
+#: (``_warn_unknown_phase``).
 MUTATION_SUBPHASES: tuple[str, ...] = (
     "generation_init",
     "challenger_generation",
@@ -67,9 +84,16 @@ MUTATION_SUBPHASES: tuple[str, ...] = (
 
 #: Record field carrying the sub-phase split (a sibling of ``phase_seconds``).
 #: Deliberately NOT ``subphase_seconds``: that key already carries another
-#: lane's coarser, VM-inclusive hotspot markers in the live tree, and giving
-#: two different meanings to one field would make both unreadable on merge.
+#: lane's coarser, VM-inclusive, NON-additive hotspot markers in the live
+#: shared tree (uncommitted as of t_8c472447, present on production records
+#: since cycle 7596), and giving two different meanings to one field would
+#: make both unreadable on merge.
 SUBPHASE_RECORD_KEY = "mutation_subphase_seconds"
+
+#: Summary key computed outside the ``gen_phase_sub_<name>_seconds`` loop --
+#: a sub-phase named ``covered`` would collide with it, so keep the name out
+#: of MUTATION_SUBPHASES.
+SUBPHASE_COVERED_KEY = "gen_phase_sub_covered_seconds"
 
 DEFAULT_LOG_NAME = "generation_phase_timing.jsonl"
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
@@ -155,23 +179,51 @@ def _warn_unknown_phase(name: str) -> None:
 
 
 _unknown_subphases: set[str] = set()
+_subphase_overcount_seen = False
 
 
 def _warn_unknown_subphase(name: str) -> None:
-    """Warn once per unknown (or reserved) sub-phase name.
+    """Warn once per unlisted or reserved sub-phase name.
 
     Same rationale as ``_warn_unknown_phase``: an unlisted ``_pt_sub("...")``
     marker must not silently mint a field, so its time stays in the
     ``mutation_propagation`` residual until the name is added to
-    ``MUTATION_SUBPHASES`` (EE-W6).
+    ``MUTATION_SUBPHASES`` (EE-W6).  ``unattributed`` IS listed but is
+    reserved -- it is recomputed as the residual -- so it is reported as
+    such rather than as unknown (review NIT1).
     """
     if name in _unknown_subphases:
         return
     _unknown_subphases.add(name)
+    reason = (
+        "is reserved (recomputed as the residual)" if name in MUTATION_SUBPHASES else "is not in MUTATION_SUBPHASES"
+    )
     try:
         sys.stderr.write(
-            f"[phase_timing] sub-phase {name!r} not in MUTATION_SUBPHASES "
-            "-> time stays in mutation_propagation residual\n"
+            f"[phase_timing] sub-phase {name!r} {reason} -> not recorded; "
+            "its time stays in the mutation_propagation residual\n"
+        )
+    except Exception:  # noqa: BLE001 -- warning must never raise
+        pass
+
+
+def _warn_subphase_overcount(named: float, phase: float) -> None:
+    """Warn once when sub-phases exceed the phase they partition.
+
+    Only reachable by misplacing a marker (outside the phase, or nested
+    inside another marker): the residual is clamped at 0 rather than going
+    negative, so without this warning the additive identity would break in
+    silence (EE-W6 review S1).
+    """
+    global _subphase_overcount_seen
+    if _subphase_overcount_seen:
+        return
+    _subphase_overcount_seen = True
+    try:
+        sys.stderr.write(
+            f"[phase_timing] sub-phases sum to {named:.6f}s > mutation_propagation "
+            f"{phase:.6f}s -> a marker is nested or outside the phase; "
+            "residual clamped to 0\n"
         )
     except Exception:  # noqa: BLE001 -- warning must never raise
         pass
@@ -271,15 +323,26 @@ class PhaseTimer:
     def _subphase_record(self) -> dict[str, float]:
         """Named sub-phases plus the residual that makes them sum to the phase.
 
-        The residual is clamped at zero: markers are nested inside their
-        phase, so ``sum(named)`` cannot exceed it except across a generation
-        boundary, and a negative residual would be reported as a bug in the
-        measurement rather than in the thing measured.
+        Every name in ``MUTATION_SUBPHASES`` is emitted -- 0.0 when its block
+        did not run -- so consumers see a stable key set instead of one that
+        appears only on the generations where the block happened to fire.
+
+        The residual is clamped at zero AND the clamp is reported: a negative
+        residual means a marker sits outside ``mutation_propagation`` or
+        inside another marker, both of which break the additive identity, so
+        ``_warn_subphase_overcount`` says so rather than hiding it (EE-W6
+        review S1).  Markers cannot span a generation boundary:
+        ``begin_generation``/``_reset_gen`` clear the accumulators.
         """
+        phase = self._net["mutation_propagation"]
         named = sum(self._sub_net.values())
-        residual = max(0.0, self._net["mutation_propagation"] - named)
-        out = {k: round(v, 4) for k, v in self._sub_net.items()}
-        out["unattributed"] = round(residual, 4)
+        residual_raw = phase - named
+        if residual_raw < -1e-9:
+            _warn_subphase_overcount(named, phase)
+        out = {name: 0.0 for name in MUTATION_SUBPHASES}
+        for key, value in self._sub_net.items():
+            out[key] = round(value, 4)
+        out["unattributed"] = round(max(0.0, residual_raw), 4)
         return out
 
     def begin_generation(self, generation: int) -> None:
@@ -413,14 +476,18 @@ class PhaseTimer:
         # EE-W6: per-sub-phase totals across the run, additive and independent
         # of the phase keys above.  A malformed record is skipped rather than
         # allowed to degrade the whole summary (one bad row must not hide the
-        # other 29).
-        sub_totals: dict[str, float] = {}
+        # other 29), and non-finite values are dropped because json.dumps
+        # would emit bare NaN/Infinity, which is not valid JSON for
+        # downstream readers (review NIT5).
+        sub_totals: dict[str, float] = {name: 0.0 for name in MUTATION_SUBPHASES}
         for r in self.records:
             subs = r.get(SUBPHASE_RECORD_KEY)
             if not isinstance(subs, dict):
                 continue
             for k, v in subs.items():
                 if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    continue
+                if not math.isfinite(float(v)):
                     continue
                 sub_totals[str(k)] = sub_totals.get(str(k), 0.0) + float(v)
         summary = {
@@ -438,10 +505,12 @@ class PhaseTimer:
             "gen_phase_run_finalize_seconds": round(self.run_finalize_seconds, 3),
             "gen_phase_run_seconds": round(wall, 3),
             "gen_phase_log_path": self._log_path,
-            # Named sub-phases only; together with the `gen_phase_sub_
-            # unattributed_seconds` residual this equals
-            # gen_phase_mutation_propagation_seconds.
-            "gen_phase_sub_covered_seconds": round(sum(v for k, v in sub_totals.items() if k != "unattributed"), 3),
+            # Named sub-phases only.  Together with the
+            # gen_phase_sub_unattributed_seconds residual this is ~= the phase
+            # it splits: both sides are rounded independently (4 dp per
+            # record, 3 dp here), so they can differ by a millisecond or three
+            # (review NIT6).
+            SUBPHASE_COVERED_KEY: round(sum(v for k, v in sub_totals.items() if k != "unattributed"), 3),
         }
         for name in sorted(sub_totals, key=lambda n: -sub_totals[n]):
             summary[f"gen_phase_sub_{name}_seconds"] = round(sub_totals[name], 3)

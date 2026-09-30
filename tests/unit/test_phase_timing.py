@@ -27,6 +27,7 @@ from evolution.phase_timing import (
     MUTATION_SUBPHASES,
     NAMED_PHASES,
     PHASES,
+    SUBPHASE_COVERED_KEY,
     SUBPHASE_RECORD_KEY,
     PhaseTimer,
     default_log_path,
@@ -48,10 +49,12 @@ def _clean_vm_counter():
     # reason (EE-W6).
     _phase_timing._unknown_phases.clear()
     _phase_timing._unknown_subphases.clear()
+    _phase_timing._subphase_overcount_seen = False
     yield
     reset_vm_eval()
     _phase_timing._unknown_phases.clear()
     _phase_timing._unknown_subphases.clear()
+    _phase_timing._subphase_overcount_seen = False
 
 
 def test_vm_counter_accumulates_seconds_and_calls():
@@ -522,7 +525,10 @@ def test_subphase_does_not_leak_into_the_next_generation():
     rec = timer.end_generation()
 
     subs = rec[SUBPHASE_RECORD_KEY]
-    assert "challenger_generation" not in subs  # gen 0's 20ms is gone
+    # The key is always present now (stable key set), so the leak check is on
+    # the VALUE: gen 0's 20ms of challenger work must not reappear as a
+    # non-zero share of gen 1.
+    assert subs["challenger_generation"] == 0.0  # gen 0's 20ms is gone
     assert subs["generation_init"] >= 0.002
     assert rec["phase_seconds"]["mutation_propagation"] < 0.015
     assert sum(subs.values()) == pytest.approx(rec["phase_seconds"]["mutation_propagation"], abs=0.003)
@@ -613,3 +619,134 @@ def test_engine_pt_sub_is_a_noop_without_a_phase_timer():
 
     with engine_mod.EvolutionEngine._pt_sub(_Disabled(), "challenger_generation"):
         pass
+
+
+# ---------------------------------------------------------------------------
+# EE-W6 independent review (S1 / S2 / S3 / NIT4)
+# ---------------------------------------------------------------------------
+
+
+def test_record_keeps_a_stable_subphase_key_set(capsys):
+    """Blocks that did not run are emitted as 0.0, not omitted (review NIT4).
+
+    Consumers reading `gen_phase_sub_<name>_seconds` must not hit a KeyError
+    just because a generation never reached the scan-floor cap.
+    """
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        time.sleep(0.003)  # unmarked work: only the residual will see it
+    rec = timer.end_generation()
+    summary = timer.summary(run_wall=1.0)
+
+    assert set(rec[SUBPHASE_RECORD_KEY]) == set(MUTATION_SUBPHASES)
+    for name in MUTATION_SUBPHASES:
+        assert f"gen_phase_sub_{name}_seconds" in summary
+    # and the values are real: the unmarked 3ms is in the residual
+    assert rec[SUBPHASE_RECORD_KEY]["unattributed"] >= 0.003
+    assert rec[SUBPHASE_RECORD_KEY]["challenger_generation"] == 0.0
+    assert capsys.readouterr().err == ""  # nothing to warn about
+
+
+def test_unmarked_time_in_the_phase_is_neither_lost_nor_counted_as_covered():
+    """Review S3: a partially marked phase must show a real residual.
+
+    Without unmarked time the residual is ~0, which made two earlier
+    assertions insensitive to a broken residual computation.
+    """
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("generation_init"):
+            time.sleep(0.005)
+        time.sleep(0.030)  # deliberately unmarked work inside the phase
+    rec = timer.end_generation()
+    summary = timer.summary(run_wall=1.0)
+
+    subs = rec[SUBPHASE_RECORD_KEY]
+    assert subs["unattributed"] >= 0.025
+    assert subs["generation_init"] >= 0.005
+    assert sum(subs.values()) == pytest.approx(rec["phase_seconds"]["mutation_propagation"], abs=0.003)
+    # covered counts the NAMED sub-phases only, so it must be strictly
+    # smaller than the phase it splits by (about) the unmarked 30ms
+    covered = summary[SUBPHASE_COVERED_KEY]
+    assert covered == pytest.approx(summary["gen_phase_sub_generation_init_seconds"], abs=0.003)
+    assert covered < summary["gen_phase_mutation_propagation_seconds"] - 0.02
+    assert covered + summary["gen_phase_sub_unattributed_seconds"] == pytest.approx(
+        summary["gen_phase_mutation_propagation_seconds"], abs=0.01
+    )
+
+
+def test_nested_or_misplaced_marker_is_reported_not_silently_absorbed(capsys):
+    """Review S1: an over-counting marker set must warn, and never go negative.
+
+    Nesting a marker inside another marker double counts the inner window;
+    the residual would be negative, and clamping it silently would make the
+    additive identity look like it holds when it does not.
+    """
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("challenger_generation"):
+            with timer.sub_phase("generation_init"):  # NESTED marker (misuse)
+                time.sleep(0.010)
+    rec = timer.end_generation()
+
+    err = capsys.readouterr().err
+    assert "nested or outside the phase" in err
+    assert "residual clamped to 0" in err
+    subs = rec[SUBPHASE_RECORD_KEY]
+    assert subs["unattributed"] >= 0.0  # never negative
+    # ...and the record is honest about the over-count instead of hiding it
+    assert sum(subs.values()) >= rec["phase_seconds"]["mutation_propagation"] - 1e-9
+
+
+def test_engine_marker_sites_fire_on_a_real_generation():
+    """Wiring proof for both committed marker sites (review S2).
+
+    The timer-level tests above cannot see a MISSING marker: deleting either
+    `_pt_sub(...)` call in evolution_engine.py must fail this test, because
+    it runs `_run_one_generation` end to end on stubbed-out heavy work.
+    """
+    engine_mod = pytest.importorskip("evolution_engine")
+    from types import SimpleNamespace
+
+    engine = engine_mod.EvolutionEngine.__new__(engine_mod.EvolutionEngine)
+    timer = PhaseTimer()
+    engine._phase_timer = timer
+    engine.config = SimpleNamespace(
+        population_size=4,
+        use_mutation_scheduler=True,
+        mutation_rate_start=0.3,
+        mutation_rate_end=0.1,
+        mutation_schedule_generations=100,
+    )
+    engine.champion = [0x00000013, 0x00100073]
+    engine.champion_level = 1
+    engine.generations_stalled = 0
+
+    # Heavy work is stubbed with a measurable sleep so a marker that fires
+    # shows a non-zero share (a bare 0.0 would be indistinguishable from a
+    # marker that never ran, now that the key set is stable).
+    engine._compute_adaptive_mutation_rate = lambda: (time.sleep(0.010), 0.3)[1]
+    engine._choose_mutation_strategy = lambda idx: None
+    engine._apply_mutation = lambda strategy: (time.sleep(0.010), [0x00000013])[1]
+    engine._generate_diversity_injection = lambda challengers, pop_size: None
+    engine._apply_model_guided_slots = lambda challengers: None
+    engine._evaluate_batch = lambda challengers: []
+    engine._select_elite = lambda challengers, results: ([], [], None)
+    engine._evaluate_batch_detailed = lambda elite: []
+    engine._run_generation_update = lambda *a, **k: False
+    engine._log_generation = lambda *a, **k: None
+    engine._run_generation_maintenance = lambda *a, **k: None
+
+    engine._run_one_generation(6, 0, False, 25, 10, None, 30)
+
+    assert len(timer.records) == 1
+    rec = timer.records[0]
+    subs = rec[SUBPHASE_RECORD_KEY]
+    assert subs["generation_init"] >= 0.010, "generation_init marker did not fire"
+    assert subs["challenger_generation"] >= 0.010, "challenger_generation marker did not fire"
+    # the identity holds on the real code path, not just in synthetic tests
+    assert sum(subs.values()) == pytest.approx(rec["phase_seconds"]["mutation_propagation"], abs=0.01)
+    assert rec["phase_seconds"]["mutation_propagation"] >= 0.020
