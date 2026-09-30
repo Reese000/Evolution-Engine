@@ -4621,14 +4621,36 @@ def compress_growth_probe_pool(
     return result
 
 
+def growth_pool_cache_plateau_key(champion: list[int]) -> tuple[float, int]:
+    """Plateau key shared by every reader/writer of the growth-pool cache.
+
+    save_scan_floor_growth_pool_cache() and load_scan_floor_growth_pool_cache()
+    both store/return ``_eq_refine_plateau_key(scan_floor_anchor_program(x))``.
+    Every other producer of that key (the engine's in-cycle cache check, and
+    prime_scan_floor_growth_pool_cache) must run the *same* derivation, or a
+    payload written for one key can never be read back under the other: keying
+    the engine side on the raw champion made it miss a pool it had just
+    persisted whenever anchor != champion (scan floor armed at another word
+    count) and rebuild from scratch every stalled cycle (t_ed3d297f).
+    """
+    return _eq_refine_plateau_key(scan_floor_anchor_program(list(champion)) or list(champion))
+
+
 def prime_scan_floor_growth_pool_cache(
     champion: list[int],
     existing: object | None,
 ) -> tuple[tuple[float, int], tuple[tuple[int, ...], ...], frozenset[tuple[int, ...]]] | None:
-    """Retain in-memory or disk growth pool across cycles on the same plateau."""
+    """Retain in-memory or disk growth pool across cycles on the same plateau.
+
+    The plateau key must come from growth_pool_cache_plateau_key() — the same
+    derivation save/load_scan_floor_growth_pool_cache use — so a warm
+    in-memory pool survives when the anchor differs from the live champion
+    (scan floor armed at another word count). Keying on the raw champion
+    discarded it and forced a from-scratch rebuild (t_ed3d297f).
+    """
     if not champion:
         return None
-    plateau_key = _eq_refine_plateau_key(list(champion))
+    plateau_key = growth_pool_cache_plateau_key(champion)
     if existing is not None and isinstance(existing, tuple) and len(existing) == 3 and existing[0] == plateau_key:
         return existing
     return load_scan_floor_growth_pool_cache(list(champion))

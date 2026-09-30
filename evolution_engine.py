@@ -5091,14 +5091,22 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 cycle_no = int(getattr(self, "_cycle_number", 0))
                 from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
 
-                pool_cache_pr = round(
-                    float(compact_l30_promotion_raw_fitness(list(self.champion or anchor))),
-                    4,
-                )
-                pool_cache_key = (
-                    pool_cache_pr,
-                    len(self.champion or anchor),
-                )
+                # Key the growth-pool cache on `anchor` — the program the pool
+                # is actually built from (collect_scan_floor_growth_crossover_
+                # fills(anchor) below). growth_pool_cache_plateau_key() is the
+                # exact derivation save/load_scan_floor_growth_pool_cache use
+                # (they run their argument through scan_floor_anchor_program()
+                # and store _eq_refine_plateau_key of the result), so the key
+                # this side checks can never disagree with the payload.
+                # Keying on self.champion did disagree whenever anchor !=
+                # champion (scan floor armed at a different word count): the
+                # engine compared (prom(champion), len(champion)) against an
+                # anchor-keyed payload, missed on every stalled cycle and
+                # rebuilt a pool it had just persisted (t_ed3d297f; production
+                # payload plateau [321.8503, 60] vs champion key [325.8257, 27]).
+                from evolution.mutation_helpers import growth_pool_cache_plateau_key
+
+                pool_cache_key = growth_pool_cache_plateau_key(anchor)
                 cached_pool = getattr(self, "_scan_floor_growth_pool_cache", None)
                 pool_cache_hit = cached_pool is not None and cached_pool[0] == pool_cache_key
                 if pool_cache_hit:
@@ -5107,7 +5115,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 elif growth_stalled:
                     from evolution.mutation_helpers import load_scan_floor_growth_pool_cache
 
-                    disk_pool = load_scan_floor_growth_pool_cache(list(self.champion or anchor))
+                    disk_pool = load_scan_floor_growth_pool_cache(list(anchor))
                     if disk_pool is not None and disk_pool[0] == pool_cache_key:
                         pool = [list(p) for p in disk_pool[1]]
                         cross_keys = {tuple(k) for k in disk_pool[2]}
@@ -5370,7 +5378,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         from evolution.mutation_helpers import save_scan_floor_growth_pool_cache
 
                         save_scan_floor_growth_pool_cache(
-                            list(self.champion or anchor),
+                            list(anchor),
                             pool,
                             cross_keys=cross_keys,
                             cycle=cycle_no,

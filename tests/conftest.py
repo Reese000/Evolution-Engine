@@ -265,3 +265,38 @@ def meta_controller():
 def rng():
     """Seeded random.Random for deterministic tests."""
     return random.Random(42)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Production disk-cache isolation for everything that is NOT tests/unit
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture(autouse=True)
+def _isolate_growth_pool_disk_cache(tmp_path, monkeypatch):
+    """Keep the growth-inject pool payload (.agents/scan_floor_growth_pool_cache.json) inside tmp_path.
+
+    No conftest isolated this path before: tests/unit/conftest.py covers the
+    eq-refine seeds, late-merged and l10-lift/projection caches only (its
+    growth-pool lines exist only as an uncommitted edit in the main checkout),
+    and this conftest is the one tests/integration, tests/quality_gate,
+    tests/property and tests/e2e load. save_scan_floor_growth_pool_cache()
+    persists unconditionally at evolution_engine.py's stalled growth cycle, so
+    any test reaching that path rewrote the REAL payload:
+
+      2026-09-30 07:01:29, 08:27:52, 09:51:12 EDT — all three byte-identical
+      (sha256 89214bc9476be0c3...), plateau [321.8503, 60] / 60-word anchor /
+      cycle: 1 (EvolutionEngine.__init__'s default _cycle_number), i.e. keyed
+      to a scan-floor state that no longer exists (the floor is armed at 27
+      words), so load_scan_floor_growth_pool_cache() could not hydrate it for
+      the certified champion and every stalled cycle rebuilt the pool from
+      scratch (t_ed3d297f).
+
+    Same leak class as the fixtures tests/unit/conftest.py documents; tests
+    that patch the path themselves still win (their setattr runs on the same
+    function-scoped monkeypatch).
+    """
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_growth_pool_cache_path",
+        lambda: str(tmp_path / "scan_floor_growth_pool_cache.json"),
+    )

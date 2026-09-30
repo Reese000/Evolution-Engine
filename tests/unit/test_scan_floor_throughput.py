@@ -2928,3 +2928,256 @@ def test_persist_l10_lift_bootstrap_intermediates_keeps_29w_weak_margin(
     n = persist_l10_lift_bootstrap_intermediates(champ, [prog_29w_weak, prog_29w_good], cycle=7, max_record=4)
     assert n == 1
     assert recorded == [prog_29w_good]
+
+
+# ---------------------------------------------------------------------------
+# Growth-pool disk cache: stale payloads and anchor/champion key identity
+# (t_ed3d297f — production .agents/scan_floor_growth_pool_cache.json held a
+# 60-word / plateau [321.8503, 60] payload the certified 27-word champion
+# could never load).
+# ---------------------------------------------------------------------------
+
+
+def _growth_pool_cache_paths(tmp_path, monkeypatch):
+    """Point the payload at tmp_path and pin the anchor derivation."""
+    from evolution import mutation_helpers as mh
+
+    cache_path = tmp_path / "scan_floor_growth_pool_cache.json"
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_growth_pool_cache_path",
+        lambda: str(cache_path),
+    )
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_anchor_program",
+        lambda c: list(c),
+    )
+    return cache_path, mh
+
+
+def test_growth_pool_cache_recovers_after_stale_champion_payload(tmp_path, monkeypatch):
+    """A payload keyed to an earlier champion must not stay unreachable.
+
+    Reproduces the production file left behind when the scan floor moved
+    (60-word anchor, plateau [321.8503, 60], cycle 1): load_scan_floor_
+    growth_pool_cache(champion) returned None, so the engine rebuilt the pool
+    on every stalled cycle instead of hydrating from disk. After exactly one
+    engine rebuild+persist cycle the payload must load again, and the stale
+    plateau's payload must be kept (no flushed history).
+    """
+    import json
+
+    cache_path, mh = _growth_pool_cache_paths(tmp_path, monkeypatch)
+
+    champion = list(range(1, 28))  # 27-word certified champion
+    stale_anchor = list(range(1000, 1060))  # 60-word anchor from the old floor
+    cache_path.write_text(
+        json.dumps(
+            {
+                "plateau_key": [321.8503, 60],
+                "anchor": stale_anchor,
+                "cycle": 1,
+                "pool": [stale_anchor],
+                "cross_keys": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # before: unreachable for the current champion (the reported symptom)
+    assert mh.load_scan_floor_growth_pool_cache(champion) is None
+    assert mh.prime_scan_floor_growth_pool_cache(champion, None) is None
+
+    # one engine stalled cycle: rebuild (stubbed here) + persist
+    rebuilt = [list(range(7, 34)), list(range(8, 35)), list(range(9, 36))]
+    mh.save_scan_floor_growth_pool_cache(champion, rebuilt, cycle=2)
+
+    hit = mh.load_scan_floor_growth_pool_cache(champion)
+    assert hit is not None, "payload still unreachable after the rebuild"
+    assert [list(p) for p in hit[1]] == rebuilt
+    assert mh.prime_scan_floor_growth_pool_cache(champion, None) is not None
+
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert payload["version"] == 2
+    entries = payload["entries"]
+    assert len(entries) == 2, "stale plateau payload must be preserved, not flushed"
+    assert sorted(int(e["plateau_key"][1]) for e in entries) == [27, 60]
+
+    # a repeat save for the same plateau replaces its entry instead of stacking
+    mh.save_scan_floor_growth_pool_cache(champion, rebuilt[:1], cycle=3)
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert len(payload["entries"]) == 2
+    hit = mh.load_scan_floor_growth_pool_cache(champion)
+    assert hit is not None
+    assert [list(p) for p in hit[1]] == rebuilt[:1]
+
+
+def test_growth_pool_cache_key_matches_payload_when_anchor_differs(tmp_path, monkeypatch):
+    """The engine's cache key must be the payload's key, anchor for anchor.
+
+    save_/load_scan_floor_growth_pool_cache() store
+    _eq_refine_plateau_key(scan_floor_anchor_program(x)); the engine used to
+    build its key from the raw champion. With the scan floor armed at another
+    word count the two disagreed, so a warm payload was rejected on every
+    stalled cycle and the pool was rebuilt from scratch although it had just
+    been persisted (t_ed3d297f: plateau [321.8503, 60] stored vs champion key
+    [325.8257, 27] checked).
+    """
+    from evolution import mutation_helpers as mh
+
+    cache_path = tmp_path / "scan_floor_growth_pool_cache.json"
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_growth_pool_cache_path",
+        lambda: str(cache_path),
+    )
+    anchor60 = list(range(1000, 1060))
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_anchor_program",
+        lambda c: list(anchor60),  # scan floor armed at another word count
+    )
+
+    champion = list(range(1, 28))
+    assert mh.scan_floor_anchor_program(list(champion)) != champion  # harness sanity
+
+    mh.save_scan_floor_growth_pool_cache(champion, [list(range(7, 34))], cycle=1)
+
+    disk = mh.load_scan_floor_growth_pool_cache(champion)
+    assert disk is not None
+
+    # the key evolution_engine.py compares against
+    engine_key = mh.growth_pool_cache_plateau_key(champion)
+    assert disk[0] == engine_key, "engine key and persisted payload key disagree"
+
+    # ...and the pre-fix key (raw champion) provably would have missed
+    assert disk[0] != mh._eq_refine_plateau_key(champion)
+
+
+def test_prime_growth_pool_cache_keeps_warm_pool_when_anchor_differs(tmp_path, monkeypatch):
+    """prime_scan_floor_growth_pool_cache() must not drop a warm in-memory pool.
+
+    It compared the pool against the raw champion's plateau while the pool is
+    keyed on scan_floor_anchor_program(champion); whenever the two differed
+    the warm pool was discarded and rebuilt from scratch (t_ed3d297f).
+    """
+    from evolution import mutation_helpers as mh
+
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_growth_pool_cache_path",
+        lambda: str(tmp_path / "scan_floor_growth_pool_cache.json"),
+    )
+    anchor60 = list(range(1000, 1060))
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_anchor_program",
+        lambda c: list(anchor60),
+    )
+
+    champion = list(range(1, 28))
+    warm = (
+        mh.growth_pool_cache_plateau_key(champion),
+        (tuple(range(7, 34)),),
+        frozenset(),
+    )
+    assert mh.prime_scan_floor_growth_pool_cache(champion, warm) is warm
+
+
+def test_engine_growth_pool_hydrates_disk_payload_keyed_by_anchor(tmp_path, monkeypatch):
+    """evolution_engine.py must accept the payload it persisted for the anchor.
+
+    With the scan floor armed at 60 words the anchor (the certified 60-word
+    program) differs from the live 27-word champion. The engine used to build
+    its cache key from the champion while save/load persisted the anchor's
+    key, so it rejected its own payload and rebuilt the pool on every stalled
+    cycle (t_ed3d297f: payload plateau [321.8503, 60] vs champion key
+    [325.8257, 27]).
+
+    collect_scan_floor_growth_crossover_fills() is stubbed to raise: reaching
+    it means the warm payload was ignored instead of hydrated.
+    """
+    import json
+
+    from evolution_engine import EvolutionConfig, EvolutionEngine
+    from mutation_proposer import EBREAK, make_rv32i
+
+    # every production path this touches is redirected under tmp_path
+    agents = tmp_path / ".agents"
+    agents.mkdir()
+    (agents / "progress_controller_state.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr("evolution.terminal_stagnation._project_agents_dir", lambda: str(agents))
+    monkeypatch.setattr("evolution.mutation_helpers._evolution_project_root", lambda: str(tmp_path))
+
+    # Arm the scan floor at 60 words. record_terminal_efficiency_scan_floor()
+    # refuses lengths above L30_COMPACT_MAX_WORDS, so the state the payload
+    # was actually keyed under is written directly (same file it persists to).
+    (agents / "progress_controller_state.json").write_text(
+        json.dumps(
+            {
+                "terminal_efficiency_scan_floor_words": 60,
+                "terminal_efficiency_scan_floor_heldout": 1.0,
+                "terminal_efficiency_scan_floor_cycle": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    anchor60 = [make_rv32i("ADDI", rd=i % 32, rs1=0, imm=i) for i in range(59)] + [EBREAK]
+    (tmp_path / "multi_cycle_results.jsonl").write_text(
+        json.dumps(
+            {
+                "cycle": 1,
+                "final_level": 30,
+                "champion_verify_score": 1.0,
+                "champion_words": 60,
+                "final_fitness": 150.0,
+                "promotion_raw_fitness": 321.8503,
+                "champion_program": [format(w, "X") for w in anchor60],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # The row above is a stand-in genome, not a real certified one, so skip
+    # the L10/held-out re-verification that find_best_certified_champion()
+    # applies; every other filter (level, verify, word count, fitness) still runs.
+    monkeypatch.setattr(
+        "evolution.champion_rollback.compact_l30_certified_row_valid",
+        lambda _row: True,
+    )
+
+    from evolution.mutation_helpers import (
+        growth_pool_cache_plateau_key,
+        save_scan_floor_growth_pool_cache,
+        scan_floor_anchor_program,
+    )
+
+    champion = [make_rv32i("ADDI", rd=i % 32, rs1=0, imm=i + 7) for i in range(26)] + [EBREAK]
+    assert scan_floor_anchor_program(list(champion)) == anchor60  # harness sanity
+    save_scan_floor_growth_pool_cache(champion, [list(anchor60)], cycle=1)
+
+    eng = EvolutionEngine(config=EvolutionConfig(max_level=30))
+    eng.champion = champion
+    eng.champion_level = 30
+    eng.champion_trace = {"registers": {}, "memory": {}}
+    eng.task_instance = {}
+    eng._champion_verify_score = 1.0
+    eng.current_generation = 3
+    eng._scan_floor_growth_inject_generation = 3  # growth inject fires this generation
+    eng.rng.seed(0)
+    eng._last_challenger_strategies = ["MUTATION"] * 20
+
+    monkeypatch.setattr(
+        "evolution.terminal_stagnation._scan_floor_probe_stall_mode",
+        lambda *a, **k: True,
+    )
+
+    def _no_rebuild(*_a, **_k):
+        raise AssertionError("engine rebuilt the growth pool instead of hydrating the disk payload")
+
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.collect_scan_floor_growth_crossover_fills",
+        _no_rebuild,
+    )
+
+    challengers = [list(champion) for _ in range(20)]
+    eng._inject_terminal_verify_probes(challengers, 20)
+
+    assert eng._scan_floor_growth_pool_cache is not None, "no disk hydration for the anchor-keyed growth-pool payload"
+    assert eng._scan_floor_growth_pool_cache[0] == growth_pool_cache_plateau_key(champion)
