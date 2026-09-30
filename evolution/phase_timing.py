@@ -15,6 +15,13 @@ sum to the generation wall time (vm time is measured once at the source
 and subtracted from the enclosing orchestration phase, so nothing is
 double counted).  One JSON line per generation is appended to a rolling
 JSONL log.
+
+``mutation_propagation`` is itself split into named SUB-PHASES
+(``MUTATION_SUBPHASES``, EE-W6): each marker nests inside that phase and is
+VM-subtracted the same way, so a generation's sub-phases plus their
+``unattributed`` residual sum to its ``mutation_propagation`` seconds.  The
+split rides on the record as ``mutation_subphase_seconds`` and surfaces on
+the cycle result as additive ``gen_phase_sub_*`` keys.
 """
 
 from __future__ import annotations
@@ -38,6 +45,31 @@ PHASES: tuple[str, ...] = (
 
 #: The four phases the card asks to be reported (excludes residual).
 NAMED_PHASES: tuple[str, ...] = PHASES[:-1]
+
+#: Sub-phases that partition ``mutation_propagation`` (EE-W6).
+#:
+#: ``generation_init`` and ``challenger_generation`` exist at every revision;
+#: the scan-floor blocks (``diversity_topup``, ``length_capping``, ``dedupe``)
+#: only exist once that lane's code is present -- a sub-phase whose block never
+#: runs simply never appears in a record.  ``unattributed`` is RESERVED: it is
+#: the residual (``mutation_propagation`` minus the named sub-phases) and is
+#: computed at ``end_generation``, never marked.  Marking an unlisted name
+#: warns once and leaves its time in the residual, exactly like an unknown
+#: phase name (``_warn_unknown_phase``).
+MUTATION_SUBPHASES: tuple[str, ...] = (
+    "generation_init",
+    "challenger_generation",
+    "diversity_topup",
+    "length_capping",
+    "dedupe",
+    "unattributed",
+)
+
+#: Record field carrying the sub-phase split (a sibling of ``phase_seconds``).
+#: Deliberately NOT ``subphase_seconds``: that key already carries another
+#: lane's coarser, VM-inclusive hotspot markers in the live tree, and giving
+#: two different meanings to one field would make both unreadable on merge.
+SUBPHASE_RECORD_KEY = "mutation_subphase_seconds"
 
 DEFAULT_LOG_NAME = "generation_phase_timing.jsonl"
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
@@ -122,6 +154,29 @@ def _warn_unknown_phase(name: str) -> None:
         pass
 
 
+_unknown_subphases: set[str] = set()
+
+
+def _warn_unknown_subphase(name: str) -> None:
+    """Warn once per unknown (or reserved) sub-phase name.
+
+    Same rationale as ``_warn_unknown_phase``: an unlisted ``_pt_sub("...")``
+    marker must not silently mint a field, so its time stays in the
+    ``mutation_propagation`` residual until the name is added to
+    ``MUTATION_SUBPHASES`` (EE-W6).
+    """
+    if name in _unknown_subphases:
+        return
+    _unknown_subphases.add(name)
+    try:
+        sys.stderr.write(
+            f"[phase_timing] sub-phase {name!r} not in MUTATION_SUBPHASES "
+            "-> time stays in mutation_propagation residual\n"
+        )
+    except Exception:  # noqa: BLE001 -- warning must never raise
+        pass
+
+
 class PhaseTimer:
     """Accumulate per-phase wall time for one evolution run.
 
@@ -133,6 +188,7 @@ class PhaseTimer:
     def __init__(self, enabled: bool = True) -> None:
         self.enabled = bool(enabled)
         self._net: dict[str, float] = {p: 0.0 for p in PHASES}
+        self._sub_net: dict[str, float] = {}
         self._gen_start: float | None = None
         self._gen_vm_start: float = 0.0
         self._gen_start_calls: int = 0
@@ -183,6 +239,49 @@ class PhaseTimer:
             vm_inside = vm_eval_totals()[0] - vm_before
             self._net[name] += max(0.0, wall - vm_inside)
 
+    @contextmanager
+    def sub_phase(self, name: str) -> Iterator[None]:
+        """Attribute the enclosed block's non-VM wall time to a sub-phase.
+
+        EE-W6: sub-phases must be nested inside a
+        ``phase("mutation_propagation")`` block, and the ones a generation
+        records form an ADDITIVE PARTITION of that phase --
+        ``sum(sub-phases) + sub residual == mutation_propagation`` -- because
+        each marker measures its own window minus the VM time inside it, the
+        same accounting ``phase()`` uses.  An unlisted name warns once and is
+        not recorded, so its time simply stays in the residual instead of
+        minting an undocumented field.
+        """
+        if not self.enabled:
+            yield
+            return
+        if name not in MUTATION_SUBPHASES or name == "unattributed":
+            _warn_unknown_subphase(name)
+            yield
+            return
+        vm_before, _ = vm_eval_totals()
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            wall = time.perf_counter() - start
+            vm_inside = vm_eval_totals()[0] - vm_before
+            self._sub_net[name] = self._sub_net.get(name, 0.0) + max(0.0, wall - vm_inside)
+
+    def _subphase_record(self) -> dict[str, float]:
+        """Named sub-phases plus the residual that makes them sum to the phase.
+
+        The residual is clamped at zero: markers are nested inside their
+        phase, so ``sum(named)`` cannot exceed it except across a generation
+        boundary, and a negative residual would be reported as a bug in the
+        measurement rather than in the thing measured.
+        """
+        named = sum(self._sub_net.values())
+        residual = max(0.0, self._net["mutation_propagation"] - named)
+        out = {k: round(v, 4) for k, v in self._sub_net.items()}
+        out["unattributed"] = round(residual, 4)
+        return out
+
     def begin_generation(self, generation: int) -> None:
         if not self.enabled:
             return
@@ -194,6 +293,7 @@ class PhaseTimer:
         # record and drive `unattributed` negative (EE-W5 review).
         for p in self._net:
             self._net[p] = 0.0
+        self._sub_net.clear()
 
     def end_generation(self, extra: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """Close the current generation and emit its JSON record."""
@@ -230,6 +330,10 @@ class PhaseTimer:
             "phase_seconds": phases,
             "accounted_seconds": round(accounted, 4),
             "coverage_ratio": round(accounted / wall, 4) if wall > 0 else 1.0,
+            # EE-W6: additive split of `mutation_propagation` into named
+            # sub-phases + residual (see MUTATION_SUBPHASES).  Read here,
+            # before _reset_gen clears the accumulators.
+            SUBPHASE_RECORD_KEY: self._subphase_record(),
         }
         record: dict[str, Any] = {}
         if extra:
@@ -249,6 +353,7 @@ class PhaseTimer:
         self._gen_start = None
         for p in self._net:
             self._net[p] = 0.0
+        self._sub_net.clear()
 
     # -- persistence ---------------------------------------------------
     def _emit(self, record: dict[str, Any]) -> None:
@@ -305,7 +410,20 @@ class PhaseTimer:
         wall = run_wall if run_wall is not None else (time.perf_counter() - self._run_start)
         named = sum(totals[p] for p in NAMED_PHASES)
         vm_farm = round(sum(float(r.get("vm_eval_seconds", 0.0)) for r in self.records), 3)
-        return {
+        # EE-W6: per-sub-phase totals across the run, additive and independent
+        # of the phase keys above.  A malformed record is skipped rather than
+        # allowed to degrade the whole summary (one bad row must not hide the
+        # other 29).
+        sub_totals: dict[str, float] = {}
+        for r in self.records:
+            subs = r.get(SUBPHASE_RECORD_KEY)
+            if not isinstance(subs, dict):
+                continue
+            for k, v in subs.items():
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    continue
+                sub_totals[str(k)] = sub_totals.get(str(k), 0.0) + float(v)
+        summary = {
             "gen_phase_generations": len(self.records),
             "gen_phase_seconds": gen_seconds,
             "gen_phase_vm_eval_seconds": totals["vm_eval"],
@@ -320,7 +438,14 @@ class PhaseTimer:
             "gen_phase_run_finalize_seconds": round(self.run_finalize_seconds, 3),
             "gen_phase_run_seconds": round(wall, 3),
             "gen_phase_log_path": self._log_path,
+            # Named sub-phases only; together with the `gen_phase_sub_
+            # unattributed_seconds` residual this equals
+            # gen_phase_mutation_propagation_seconds.
+            "gen_phase_sub_covered_seconds": round(sum(v for k, v in sub_totals.items() if k != "unattributed"), 3),
         }
+        for name in sorted(sub_totals, key=lambda n: -sub_totals[n]):
+            summary[f"gen_phase_sub_{name}_seconds"] = round(sub_totals[name], 3)
+        return summary
 
 
 def roll_log(path: str, max_bytes: int | None = None) -> None:

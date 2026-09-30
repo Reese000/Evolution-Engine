@@ -1673,7 +1673,12 @@ class EvolutionEngine:
     def _run_generation_evaluate(self) -> tuple:
         """Generate challengers, evaluate, select elite."""
         with self._pt("mutation_propagation"):
-            challengers = self._generate_challengers()
+            # EE-W6: challenger generation is the one mutation/propagation
+            # block that exists at every revision; the scan-floor blocks
+            # (diversity_topup / length_capping / dedupe) are marked by the
+            # same mechanism in the revision that carries them.
+            with self._pt_sub("challenger_generation"):
+                challengers = self._generate_challengers()
         with self._pt("diagnostics_logging"):
             self._current_diversity = self._compute_population_diversity(challengers)
         with self._pt("vm_eval"):
@@ -1791,6 +1796,19 @@ class EvolutionEngine:
             return nullcontext()
         return _timer.phase(name)
 
+    def _pt_sub(self, name: str):
+        """Return the ``mutation_propagation`` sub-phase context for ``name``.
+
+        EE-W6: sub-phases split the mutation/propagation bucket into named,
+        additive blocks (``evolution.phase_timing.MUTATION_SUBPHASES``) so a
+        dominant block is visible instead of hiding inside one bucket.  Like
+        ``_pt``, it is a no-op when the timer is absent or disabled.
+        """
+        _timer = getattr(self, "_phase_timer", None)
+        if _timer is None or not _timer.enabled:
+            return nullcontext()
+        return _timer.sub_phase(name)
+
     def _run_one_generation(
         self,
         gen: int,
@@ -1807,7 +1825,8 @@ class EvolutionEngine:
         if timer is not None:
             timer.begin_generation(gen)
         with self._pt("mutation_propagation"):
-            self._run_generation_init(gen, n_levels)
+            with self._pt_sub("generation_init"):
+                self._run_generation_init(gen, n_levels)
         _, _, elite, elite_fitnesses, detailed_results = self._run_generation_evaluate()
         with self._pt("selection_archives"):
             improved = self._run_generation_update(

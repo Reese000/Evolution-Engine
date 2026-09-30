@@ -8,7 +8,10 @@ Invariants under test:
     (evaluate_batch -> evaluate, and direct `_execute_vm` callers);
   * one JSON line per generation lands in the rolling log;
   * the run summary exposes only additive ``gen_phase_*`` keys and never
-    raises (a raise there would discard the completed cycle's results).
+    raises (a raise there would discard the completed cycle's results);
+  * EE-W6: the ``mutation_propagation`` sub-phases form an ADDITIVE
+    partition of that phase (named + residual == phase seconds), with the
+    same VM accounting, and surface as additive ``gen_phase_sub_*`` keys.
 """
 
 from __future__ import annotations
@@ -21,8 +24,10 @@ import pytest
 
 from evolution import phase_timing as _phase_timing
 from evolution.phase_timing import (
+    MUTATION_SUBPHASES,
     NAMED_PHASES,
     PHASES,
+    SUBPHASE_RECORD_KEY,
     PhaseTimer,
     default_log_path,
     record_vm_eval,
@@ -39,11 +44,14 @@ def _clean_vm_counter():
     reset_vm_eval()
     # The unknown-phase warning set is process-global (warn-once); clearing it
     # keeps test_unknown_phase_name_warns_once order-independent under
-    # pytest-randomly (review N5).
+    # pytest-randomly (review N5).  The sub-phase set is cleared for the same
+    # reason (EE-W6).
     _phase_timing._unknown_phases.clear()
+    _phase_timing._unknown_subphases.clear()
     yield
     reset_vm_eval()
     _phase_timing._unknown_phases.clear()
+    _phase_timing._unknown_subphases.clear()
 
 
 def test_vm_counter_accumulates_seconds_and_calls():
@@ -390,3 +398,218 @@ def test_unknown_phase_name_warns_once(capsys):
     assert "phase_typo_never_registered" in err
     assert err.count("phase_typo_never_registered") == 1  # warned once
     assert rec["phase_seconds"]["unattributed"] >= 0.0  # fell into residual
+
+
+# ---------------------------------------------------------------------------
+# EE-W6: mutation_propagation sub-phase split
+# ---------------------------------------------------------------------------
+
+
+def test_subphase_names_cover_the_card_and_reserve_the_residual():
+    """The documented set is the card's candidate list; `unattributed` is computed."""
+    assert MUTATION_SUBPHASES == (
+        "generation_init",
+        "challenger_generation",
+        "diversity_topup",
+        "length_capping",
+        "dedupe",
+        "unattributed",
+    )
+    assert SUBPHASE_RECORD_KEY == "mutation_subphase_seconds"
+    # the record field is a SIBLING of phase_seconds, so the phase partition
+    # (asserted exact elsewhere) cannot be perturbed by sub-phase keys
+    assert SUBPHASE_RECORD_KEY != "phase_seconds"
+
+
+def test_subphases_partition_the_mutation_phase():
+    """Named sub-phases + residual == mutation_propagation seconds."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("generation_init"):
+            time.sleep(0.005)
+        with timer.sub_phase("challenger_generation"):
+            time.sleep(0.010)
+    with timer.phase("selection_archives"):
+        time.sleep(0.002)
+    rec = timer.end_generation()
+
+    subs = rec[SUBPHASE_RECORD_KEY]
+    assert set(subs) <= set(MUTATION_SUBPHASES)
+    assert subs["generation_init"] >= 0.005
+    assert subs["challenger_generation"] >= 0.010
+    # the additive identity this card exists for
+    assert sum(subs.values()) == pytest.approx(rec["phase_seconds"]["mutation_propagation"], abs=0.003)
+    assert subs["unattributed"] >= 0.0  # residual never negative
+    # sub-phases belong to their phase only: the 2ms of selection work was
+    # not absorbed by the mutation markers
+    assert rec["phase_seconds"]["selection_archives"] >= 0.002
+    assert rec["phase_seconds"]["selection_archives"] < rec["phase_seconds"]["mutation_propagation"]
+
+
+def test_subphase_vm_time_is_booked_as_vm_eval_not_as_sub_phase():
+    """VM work inside a marker is subtracted exactly like at phase level."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("challenger_generation"):
+            with timed_vm_eval():  # what _execute_vm does at source
+                time.sleep(0.020)
+            time.sleep(0.002)  # orchestration around it
+    rec = timer.end_generation()
+
+    subs = rec[SUBPHASE_RECORD_KEY]
+    assert rec["vm_eval_seconds"] >= 0.019  # counted once, as VM
+    # the sub-phase keeps only the orchestration around the VM call
+    assert subs["challenger_generation"] < 0.015
+    assert rec["phase_seconds"]["mutation_propagation"] < 0.015
+    assert sum(subs.values()) == pytest.approx(rec["phase_seconds"]["mutation_propagation"], abs=0.003)
+    assert rec["coverage_ratio"] <= 1.0 + 1e-9
+
+
+def test_unknown_subphase_warns_once_and_keeps_time_in_the_residual(capsys):
+    """An unlisted marker neither mints a field nor loses its time (EE-W6)."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("sub_typo_never_registered"):
+            time.sleep(0.006)
+        with timer.sub_phase("sub_typo_never_registered"):
+            time.sleep(0.006)
+    rec = timer.end_generation()
+
+    err = capsys.readouterr().err
+    assert "sub_typo_never_registered" in err
+    assert err.count("sub_typo_never_registered") == 1  # warned once
+    subs = rec[SUBPHASE_RECORD_KEY]
+    assert "sub_typo_never_registered" not in subs  # did not mint a field
+    assert subs["unattributed"] >= 0.010  # ...and nothing was lost
+    assert sum(subs.values()) == pytest.approx(rec["phase_seconds"]["mutation_propagation"], abs=0.003)
+
+
+def test_reserved_unattributed_marker_is_recomputed_as_the_residual(capsys):
+    """`unattributed` is never taken from a marker: the residual wins."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("generation_init"):
+            time.sleep(0.004)
+        with timer.sub_phase("unattributed"):
+            time.sleep(0.020)
+    rec = timer.end_generation()
+
+    subs = rec[SUBPHASE_RECORD_KEY]
+    assert subs["unattributed"] == pytest.approx(
+        rec["phase_seconds"]["mutation_propagation"] - subs["generation_init"], abs=0.003
+    )
+    assert subs["unattributed"] >= 0.015  # the ignored marker's time is still there
+    assert capsys.readouterr().err.count("unattributed") >= 1
+
+
+def test_subphase_does_not_leak_into_the_next_generation():
+    """An aborted generation's sub-phase time must not reach the next record."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("challenger_generation"):
+            time.sleep(0.020)
+    # generation 0 aborts here: end_generation is never called
+
+    timer.begin_generation(1)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("generation_init"):
+            time.sleep(0.002)
+    rec = timer.end_generation()
+
+    subs = rec[SUBPHASE_RECORD_KEY]
+    assert "challenger_generation" not in subs  # gen 0's 20ms is gone
+    assert subs["generation_init"] >= 0.002
+    assert rec["phase_seconds"]["mutation_propagation"] < 0.015
+    assert sum(subs.values()) == pytest.approx(rec["phase_seconds"]["mutation_propagation"], abs=0.003)
+
+
+def test_extra_cannot_shadow_the_subphase_record_key():
+    """`extra` diagnostics must not overwrite the measurement fields (S3)."""
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("generation_init"):
+            time.sleep(0.003)
+    rec = timer.end_generation({SUBPHASE_RECORD_KEY: "evil", "generations_stalled": 2})
+    assert isinstance(rec[SUBPHASE_RECORD_KEY], dict)
+    assert rec[SUBPHASE_RECORD_KEY]["generation_init"] > 0
+    assert rec["generations_stalled"] == 2  # non-colliding extra kept
+
+
+def test_disabled_timer_sub_phase_is_a_noop():
+    timer = PhaseTimer(enabled=False)
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("generation_init"):
+            time.sleep(0.001)
+    assert timer.end_generation() is None
+    assert timer.summary() == {}
+
+
+def test_summary_exposes_additive_gen_phase_sub_keys():
+    """The cycle metrics pick these up unchanged (run_multi_cycle copies
+    every ``gen_phase_*`` key, so no runner edit is needed)."""
+    timer = PhaseTimer()
+    for gen in range(2):
+        timer.begin_generation(gen)
+        with timer.phase("mutation_propagation"):
+            with timer.sub_phase("generation_init"):
+                time.sleep(0.002)
+            with timer.sub_phase("challenger_generation"):
+                time.sleep(0.004)
+        timer.end_generation()
+    summary = timer.summary(run_wall=1.0)
+
+    assert summary["gen_phase_sub_generation_init_seconds"] > 0
+    assert summary["gen_phase_sub_challenger_generation_seconds"] > 0
+    assert summary["gen_phase_sub_unattributed_seconds"] >= 0
+    covered = summary["gen_phase_sub_covered_seconds"]
+    assert covered == pytest.approx(
+        summary["gen_phase_sub_generation_init_seconds"] + summary["gen_phase_sub_challenger_generation_seconds"],
+        abs=0.01,
+    )
+    # the sub split reconciles with the phase it splits
+    assert covered + summary["gen_phase_sub_unattributed_seconds"] == pytest.approx(
+        summary["gen_phase_mutation_propagation_seconds"], abs=0.01
+    )
+    assert all(k.startswith("gen_phase_") for k in summary)
+
+
+def test_summary_tolerates_a_corrupt_subphase_record():
+    """One malformed row must not hide the other 29."""
+    timer = PhaseTimer()
+    for gen in range(2):
+        timer.begin_generation(gen)
+        with timer.phase("mutation_propagation"):
+            with timer.sub_phase("generation_init"):
+                time.sleep(0.002)
+        timer.end_generation()
+    timer.records[1][SUBPHASE_RECORD_KEY] = "corrupted"
+    timer.records[1][SUBPHASE_RECORD_KEY + "_list"] = ["also", "wrong"]
+
+    summary = timer.summary(run_wall=1.0)
+    assert summary["gen_phase_generations"] == 2
+    assert summary["gen_phase_sub_generation_init_seconds"] > 0
+    assert all(k.startswith("gen_phase_") for k in summary)
+
+
+def test_engine_pt_sub_is_a_noop_without_a_phase_timer():
+    """`EvolutionEngine._pt_sub` must never raise when the timer is absent."""
+    engine_mod = pytest.importorskip("evolution_engine")
+
+    class _NoTimer:
+        pass
+
+    with engine_mod.EvolutionEngine._pt_sub(_NoTimer(), "challenger_generation"):
+        pass  # nullcontext: the engine still runs with EE_GEN_TIMING=0
+
+    class _Disabled:
+        _phase_timer = PhaseTimer(enabled=False)
+
+    with engine_mod.EvolutionEngine._pt_sub(_Disabled(), "challenger_generation"):
+        pass
