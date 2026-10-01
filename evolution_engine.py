@@ -106,7 +106,7 @@ ensure_project_on_path()
 # EE-W5: per-generation phase timing -- splits generation wall time into
 # VM-farm fitness evaluation vs Python orchestration so the
 # phase_evolution_seconds band can be attributed to a dominant phase.
-from evolution.phase_timing import PhaseTimer, default_log_path, timed_vm_eval, timers_enabled
+from evolution.phase_timing import SUBPHASE_RECORD_KEY, PhaseTimer, default_log_path, timed_vm_eval, timers_enabled
 from vm_farm import EvalResult, _run_one_evaluation  # type: ignore
 
 
@@ -3679,21 +3679,50 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         return subphase(name)
 
     def _log_subphase_marker(self, record: dict | None) -> None:
-        """Emit a ``[PhaseSub]`` line when a sub-block dominates a generation."""
+        """Emit ``[PhaseSub]`` lines when a slow sub-block dominates a generation.
+
+        Two lines, two record keys, two questions (EE-W6b reconciliation):
+
+        * ``top:`` -- the sibling lane's ``subphase_seconds`` HOTSPOT MAP
+          (VM-inclusive, nested, non-additive): which sub-BLOCK was slow.
+        * ``mutation:`` -- EE-W6's ``mutation_subphase_seconds`` ADDITIVE
+          PARTITION of ``mutation_propagation``: which STAGE of the
+          partition ate the phase.  Gated on the largest NAMED sub-phase
+          (the ``unattributed`` residual is excluded), so a generation
+          whose time all sits in the residual stays quiet.
+
+        Each line has its own threshold env var so the two systems can be
+        tuned independently: ``EE_PHASE_SUB_LOG_MIN`` for the hotspot map,
+        ``EE_PHASE_SUBPART_LOG_MIN`` for the additive partition (both
+        default 3 seconds).
+        """
         if not record:
             return
+        gen = record.get("generation")
         try:
             subs = record.get("subphase_seconds") or {}
-            if not subs:
+            if subs:
+                worst = max(subs.values())
+                if worst >= float(os.environ.get("EE_PHASE_SUB_LOG_MIN", "3")):
+                    top = ", ".join(f"{k}={v:.1f}" for k, v in list(subs.items())[:5])
+                    self._log(f"[PhaseSub] gen={gen} " f"total={record.get('generation_seconds', 0.0):.1f}s top: {top}")
+        except Exception:  # noqa: BLE001 -- markers must never break evolution
+            pass
+        try:
+            split = record.get(SUBPHASE_RECORD_KEY) or {}
+            named = {k: v for k, v in split.items() if k != "unattributed"}
+            if not named:
                 return
-            worst = max(subs.values())
-            if worst < float(os.environ.get("EE_PHASE_SUB_LOG_MIN", "3")):
+            dominant = max(named, key=lambda k: named[k])
+            if named[dominant] < float(os.environ.get("EE_PHASE_SUBPART_LOG_MIN", "3")):
                 return
-            top = ", ".join(f"{k}={v:.1f}" for k, v in list(subs.items())[:5])
-            self._log(
-                f"[PhaseSub] gen={record.get('generation')} "
-                f"total={record.get('generation_seconds', 0.0):.1f}s top: {top}"
-            )
+            # Show every named block that actually spent time (>= 10 ms, so
+            # 0.001s bookkeeping noise stays out) plus the residual itself,
+            # biggest first, dominant sub-phase leading.
+            shown = [(k, v) for k, v in sorted(named.items(), key=lambda kv: -kv[1]) if v >= 0.01]
+            shown.append(("unattributed", split.get("unattributed", 0.0)))
+            parts = " ".join(f"{k}={v:.2f}s" for k, v in shown)
+            self._log(f"[PhaseSub] gen={gen} mutation: {parts}")
         except Exception:  # noqa: BLE001 -- markers must never break evolution
             pass
 

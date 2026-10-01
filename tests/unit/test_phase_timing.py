@@ -820,6 +820,13 @@ def test_engine_marker_sites_fire_on_a_real_generation(monkeypatch):
     engine = engine_mod.EvolutionEngine.__new__(engine_mod.EvolutionEngine)
     timer = PhaseTimer()
     engine._phase_timer = timer
+    # EE-W6c: capture the [PhaseSub] lines this generation emits.
+    logged: list[str] = []
+    engine._log = logged.append
+    # Both [PhaseSub] systems are env-gated; pin them so an ambient value
+    # in the developer shell cannot flip the assertions below.
+    monkeypatch.setenv("EE_PHASE_SUB_LOG_MIN", "3")
+    monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "0.005")
     engine.config = SimpleNamespace(
         population_size=4,
         use_mutation_scheduler=True,
@@ -870,6 +877,28 @@ def test_engine_marker_sites_fire_on_a_real_generation(monkeypatch):
     assert SUBPHASE_RECORD_KEY != "subphase_seconds"
     assert "subphase_seconds" in rec
 
+    # EE-W6c: the additive split this record carries is operator-visible on
+    # its own [PhaseSub] line, leading with the dominant named sub-phase.
+    part_lines = [m for m in logged if "mutation:" in m]
+    assert len(part_lines) == 1, logged
+    dominant = max((k for k in subs if k != "unattributed"), key=lambda k: subs[k])
+    line = part_lines[0]
+    assert f"gen={rec['generation']}" in line
+    assert f"{dominant}=" in line
+    assert "unattributed=" in line
+    # biggest-first ordering: the dominant block leads the listing
+    assert line.index(f"{dominant}=") < line.index("unattributed=")
+    # the sibling hotspot line is a DIFFERENT system with its own gate
+    # (3 s >> these ~10 ms blocks), so it stays independent -- and quiet.
+    assert not [m for m in logged if "top:" in m]
+
+    # Quiet generation: raise the partition gate above every named block so
+    # only residual time remains -> nothing at all is emitted.
+    logged.clear()
+    monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "999")
+    engine._log_subphase_marker(rec)
+    assert logged == []
+
 
 def test_sibling_diagnostic_markers_and_additive_subphases_share_a_record():
     """EE-W6b reconciliation: both marker systems, neither borrowing a key.
@@ -908,3 +937,91 @@ def test_sibling_diagnostic_markers_and_additive_subphases_share_a_record():
     assert diag["generate_challengers"] == pytest.approx(0.090, abs=0.005)
     assert diag["topup_diversity"] == pytest.approx(0.060, abs=0.005)
     assert sum(diag.values()) > phase * 1.5
+
+
+def test_phase_sub_partition_line_gates_on_largest_named_subphase(monkeypatch):
+    """EE-W6c: ``_log_subphase_marker`` prints the additive split, gated on
+    the largest NAMED sub-phase.
+
+    The ``mutation_subphase_seconds`` partition used to be invisible to an
+    operator watching logs (it only surfaced in cycle metrics /
+    ``generation_phase_timing.jsonl``).  It now gets its own ``[PhaseSub]``
+    line -- separate from the sibling lane's ``top:`` hotspot line, with an
+    independent threshold -- and it must:
+
+    * fire when one named sub-phase dominates, naming it first;
+    * stay QUIET when the time all sits in the ``unattributed`` residual
+      (the gate excludes the residual by construction);
+    * stay QUIET when every named sub-phase is under the gate;
+    * not disturb the sibling ``subphase_seconds`` line, in either
+      direction (two systems, two keys, two independently tuned gates);
+    * tolerate records that lack the new key entirely (old records,
+      sibling-only code paths) without raising -- markers must never
+      break evolution.
+    """
+    engine_mod = pytest.importorskip("evolution_engine")
+    engine = engine_mod.EvolutionEngine.__new__(engine_mod.EvolutionEngine)
+    logged: list[str] = []
+    engine._log = logged.append
+    monkeypatch.setenv("EE_PHASE_SUB_LOG_MIN", "3")
+    monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "3")
+
+    def _record(**split):
+        """A generation record with the stable EE-W6 key set + overrides."""
+        full = {name: 0.0 for name in MUTATION_SUBPHASES}
+        full.update(split)
+        return {
+            "generation": 29,
+            "generation_seconds": 132.7,
+            "subphase_seconds": {},
+            SUBPHASE_RECORD_KEY: full,
+        }
+
+    # 1. dominant named sub-phase above the gate -> line fires, dominant first
+    engine._log_subphase_marker(_record(challenger_generation=67.7, length_capping=0.04))
+    assert len(logged) == 1, logged
+    line = logged[0]
+    assert line.startswith("[PhaseSub] gen=29 mutation: challenger_generation=67.70s")
+    assert line.index("challenger_generation=") < line.index("length_capping=")
+    assert "unattributed=0.00s" in line  # residual is always reported
+    assert "generation_init=" not in line  # 0.0 s blocks are noise, not shown
+
+    # 2. residual-only generation -> quiet (the gate ignores unattributed)
+    logged.clear()
+    engine._log_subphase_marker(_record(unattributed=42.0))
+    assert logged == []
+
+    # 3. every named sub-phase under the gate -> quiet, residual or not
+    logged.clear()
+    engine._log_subphase_marker(_record(challenger_generation=2.9, unattributed=40.0))
+    assert logged == []
+
+    # 4. the two systems tune independently.  Build a record where BOTH
+    #    would fire, then close one gate at a time.
+    both = _record(challenger_generation=67.7)
+    both["subphase_seconds"] = {"generate_challengers": 50.0}
+
+    logged.clear()
+    monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "100")  # close partition gate
+    engine._log_subphase_marker(both)
+    assert [m for m in logged if "top:" in m], logged
+    assert not [m for m in logged if "mutation:" in m]
+
+    logged.clear()
+    monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "3")  # reopen
+    monkeypatch.setenv("EE_PHASE_SUB_LOG_MIN", "100")  # close hotspot gate
+    engine._log_subphase_marker(both)
+    assert [m for m in logged if "mutation:" in m], logged
+    assert not [m for m in logged if "top:" in m]
+
+    # 5. records without the additive key (pre-EE-W6) behave exactly as
+    #    before: no partition line, no exception, sibling line untouched.
+    logged.clear()
+    monkeypatch.setenv("EE_PHASE_SUB_LOG_MIN", "3")
+    engine._log_subphase_marker({"generation": 5, "subphase_seconds": {}})
+    engine._log_subphase_marker({})
+    engine._log_subphase_marker(None)
+    assert logged == []
+    legacy = {"generation": 5, "generation_seconds": 9.0, "subphase_seconds": {"enrich": 4.0}}
+    engine._log_subphase_marker(legacy)
+    assert len(logged) == 1 and "top:" in logged[0] and "mutation:" not in logged[0]
