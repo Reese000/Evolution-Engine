@@ -558,8 +558,13 @@ def test_disabled_timer_sub_phase_is_a_noop():
 
 
 def test_summary_exposes_additive_gen_phase_sub_keys():
-    """The cycle metrics pick these up unchanged (run_multi_cycle copies
-    every ``gen_phase_*`` key, so no runner edit is needed)."""
+    """The cycle metrics pick these up unchanged.
+
+    run_multi_cycle.py:552-554 copies every ``gen_phase_*`` key from the
+    engine result into the cycle metrics, so no runner edit is needed; the
+    end-to-end proof is the isolated cycle record of t_9b0b3680 (cycle 7678),
+    which carries all seven ``gen_phase_sub_*`` keys.
+    """
     timer = PhaseTimer()
     for gen in range(2):
         timer.begin_generation(gen)
@@ -601,6 +606,57 @@ def test_summary_tolerates_a_corrupt_subphase_record():
     summary = timer.summary(run_wall=1.0)
     assert summary["gen_phase_generations"] == 2
     assert summary["gen_phase_sub_generation_init_seconds"] > 0
+    assert all(k.startswith("gen_phase_") for k in summary)
+
+
+def test_summary_skips_a_corrupt_phase_row_without_losing_the_others():
+    """A row with an unreadable ``phase_seconds`` must not degrade the summary.
+
+    The sub-phase loop already skipped malformed rows, but the phase totals
+    read ``r["phase_seconds"][p]`` unguarded, so ONE bad row raised and
+    summary() fell back to its 4-key degraded dict -- losing every phase key
+    and every ``gen_phase_sub_*`` key of an otherwise good cycle (review of
+    t_9b0b3680).
+    """
+    timer = PhaseTimer()
+    for gen in range(2):
+        timer.begin_generation(gen)
+        with timer.phase("mutation_propagation"):
+            with timer.sub_phase("generation_init"):
+                time.sleep(0.002)
+        timer.end_generation()
+    del timer.records[0]["phase_seconds"]
+    timer.records[0]["generation_seconds"] = "corrupted"
+
+    summary = timer.summary(run_wall=1.0)
+    assert summary["gen_phase_generations"] == 2
+    assert "gen_phase_error" not in summary  # no degradation to the fallback
+    # the good row still contributes its phase and sub-phase totals
+    assert summary["gen_phase_mutation_propagation_seconds"] > 0
+    assert summary["gen_phase_sub_generation_init_seconds"] > 0
+    assert summary[SUBPHASE_COVERED_KEY] > 0
+    assert all(k.startswith("gen_phase_") for k in summary)
+
+
+def test_summary_ignores_unlisted_subphase_names():
+    """A record-borne unknown name must not mint a ``gen_phase_sub_*`` field.
+
+    In particular a row carrying ``covered`` must not overwrite the computed
+    ``SUBPHASE_COVERED_KEY`` (review of t_9b0b3680); unknown names are
+    dropped exactly like the mark-time warning for an unlisted marker.
+    """
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("generation_init"):
+            time.sleep(0.002)
+    rec = timer.end_generation()
+    rec[SUBPHASE_RECORD_KEY] = {**rec[SUBPHASE_RECORD_KEY], "covered": 99.0, "bogus": 5.0}
+
+    summary = timer.summary(run_wall=1.0)
+    assert "gen_phase_sub_bogus_seconds" not in summary
+    assert summary[SUBPHASE_COVERED_KEY] == pytest.approx(summary["gen_phase_sub_generation_init_seconds"], abs=0.001)
+    assert summary[SUBPHASE_COVERED_KEY] < 99.0
     assert all(k.startswith("gen_phase_") for k in summary)
 
 

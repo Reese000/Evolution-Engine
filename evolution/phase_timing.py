@@ -83,11 +83,13 @@ MUTATION_SUBPHASES: tuple[str, ...] = (
 )
 
 #: Record field carrying the sub-phase split (a sibling of ``phase_seconds``).
-#: Deliberately NOT ``subphase_seconds``: that key already carries another
-#: lane's coarser, VM-inclusive, NON-additive hotspot markers in the live
-#: shared tree (uncommitted as of t_8c472447, present on production records
-#: since cycle 7596), and giving two different meanings to one field would
-#: make both unreadable on merge.
+#: Deliberately NOT ``subphase_seconds``: that key carries the sibling lane's
+#: coarser, VM-inclusive, NON-additive hotspot markers (``subphase()``), whose
+#: nested markers overshoot the phase they sit in -- on sandboxed cycle 7678
+#: they summed to 1183.2s against a 132.7s ``mutation_propagation``.  Both
+#: mechanisms are committed as of 740bb2d and both are written to every
+#: generation record, so two meanings must never share one name (see
+#: ``test_sibling_diagnostic_markers_and_additive_subphases_share_a_record``).
 SUBPHASE_RECORD_KEY = "mutation_subphase_seconds"
 
 #: Summary key computed outside the ``gen_phase_sub_<name>_seconds`` loop --
@@ -515,29 +517,49 @@ class PhaseTimer:
             }
 
     def _build_summary(self, run_wall: float | None = None) -> dict[str, Any]:
-        totals = {p: round(sum(r["phase_seconds"][p] for r in self.records), 3) for p in PHASES}
-        gen_seconds = round(sum(r["generation_seconds"] for r in self.records), 3)
-        vm_calls = sum(int(r.get("vm_eval_calls", 0)) for r in self.records)
+        # One unreadable row must not take the WHOLE summary down with it: a
+        # raise here is caught by summary() and degrades to the 4-key
+        # fallback, which hides every phase/sub-phase key of a completed
+        # cycle.  Each row read is therefore guarded and a bad row simply
+        # contributes nothing (review of t_9b0b3680).
+        def _num(row: Any, key: str, default: float = 0.0) -> float:
+            value = row.get(key, default) if isinstance(row, dict) else default
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return default
+            return float(value) if math.isfinite(float(value)) else default
+
+        def _phase_row(row: dict[str, Any]) -> dict[str, Any]:
+            ps = row.get("phase_seconds")
+            return ps if isinstance(ps, dict) else {}
+
+        totals = {p: round(sum(_num(_phase_row(r), p) for r in self.records), 3) for p in PHASES}
+        gen_seconds = round(sum(_num(r, "generation_seconds") for r in self.records), 3)
+        vm_calls = int(sum(_num(r, "vm_eval_calls") for r in self.records))
         wall = run_wall if run_wall is not None else (time.perf_counter() - self._run_start)
         named = sum(totals[p] for p in NAMED_PHASES)
-        vm_farm = round(sum(float(r.get("vm_eval_seconds", 0.0)) for r in self.records), 3)
+        vm_farm = round(sum(_num(r, "vm_eval_seconds") for r in self.records), 3)
         # EE-W6: per-sub-phase totals across the run, additive and independent
-        # of the phase keys above.  A malformed record is skipped rather than
-        # allowed to degrade the whole summary (one bad row must not hide the
-        # other 29), and non-finite values are dropped because json.dumps
-        # would emit bare NaN/Infinity, which is not valid JSON for
-        # downstream readers (review NIT5).
+        # of the phase keys above.  Non-finite values are dropped because
+        # json.dumps would emit bare NaN/Infinity, which is not valid JSON for
+        # downstream readers (review NIT5), and a NAME outside
+        # MUTATION_SUBPHASES is dropped rather than minting a new
+        # ``gen_phase_sub_*`` field -- a record-borne "covered" would
+        # otherwise overwrite SUBPHASE_COVERED_KEY computed below (review of
+        # t_9b0b3680).
         sub_totals: dict[str, float] = {name: 0.0 for name in MUTATION_SUBPHASES}
         for r in self.records:
             subs = r.get(SUBPHASE_RECORD_KEY)
             if not isinstance(subs, dict):
                 continue
             for k, v in subs.items():
+                name = str(k)
+                if name not in sub_totals:
+                    continue
                 if isinstance(v, bool) or not isinstance(v, (int, float)):
                     continue
                 if not math.isfinite(float(v)):
                     continue
-                sub_totals[str(k)] = sub_totals.get(str(k), 0.0) + float(v)
+                sub_totals[name] += float(v)
         summary = {
             "gen_phase_generations": len(self.records),
             "gen_phase_seconds": gen_seconds,
