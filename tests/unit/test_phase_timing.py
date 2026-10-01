@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections import UserDict
 
 import pytest
 
@@ -1075,3 +1076,35 @@ def test_phase_sub_partition_line_gates_on_largest_named_subphase(monkeypatch):
     assert "covered=" not in body
     assert "length_capping=" not in body
     assert "dedupe=" not in body
+
+    # 10. only types that cannot answer `.get()` are rejected: a non-dict
+    #     MAPPING record still gets the sibling line it got before this
+    #     card (two systems, neither losing ground to the other).
+    logged.clear()
+    wrapped = UserDict({"generation": 5, "generation_seconds": 9.0, "subphase_seconds": {"enrich": 4.0}})
+    engine._log_subphase_marker(wrapped)
+    assert len(logged) == 1 and " top: " in logged[0] and " mutation: " not in logged[0]
+
+    # 11. the sibling gate keeps the pre-EE-W6c polarity: a NaN value, or a
+    #     NaN threshold, still LOGS -- exactly what `if worst < gate:
+    #     return` did.  A rewrite to `worst >= gate` would silence both.
+    logged.clear()
+    monkeypatch.setenv("EE_PHASE_SUB_LOG_MIN", "3")
+    engine._log_subphase_marker(
+        {"generation": 5, "generation_seconds": 9.0, "subphase_seconds": {"enrich": float("nan")}}
+    )
+    assert len(logged) == 1 and " top: " in logged[0] and "nan" in logged[0]
+    logged.clear()
+    monkeypatch.setenv("EE_PHASE_SUB_LOG_MIN", "nan")
+    engine._log_subphase_marker({"generation": 5, "generation_seconds": 9.0, "subphase_seconds": {"enrich": 4.0}})
+    assert len(logged) == 1 and " top: " in logged[0]
+
+    # 12. a sub-centisecond dominant renders at the writer's 4 dp rather
+    #     than rounding to a misleading `0.00s` -- the gate admitted it, so
+    #     the line must be able to show it.
+    monkeypatch.setenv("EE_PHASE_SUB_LOG_MIN", "3")
+    monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "0.004")
+    logged.clear()
+    engine._log_subphase_marker(_record(challenger_generation=0.0049))
+    assert len(logged) == 1, logged
+    assert "challenger_generation=0.0049s" in logged[0]

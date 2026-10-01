@@ -24,7 +24,7 @@ import os
 import random
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
@@ -3704,14 +3704,17 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         default 3 seconds).
 
         Diagnostics must never break evolution, so each line is guarded on
-        its own and a malformed record degrades to "no line" (a truthy
-        non-dict record returns before either read; ``_log`` itself is not
-        ours to guard).
+        its own and a malformed record degrades to "no line" (a non-Mapping
+        record returns before either read, ``generation`` is read inside
+        each guard, and ``_log`` itself is not ours to guard).
         """
-        if not isinstance(record, dict) or not record:
+        if not isinstance(record, Mapping) or not record:
+            # Mapping, not dict: the sibling line used to print for
+            # UserDict/MappingProxyType records, so only the types that
+            # cannot answer `.get()` may be rejected here.
             return
-        gen = record.get("generation")
         try:
+            gen = record.get("generation")
             subs = record.get("subphase_seconds") or {}
             if subs:
                 worst = max(subs.values())
@@ -3724,6 +3727,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         except Exception:  # noqa: BLE001 -- markers must never break evolution
             pass
         try:
+            gen = record.get("generation")
             split = record.get(SUBPHASE_RECORD_KEY)
             named: dict[str, float] = {}
             residual = 0.0
@@ -3756,7 +3760,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             # sub-10 ms dominant could print a line with no stage in it.
             shown = [(k, v) for k, v in sorted(named.items(), key=lambda kv: -kv[1]) if v >= 0.01 or k == dominant]
             shown.append(("unattributed", residual))
-            parts = " ".join(f"{k}={v:.2f}s" for k, v in shown)
+            # 2 dp matches the card's example (`length_capping=0.04s`), but
+            # a sub-centisecond value would round to a misleading `0.00s`,
+            # so those render at the writer's own 4 dp instead.
+            parts = " ".join(f"{k}={v:.4f}s" if 0.0 < v < 0.01 else f"{k}={v:.2f}s" for k, v in shown)
             self._log(f"[PhaseSub] gen={gen} mutation: {parts}")
         except Exception:  # noqa: BLE001 -- markers must never break evolution
             pass
