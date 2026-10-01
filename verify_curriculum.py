@@ -29,9 +29,23 @@ from tasks_rv32i import (
 )
 
 LEVEL_CLASSES = [
-    Level0, Level1, Level2, Level3, Level4, Level5, Level6, Level7,
-    Level8, Level9, Level10, Level11, Level12, Level13, Level14,
-    Level15, Level16,
+    Level0,
+    Level1,
+    Level2,
+    Level3,
+    Level4,
+    Level5,
+    Level6,
+    Level7,
+    Level8,
+    Level9,
+    Level10,
+    Level11,
+    Level12,
+    Level13,
+    Level14,
+    Level15,
+    Level16,
 ]
 
 # Maps level -> registers that verify() checks
@@ -130,33 +144,35 @@ def run_level(level_cls, seed=42):
     }
 
 
-def main():
-    print("=" * 72)
-    print("  EE VM VERIFICATION: Curriculum Reference Solutions L0-L16")
-    print("=" * 72)
-
+def _run_all_levels(seed_offset: int = 42) -> list[dict]:
+    """Run all levels and collect results."""
     results = []
-
     for cls in LEVEL_CLASSES:
         level_num = int(cls.__name__.replace("Level", ""))
-        seed = 42 + level_num
+        seed = seed_offset + level_num
         try:
             r = run_level(cls, seed=seed)
             results.append(r)
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError) as e:
             import traceback
-            traceback.print_exc()
-            results.append({
-                "level": level_num,
-                "pass": False,
-                "vm_success": False,
-                "error": str(e),
-                "cycles": 0,
-                "mismatches": {},
-                "jalr_failed": False,
-            })
 
-    # Print summary table
+            traceback.print_exc()
+            results.append(
+                {
+                    "level": level_num,
+                    "pass": False,
+                    "vm_success": False,
+                    "error": str(e),
+                    "cycles": 0,
+                    "mismatches": {},
+                    "jalr_failed": False,
+                }
+            )
+    return results
+
+
+def _print_summary_table(results: list[dict]) -> tuple[int, int]:
+    """Print summary table and return (pass_count, fail_count)."""
     pass_count = sum(1 for r in results if r["pass"])
     fail_count = len(results) - pass_count
 
@@ -184,8 +200,11 @@ def main():
 
     print("-" * 72)
     print(f"\n  TOTAL: {pass_count}/{len(results)} PASS, {fail_count} FAIL\n")
+    return pass_count, fail_count
 
-    # Detailed failure analysis
+
+def _print_failure_analysis(results: list[dict]) -> None:
+    """Print detailed failure analysis."""
     failures = [r for r in results if not r["pass"]]
     if failures:
         print("FAILURE ANALYSIS:")
@@ -201,6 +220,16 @@ def main():
                 print("    Register mismatches:")
                 for reg, m in r["mismatches"].items():
                     print(f"      x{reg}: expected={m['expected']}, actual={m['actual']}")
+
+
+def main():
+    print("=" * 72)
+    print("  EE VM VERIFICATION: Curriculum Reference Solutions L0-L16")
+    print("=" * 72)
+
+    results = _run_all_levels()
+    _pass_count, fail_count = _print_summary_table(results)
+    _print_failure_analysis(results)
 
     return 0 if fail_count == 0 else 1
 

@@ -14,7 +14,6 @@ Uses pytest parametrize for speed. No existing files are modified.
 
 from __future__ import annotations
 
-import importlib
 import inspect
 import os
 import sys
@@ -166,14 +165,16 @@ _PIPELINE_METHOD_FILES: dict[str, str] = {
     "send_monoculture_alert": "monitoring_alerts.py",
     "send_recovery_stuck_alert": "monitoring_alerts.py",
     "get_plateau_analysis": "evolution/mutation_helpers.py",
+    "manage_capacity": "evolution/qd_archive_mixin.py",
 }
 
 
 class TestPipelineWiring:
     """Verify evolution_engine.py contains references to all new methods."""
 
+    @staticmethod
     @pytest.fixture(scope="class")
-    def engine_source(self) -> str:
+    def engine_source() -> str:
         """Read evolution_engine.py once per test class."""
         path = os.path.join(_ROOT, "evolution_engine.py")
         with open(path, "r", encoding="utf-8") as f:

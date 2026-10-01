@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
-
-import pytest
-
 from metrics import MetricsCollector
 from progression_tracker import CycleMetrics, ProgressionTracker
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_cycle(cycle: int, fitness: float, **overrides) -> CycleMetrics:
     """Shorthand to build a CycleMetrics with sensible defaults."""
@@ -36,6 +31,7 @@ def _make_cycle(cycle: int, fitness: float, **overrides) -> CycleMetrics:
 # ===========================================================================
 # 1. TestProgressionTrackerPlateau
 # ===========================================================================
+
 
 class TestProgressionTrackerPlateau:
     """Test plateau detection on ProgressionTracker.get_plateau_analysis."""
@@ -78,6 +74,7 @@ class TestProgressionTrackerPlateau:
 # ===========================================================================
 # 2. TestProgressionTrackerWindows
 # ===========================================================================
+
 
 class TestProgressionTrackerWindows:
     """Test ProgressionTracker.compare_windows for metric comparison."""
@@ -122,6 +119,7 @@ class TestProgressionTrackerWindows:
 # ===========================================================================
 # 3. TestMetricsAnomalyDetection
 # ===========================================================================
+
 
 class TestMetricsAnomalyDetection:
     """Test MetricsCollector.detect_anomalies for outlier detection."""
@@ -173,6 +171,7 @@ class TestMetricsAnomalyDetection:
 # 4. TestMetricsCorrelation
 # ===========================================================================
 
+
 class TestMetricsCorrelation:
     """Test MetricsCollector.correl_metrics for correlation analysis."""
 
@@ -185,10 +184,7 @@ class TestMetricsCorrelation:
     # --- fitness vs generation (positively correlated) --------------------
     def test_fitness_vs_generation_correlation(self, tmp_path):
         path = str(tmp_path / "metrics.jsonl")
-        records = [
-            {"cycle": i, "fitness": float(i * 2), "generation": i}
-            for i in range(1, 25)
-        ]
+        records = [{"cycle": i, "fitness": float(i * 2), "generation": i} for i in range(1, 25)]
         mc = self._collector_with(path, records)
         result = mc.correlate_metrics("fitness", "generation", window=24)
         assert result["correlation"] > 0.95
@@ -199,10 +195,7 @@ class TestMetricsCorrelation:
     def test_uncorrelated_metrics(self, tmp_path):
         path = str(tmp_path / "metrics.jsonl")
         # Alternating fitness, monotonically increasing time_s
-        records = [
-            {"cycle": i, "fitness": 10.0 if i % 2 == 0 else 20.0, "time_s": float(i)}
-            for i in range(1, 25)
-        ]
+        records = [{"cycle": i, "fitness": 10.0 if i % 2 == 0 else 20.0, "time_s": float(i)} for i in range(1, 25)]
         mc = self._collector_with(path, records)
         result = mc.correlate_metrics("fitness", "time_s", window=24)
         # Correlation should be weak or none for alternating vs monotonic

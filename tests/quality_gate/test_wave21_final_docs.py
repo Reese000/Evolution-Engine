@@ -19,7 +19,6 @@ import inspect
 import os
 import re
 import sys
-import typing
 
 import pytest
 
@@ -89,10 +88,7 @@ _METHOD_SPECS: list[tuple[object, str, bool]] = [
 # Sanity: exactly 26 specs
 assert len(_METHOD_SPECS) == 26, f"Expected 26 method specs, got {len(_METHOD_SPECS)}"
 
-_METHOD_IDS = [
-    f"{t.__name__ if hasattr(t, '__name__') else 'module'}.{n}"
-    for t, n, _ in _METHOD_SPECS
-]
+_METHOD_IDS = [f"{t.__name__ if hasattr(t, '__name__') else 'module'}.{n}" for t, n, _ in _METHOD_SPECS]
 
 # ── Dict-returning methods (must have return type annotations) ────────────────
 _DICT_RETURN_METHODS: set[str] = {
@@ -118,6 +114,7 @@ _DICT_RETURN_METHODS: set[str] = {
 # 1. TestAllNewMethodsDocumented — docstring presence & quality
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestAllNewMethodsDocumented:
     """Verify every new method has a non-empty docstring ≥ 10 characters."""
 
@@ -130,9 +127,7 @@ class TestAllNewMethodsDocumented:
         """Each method must have a docstring with at least 10 characters."""
         attr = getattr(target, name)
         docstring = inspect.getdoc(attr)
-        assert docstring is not None, (
-            f"{getattr(target, '__name__', 'module')}.{name} has no docstring"
-        )
+        assert docstring is not None, f"{getattr(target, '__name__', 'module')}.{name} has no docstring"
         stripped = docstring.strip()
         assert len(stripped) >= 10, (
             f"{getattr(target, '__name__', 'module')}.{name} docstring too short: "
@@ -147,9 +142,7 @@ class TestAllNewMethodsDocumented:
             docstring = inspect.getdoc(attr)
             if docstring and len(docstring.strip()) >= 10:
                 documented += 1
-        assert documented == 26, (
-            f"Expected 26 fully documented methods, got {documented}"
-        )
+        assert documented == 26, f"Expected 26 fully documented methods, got {documented}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -181,12 +174,12 @@ class TestCodeQualityFinal:
             # Simple heuristic: skip lines starting with # (pure comment lines)
             # but catch inline comments on code lines
             stripped = line.strip()
-            # Allow # noqa-style comments but flag TODO/FIXME/HACK
+            # Allow noqa-style comments but flag TODO/FIXME/HACK
             if _TODO_PATTERNS.search(stripped):
                 # Check if it's inside a docstring (between triple quotes)
                 # Simple: check if the match is in a docstring context
                 in_docstring = False
-                for prev_line in source[:lineno - 1]:
+                for prev_line in source[: lineno - 1]:
                     if '"""' in prev_line or "'''" in prev_line:
                         in_docstring = not in_docstring
                 if not in_docstring:
@@ -203,8 +196,7 @@ class TestCodeQualityFinal:
     def test_snake_case_naming(self, target, name, is_static):
         """All new method names must follow snake_case convention."""
         assert _SNAKE_CASE_RE.match(name), (
-            f"{getattr(target, '__name__', 'module')}.{name} "
-            f"does not follow snake_case naming"
+            f"{getattr(target, '__name__', 'module')}.{name} " f"does not follow snake_case naming"
         )
 
     @pytest.mark.parametrize(
@@ -218,8 +210,7 @@ class TestCodeQualityFinal:
         sig = inspect.signature(attr)
         ret = sig.return_annotation
         assert ret is not inspect.Signature.empty, (
-            f"{getattr(target, '__name__', 'module')}.{name} "
-            f"missing return type annotation"
+            f"{getattr(target, '__name__', 'module')}.{name} " f"missing return type annotation"
         )
 
     @pytest.mark.parametrize(
@@ -257,7 +248,5 @@ class TestCodeQualityFinal:
             attr = getattr(target, name)
             sig = inspect.signature(attr)
             if sig.return_annotation is inspect.Signature.empty:
-                missing.append(
-                    f"{getattr(target, '__name__', 'module')}.{name}"
-                )
+                missing.append(f"{getattr(target, '__name__', 'module')}.{name}")
         assert not missing, f"Missing return annotations: {missing}"

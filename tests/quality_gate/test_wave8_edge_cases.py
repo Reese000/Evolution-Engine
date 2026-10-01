@@ -13,9 +13,7 @@ across the core archive and controller subsystems.
 """
 from __future__ import annotations
 
-import math
 import os
-import sys
 import tempfile
 
 import pytest
@@ -171,10 +169,12 @@ class TestStrategyArchiveIntegration:
     def test_record_batch_integration(self):
         """Batch recording should produce same state as individual records."""
         sa = StrategyArchive()
-        sa.record_batch([
-            {"strategy": "B1", "level": 0, "success": True, "gen": 0},
-            {"strategy": "B2", "level": 1, "success": False, "gen": 0},
-        ])
+        sa.record_batch(
+            [
+                {"strategy": "B1", "level": 0, "success": True, "gen": 0},
+                {"strategy": "B2", "level": 1, "success": False, "gen": 0},
+            ]
+        )
         assert sa.total_records() == 2
         assert sa.recommend_strategy(level=0) == "B1"
 
@@ -191,8 +191,9 @@ class TestChampionArchiveEdgeCases:
         """Create a ChampionArchive backed by a temp file."""
         return ChampionArchive(path=path, max_size=max_size)
 
-    def _add_champion(self, archive: ChampionArchive, program: list[int],
-                      level: int, fitness: float, cycle: int) -> bool:
+    def _add_champion(
+        self, archive: ChampionArchive, program: list[int], level: int, fitness: float, cycle: int
+    ) -> bool:
         return archive.add(program, level=level, fitness=fitness, cycle=cycle)
 
     def test_diversity_aware_select_single_champion(self):
@@ -334,12 +335,22 @@ class TestMetaControllerEdgeCases:
     def test_get_cross_cycle_trends_single_data_point(self):
         """Single data point should return stable trend with zero confidence."""
         mc = self._make_mc()
-        mc.update_cycle(TelemetrySnapshot(
-            cycle=1, fitness=50.0, level=0, champion_words=10,
-            val_loss=None, diversity=0.5, novelty_size=0,
-            qd_occupied=0, qd_total=100, traces_count=0,
-            retrained=False, generations_completed=50,
-        ))
+        mc.update_cycle(
+            TelemetrySnapshot(
+                cycle=1,
+                fitness=50.0,
+                level=0,
+                champion_words=10,
+                val_loss=None,
+                diversity=0.5,
+                novelty_size=0,
+                qd_occupied=0,
+                qd_total=100,
+                traces_count=0,
+                retrained=False,
+                generations_completed=50,
+            )
+        )
         trends = mc.get_cross_cycle_trends()
         assert "fitness" in trends
         # With only 1 data point, slope should be 0 and confidence 0
@@ -350,12 +361,22 @@ class TestMetaControllerEdgeCases:
         """Improving fitness over 5 cycles should report improving trend."""
         mc = self._make_mc()
         for i in range(6):
-            mc.update_cycle(TelemetrySnapshot(
-                cycle=i, fitness=10.0 + i * 10.0, level=0,
-                champion_words=10, val_loss=None, diversity=0.5,
-                novelty_size=0, qd_occupied=0, qd_total=100,
-                traces_count=0, retrained=False, generations_completed=50,
-            ))
+            mc.update_cycle(
+                TelemetrySnapshot(
+                    cycle=i,
+                    fitness=10.0 + i * 10.0,
+                    level=0,
+                    champion_words=10,
+                    val_loss=None,
+                    diversity=0.5,
+                    novelty_size=0,
+                    qd_occupied=0,
+                    qd_total=100,
+                    traces_count=0,
+                    retrained=False,
+                    generations_completed=50,
+                )
+            )
         trends = mc.get_cross_cycle_trends()
         assert trends["fitness"]["direction"] == "improving"
         assert trends["fitness"]["slope"] > 0
@@ -365,10 +386,15 @@ class TestMetaControllerEdgeCases:
         mc = self._make_mc()
         # Manually add tuning log entries with 'recovery' in the reason
         from meta_controller import TuningAction
+
         for i in range(3):
             action = TuningAction(
-                domain="retrain", param="lr", old_value=1e-4,
-                new_value=1e-5, reason=f"recovery:cycle_{i}", cycle=i,
+                domain="retrain",
+                param="lr",
+                old_value=1e-4,
+                new_value=1e-5,
+                reason=f"recovery:cycle_{i}",
+                cycle=i,
             )
             mc._tuning_log.append(action)
         conf = mc.get_recovery_confidence()
@@ -393,12 +419,24 @@ class TestNoveltyArchiveEdgeCases:
     def test_manage_capacity_max_size_zero(self):
         """manage_capacity with max_size=0 should remove all entries."""
         sa = SparseArchive()
-        desc1 = {"inst_diversity": 0.5, "reg_pressure": 0.3, "program_length": 0.4,
-                 "branch_fraction": 0.1, "alu_fraction": 0.6, "load_store_ratio": 0.2,
-                 "unique_regs_used": 0.3}
-        desc2 = {"inst_diversity": 0.1, "reg_pressure": 0.9, "program_length": 0.8,
-                 "branch_fraction": 0.5, "alu_fraction": 0.2, "load_store_ratio": 0.7,
-                 "unique_regs_used": 0.8}
+        desc1 = {
+            "inst_diversity": 0.5,
+            "reg_pressure": 0.3,
+            "program_length": 0.4,
+            "branch_fraction": 0.1,
+            "alu_fraction": 0.6,
+            "load_store_ratio": 0.2,
+            "unique_regs_used": 0.3,
+        }
+        desc2 = {
+            "inst_diversity": 0.1,
+            "reg_pressure": 0.9,
+            "program_length": 0.8,
+            "branch_fraction": 0.5,
+            "alu_fraction": 0.2,
+            "load_store_ratio": 0.7,
+            "unique_regs_used": 0.8,
+        }
         sa.add_to_archive(desc1, {"program": [1], "generation": 0})
         sa.add_to_archive(desc2, {"program": [2], "generation": 1})
         assert sa.size == 2
@@ -416,9 +454,15 @@ class TestNoveltyArchiveEdgeCases:
         """decayed_novelty should return positive for archived program."""
         sa = SparseArchive()
         prog = [0x00100093, 0x00200113]
-        desc = {"inst_diversity": 0.3, "reg_pressure": 0.4, "program_length": 0.2,
-                "branch_fraction": 0.1, "alu_fraction": 0.7, "load_store_ratio": 0.1,
-                "unique_regs_used": 0.2}
+        desc = {
+            "inst_diversity": 0.3,
+            "reg_pressure": 0.4,
+            "program_length": 0.2,
+            "branch_fraction": 0.1,
+            "alu_fraction": 0.7,
+            "load_store_ratio": 0.1,
+            "unique_regs_used": 0.2,
+        }
         sa.add_to_archive(desc, {"program": prog, "generation": 0})
         # Now same generation => age=0 => decay=1.0
         score = sa.decayed_novelty(prog, current_generation=0)
@@ -428,9 +472,15 @@ class TestNoveltyArchiveEdgeCases:
     def test_add_to_archive_first_entry(self):
         """First entry to empty archive should always be added."""
         sa = SparseArchive()
-        desc = {"inst_diversity": 0.5, "reg_pressure": 0.5, "program_length": 0.5,
-                "branch_fraction": 0.5, "alu_fraction": 0.5, "load_store_ratio": 0.5,
-                "unique_regs_used": 0.5}
+        desc = {
+            "inst_diversity": 0.5,
+            "reg_pressure": 0.5,
+            "program_length": 0.5,
+            "branch_fraction": 0.5,
+            "alu_fraction": 0.5,
+            "load_store_ratio": 0.5,
+            "unique_regs_used": 0.5,
+        }
         added, _score = sa.add_to_archive(desc, check_threshold=True)
         assert added is True
         assert sa.size == 1
@@ -438,9 +488,15 @@ class TestNoveltyArchiveEdgeCases:
     def test_empty_archive_novelty_score(self):
         """novelty_score against empty archive should return 0.0."""
         sa = SparseArchive()
-        desc = {"inst_diversity": 0.5, "reg_pressure": 0.5, "program_length": 0.5,
-                "branch_fraction": 0.5, "alu_fraction": 0.5, "load_store_ratio": 0.5,
-                "unique_regs_used": 0.5}
+        desc = {
+            "inst_diversity": 0.5,
+            "reg_pressure": 0.5,
+            "program_length": 0.5,
+            "branch_fraction": 0.5,
+            "alu_fraction": 0.5,
+            "load_store_ratio": 0.5,
+            "unique_regs_used": 0.5,
+        }
         score = sa.novelty_score(desc)
         assert score == 0.0
 

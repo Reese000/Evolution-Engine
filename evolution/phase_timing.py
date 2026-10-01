@@ -162,6 +162,44 @@ def timed_vm_eval() -> Iterator[None]:
 
 _unknown_phases: set[str] = set()
 
+_sub_lock = threading.Lock()
+_subphases: dict[str, float] = {}
+
+
+def reset_subphases() -> None:
+    """Clear the process-wide sub-block accumulators (start of a generation)."""
+    with _sub_lock:
+        _subphases.clear()
+
+
+def snapshot_subphases() -> dict[str, float]:
+    """Copy of the sub-block seconds accumulated for the current generation."""
+    with _sub_lock:
+        return dict(_subphases)
+
+
+@contextmanager
+def subphase(name: str) -> Iterator[None]:
+    """Accumulate wall seconds for a named sub-block of a phase.
+
+    Coarse hotspot markers (growth pool rebuild, locus probe, enrich,
+    pair-drop trials, ...) recorded alongside the five main phases.  VM
+    time is NOT subtracted here: subphases are diagnostic markers, not an
+    additive partition, so a subphase that wraps a VM call simply includes
+    it.  Never raises (instrumentation must not break evolution).
+    """
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - start
+        if elapsed > 0.0:
+            try:
+                with _sub_lock:
+                    _subphases[name] = _subphases.get(name, 0.0) + elapsed
+            except Exception:  # noqa: BLE001 -- markers must never raise
+                pass
+
 
 def _warn_unknown_phase(name: str) -> None:
     """Warn once per unknown phase name.
@@ -351,6 +389,7 @@ class PhaseTimer:
         self._generation = int(generation)
         self._gen_start = time.perf_counter()
         self._gen_vm_start, self._gen_start_calls = vm_eval_totals()
+        reset_subphases()
         # Reset residual phase time: if the previous generation aborted
         # before end_generation, its `_net` would otherwise leak into this
         # record and drive `unattributed` negative (EE-W5 review).
@@ -393,6 +432,15 @@ class PhaseTimer:
             "phase_seconds": phases,
             "accounted_seconds": round(accounted, 4),
             "coverage_ratio": round(accounted / wall, 4) if wall > 0 else 1.0,
+            # Diagnostic hotspot markers (see `subphase`): sub-0.05s noise
+            # is dropped so a fast generation records an empty dict.
+            # VM-inclusive and NON-additive (markers nest inside each
+            # other), i.e. a different question from the EE-W6 partition
+            # below -- two record keys, two semantics, never one key with
+            # two meanings (t_9b0b3680).
+            "subphase_seconds": {
+                k: round(v, 3) for k, v in sorted(snapshot_subphases().items(), key=lambda kv: -kv[1]) if v >= 0.05
+            },
             # EE-W6: additive split of `mutation_propagation` into named
             # sub-phases + residual (see MUTATION_SUBPHASES).  Read here,
             # before _reset_gen clears the accumulators.

@@ -27,7 +27,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from config import EvolutionSection
-from evolution_engine import EvolutionConfig, EvolutionEngine
+from evolution_engine import EvolutionEngine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth — engine creation, attributes, callable methods
@@ -68,9 +68,7 @@ class TestEngineHealth:
     @pytest.mark.parametrize("attr", _EXPECTED_ENGINE_ATTRS)
     def test_engine_has_attribute(self, engine, attr):
         """Engine must have every expected attribute."""
-        assert hasattr(engine, attr), (
-            f"Engine missing attribute '{attr}'"
-        )
+        assert hasattr(engine, attr), f"Engine missing attribute '{attr}'"
 
     def test_engine_run_is_callable(self, engine):
         """engine.run must be callable."""
@@ -98,9 +96,7 @@ class TestEngineHealth:
         }
         actual_keys = set(diagnostics.keys())
         missing = expected_keys - actual_keys
-        assert not missing, (
-            f"get_run_diagnostics missing keys: {missing}"
-        )
+        assert not missing, f"get_run_diagnostics missing keys: {missing}"
 
     def test_engine_get_performance_metrics_returns_dict(self, engine):
         """engine.get_performance_metrics() must return a dict."""
@@ -120,9 +116,7 @@ class TestEngineHealth:
         }
         actual_keys = set(metrics.keys())
         missing = expected_keys - actual_keys
-        assert not missing, (
-            f"get_performance_metrics missing keys: {missing}"
-        )
+        assert not missing, f"get_performance_metrics missing keys: {missing}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -168,9 +162,7 @@ class TestConfigHealth:
         summary = default_section.get_config_summary()
         actual_keys = set(summary.keys())
         missing = set(_EXPECTED_SUMMARY_KEYS) - actual_keys
-        assert not missing, (
-            f"get_config_summary missing keys: {missing}"
-        )
+        assert not missing, f"get_config_summary missing keys: {missing}"
 
     def test_validate_config_returns_list(self, default_section):
         """validate_config must return a list."""
@@ -180,9 +172,7 @@ class TestConfigHealth:
     def test_no_warnings_on_default_config(self, default_section):
         """Default EvolutionSection config should produce no warnings."""
         warnings = default_section.validate_config()
-        assert warnings == [], (
-            f"Default config produced unexpected warnings: {warnings}"
-        )
+        assert warnings == [], f"Default config produced unexpected warnings: {warnings}"
 
     def test_config_field_defaults(self, default_section):
         """Verify key default values are as expected."""

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Tests for EvolutionEngine.validate_program (R45 bad-champion pre-check)."""
 
-import os
-import sys
 import unittest
 
 
@@ -61,6 +59,13 @@ class TestValidateProgram(unittest.TestCase):
         prog = [0x00100013, 0x00200013, 0x00300013] + [0x00100073] * 10
         valid, _reason = self._validate(prog)
         self.assertTrue(valid)
+
+    def test_hex_string_words_from_jsonl(self):
+        """Resume payloads store words as 0x........ strings."""
+        prog = ["0x00100013", "0x00200013", "0x00300013", "0x00100073"]
+        valid, reason = self._validate(prog)
+        self.assertTrue(valid)
+        self.assertEqual(reason, "ok")
 
 
 if __name__ == "__main__":

@@ -6,8 +6,6 @@ return the expected types.  No actual evolution runs are executed.
 """
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
@@ -52,9 +50,7 @@ class TestEngineHealth:
         """engine.run is a callable method."""
         assert callable(engine.run)
 
-    def test_engine_get_run_diagnostics_returns_dict(
-        self, engine: EvolutionEngine
-    ) -> None:
+    def test_engine_get_run_diagnostics_returns_dict(self, engine: EvolutionEngine) -> None:
         """get_run_diagnostics returns a dict with expected keys."""
         diag = engine.get_run_diagnostics()
         assert isinstance(diag, dict)
@@ -74,9 +70,7 @@ class TestEngineHealth:
         for key in expected_keys:
             assert key in diag, f"diagnostics missing key: {key}"
 
-    def test_engine_get_performance_metrics_returns_dict(
-        self, engine: EvolutionEngine
-    ) -> None:
+    def test_engine_get_performance_metrics_returns_dict(self, engine: EvolutionEngine) -> None:
         """get_performance_metrics returns a dict with expected keys."""
         metrics = engine.get_performance_metrics()
         assert isinstance(metrics, dict)

@@ -18,6 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from evolution_engine import EvolutionConfig
+
 # ── _select_elite dedup fitness alignment ────────────────────────────
 
 
@@ -27,25 +29,12 @@ class TestSelectEliteDedupAlignment:
     def test_tournament_dedup_preserves_fitness_alignment(self):
         """When a tournament winner duplicates a top-k elite, dedup
         must not leave a mismatched fitness value."""
-        from evolution_engine import EvolutionConfig, EvolutionEngine
+        from unittest.mock import patch
 
-        config = EvolutionConfig(population_size=10, elite_ratio=0.2, tournament_size=3, eval_budget=1000)
-        engine = EvolutionEngine.__new__(EvolutionEngine)
-        engine.config = config
-        engine.rng = random.Random(42)
-        engine.strategy_archive = None
-        engine.champion_level = 0
-        engine.champion_fitness = 0.0
-        engine.champion_trace = None
-        engine._raw_task_score = 0.0
-        engine._current_diversity = 0.5
-        engine._prefix_generator = None
-        engine._external_evolution_params = {}
-        engine._consecutive_same_strategy = 0
-        engine._last_strategy_used = ""
-        engine.circuit_breaker = EvolutionConfig.CIRCUIT_BREAKER_SENTINEL
-        engine.current_generation = 0
-        engine._log_file = None
+        from tests.conftest import make_engine
+
+        engine = make_engine()
+        engine.config = EvolutionConfig(population_size=10, elite_ratio=0.2, tournament_size=3, eval_budget=1000)
 
         # Create 10 challengers with known programs and fitnesses
         programs = [list(range(i, i + 5)) for i in range(10)]
@@ -64,7 +53,12 @@ class TestSelectEliteDedupAlignment:
         # Patch _refresh_task_instance (not needed)
         engine.task_instance = {"inputs": {}, "expected_output": {"registers": {}}}
 
-        elites, elite_fits, _idxs = engine._select_elite(programs, results)
+        # Patch batch_compute_fitness to use fake_fitness for each program
+        def fake_batch_compute(programs, traces, eval_budget=None, raw_only=False):
+            return [fake_fitness(p, t, eval_budget, raw_only) for p, t in zip(programs, traces)], [0.0] * len(programs)
+
+        with patch.object(engine, "batch_compute_fitness", fake_batch_compute):
+            elites, elite_fits, _idxs = engine._select_elite(programs, results)
 
         # Elites should be unique programs
         seen = set()
@@ -82,25 +76,12 @@ class TestSelectEliteDedupAlignment:
 
     def test_elites_count_never_exceeds_population(self):
         """Elite selection should not produce more than population_size items."""
-        from evolution_engine import EvolutionConfig, EvolutionEngine
+        from unittest.mock import patch
 
-        config = EvolutionConfig(population_size=5, elite_ratio=0.4, tournament_size=3, eval_budget=1000)
-        engine = EvolutionEngine.__new__(EvolutionEngine)
-        engine.config = config
-        engine.rng = random.Random(42)
-        engine.strategy_archive = None
-        engine.champion_level = 0
-        engine.champion_fitness = 0.0
-        engine.champion_trace = None
-        engine._raw_task_score = 0.0
-        engine._current_diversity = 0.5
-        engine._prefix_generator = None
-        engine._external_evolution_params = {}
-        engine._consecutive_same_strategy = 0
-        engine._last_strategy_used = ""
-        engine.circuit_breaker = EvolutionConfig.CIRCUIT_BREAKER_SENTINEL
-        engine.current_generation = 0
-        engine._log_file = None
+        from tests.conftest import make_engine
+
+        engine = make_engine()
+        engine.config = EvolutionConfig(population_size=5, elite_ratio=0.4, tournament_size=3, eval_budget=1000)
 
         programs = [list(range(i, i + 3)) for i in range(5)]
         results = [{"status": "ok", "final_regs": {}, "instructions_count": 3} for _ in range(5)]
@@ -108,7 +89,11 @@ class TestSelectEliteDedupAlignment:
         engine._compute_fitness = lambda prog, trace, eval_budget=None, raw_only=False: float(sum(prog))
         engine.task_instance = {"inputs": {}, "expected_output": {"registers": {}}}
 
-        elites, _elite_fits, _idxs = engine._select_elite(programs, results)
+        def fake_batch_compute(programs, traces, eval_budget=None, raw_only=False):
+            return [float(sum(p)) for p in programs], [0.0] * len(programs)
+
+        with patch.object(engine, "batch_compute_fitness", fake_batch_compute):
+            elites, _elite_fits, _idxs = engine._select_elite(programs, results)
         assert len(elites) <= len(programs), f"Elite count {len(elites)} exceeds population {len(programs)}"
 
 
@@ -169,22 +154,21 @@ class TestSkipEvolutionFlag:
         in main(), so it survives across iterations. Verify it does not
         reset at the top of each cycle."""
         # We test by reading the source file and checking the structure
-        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "run_multi_cycle.py")
+        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "run_multi_cycle_loop.py")
         with open(source_path, encoding="utf-8") as f:
             source = f.read()
 
         # skip_evolution should be initialized BEFORE the for loop
-        # Find the for loop line
         for_line = None
         skip_line = None
         for i, line in enumerate(source.splitlines()):
             stripped = line.strip()
-            if "for cycle in range(1," in stripped and "args.cycles" in stripped:
+            if stripped.startswith("for cycle in range(") and "cycle_end" in stripped:
                 for_line = i
-            if "skip_evolution = False" in stripped and "# R6" in stripped:
+            if "ctx.skip_evolution = False" in stripped and "# R6" in stripped:
                 skip_line = i
 
-        assert for_line is not None, "for-loop not found in run_multi_cycle.py"
+        assert for_line is not None, "for-loop not found in run_multi_cycle_loop.py"
         assert skip_line is not None, "R6 skip_evolution init not found"
         assert skip_line < for_line, (
             f"skip_evolution (line {skip_line}) must be initialized " f"BEFORE the for-loop (line {for_line})"
@@ -198,7 +182,6 @@ class TestSkipEvolutionFlag:
     sys.platform == "win32",
     reason="PermissionError on temp dir cleanup — PM Rule #27",
 )
-
 class TestCloseLogHandle:
     """Verify _close_log_handle properly cleans up."""
 
@@ -224,7 +207,7 @@ class TestCloseLogHandle:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
             log_path = f.name
         try:
-            engine._log_file = open(log_path, "w")
+            engine._log_file = open(log_path, "w")  # noqa: SIM115
             engine._close_log_handle()
             assert engine._log_file is None
         finally:
@@ -270,7 +253,7 @@ class TestCloseLogHandle:
         # Create a real log file
         with tempfile.TemporaryDirectory() as tmp:
             engine.config.log_dir = tmp
-            engine._log_file = open(os.path.join(tmp, "test.log"), "a")
+            engine._log_file = open(os.path.join(tmp, "test.log"), "a")  # noqa: SIM115
 
             # Patch methods to raise on the first generation
             def bad_generate_challengers():
@@ -285,7 +268,7 @@ class TestCloseLogHandle:
             # run() should catch the exception but still close the log
             try:
                 engine.run()
-            except Exception:
+            except RuntimeError:
                 pass
 
             assert engine._log_file is None, "Log handle not cleaned up after exception in run()"
@@ -295,11 +278,10 @@ class TestCloseLogHandle:
 
 
 class TestRecurrentFeedbackGen0:
-    """Verify recurrent feedback works on generation 0."""
+    """_try_recurrent_feedback should run when generations_stalled=0
+    (it only requires _last_challengers to be non-empty)."""
 
     def test_feedback_runs_without_stall(self):
-        """_try_recurrent_feedback should run when generations_stalled=0
-        (it only requires _last_challengers to be non-empty)."""
         from evolution_engine import EvolutionConfig, EvolutionEngine
 
         engine = EvolutionEngine.__new__(EvolutionEngine)
@@ -321,7 +303,7 @@ class TestRecurrentFeedbackGen0:
 
         with tempfile.TemporaryDirectory() as tmp:
             engine.config.recurrent_feedback_dir = tmp
-            result = engine._try_recurrent_feedback()
+            engine._try_recurrent_feedback()
 
             # Should have saved at least one example
             assert engine.recurrent_examples_count >= 1, "Expected at least one recurrent example saved on gen 0"
@@ -435,7 +417,7 @@ class TestValLossNoneDoesNotUndoRollback:
         """If new_ck is the same as the original retrain result but
         no retry succeeded, the code should not blindly copy."""
         # This is a structural test that the new code path exists
-        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "run_multi_cycle.py")
+        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "run_multi_cycle_loop.py")
         with open(source_path, encoding="utf-8") as f:
             source = f.read()
 

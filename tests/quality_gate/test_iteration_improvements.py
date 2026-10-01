@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 
 import pytest
 
@@ -19,28 +18,41 @@ import pytest
 
 # ─── Shared helpers ─────────────────────────────────────────────────────────
 
+
 def _make_engine(champion=None, level=0, fitness=0.0, verified=False, generation=0):
     """Create a minimal EvolutionEngine via __new__ with mock archives."""
     from evolution_engine import EvolutionEngine
 
-    novelty = type("N", (), {
-        "size": 5,
-        "novelty_threshold": 0.5,
-        "get_diversity_score": lambda self: 0.75,
-    })()
+    novelty = type(
+        "N",
+        (),
+        {
+            "size": 5,
+            "novelty_threshold": 0.5,
+            "get_diversity_score": lambda self: 0.75,
+        },
+    )()
 
-    qd = type("Q", (), {
-        "size": 10,
-        "coverage": lambda self: 0.05,
-        "num_bins": 20,
-        "get_fitness_distribution": lambda self: {},
-    })()
+    qd = type(
+        "Q",
+        (),
+        {
+            "size": 10,
+            "coverage": lambda self: 0.05,
+            "num_bins": 20,
+            "get_fitness_distribution": lambda self: {},
+        },
+    )()
 
-    sa = type("S", (), {
-        "total_records": lambda self: 20,
-        "get_strategy_diversity": lambda self, level=None: 0.8,
-        "save": lambda self, path: None,
-    })()
+    sa = type(
+        "S",
+        (),
+        {
+            "total_records": lambda self: 20,
+            "get_strategy_diversity": lambda self, level=None: 0.8,
+            "save": lambda self, path: None,
+        },
+    )()
 
     engine = EvolutionEngine.__new__(EvolutionEngine)
     engine.champion = champion
@@ -56,21 +68,25 @@ def _make_engine(champion=None, level=0, fitness=0.0, verified=False, generation
     engine.qd_archive = qd
     engine.strategy_archive = sa
     engine._hall_of_fame = type("H", (), {"_heap": [1, 2, 3]})()
-    engine.config = type("C", (), {
-        "mutation_rate": 0.1,
-        "population_size": 50,
-        "elite_ratio": 0.1,
-        "novelty_weight": 0.15,
-        "qd_bonus_weight": 0.1,
-        "eval_budget": 5000,
-        "max_generations": 200,
-        "auto_curriculum": True,
-        "use_gpu": False,
-        "model_guided_ratio": None,
-        "model_guided_ratio_low": 0.2,
-        "model_guided_ratio_mid": 0.15,
-        "model_guided_ratio_high": 0.1,
-    })()
+    engine.config = type(
+        "C",
+        (),
+        {
+            "mutation_rate": 0.1,
+            "population_size": 50,
+            "elite_ratio": 0.1,
+            "novelty_weight": 0.15,
+            "qd_bonus_weight": 0.1,
+            "eval_budget": 5000,
+            "max_generations": 200,
+            "auto_curriculum": True,
+            "use_gpu": False,
+            "model_guided_ratio": None,
+            "model_guided_ratio_low": 0.2,
+            "model_guided_ratio_mid": 0.15,
+            "model_guided_ratio_high": 0.1,
+        },
+    )()
     engine._log = lambda msg: None
     engine._last_challenger_strategies = []
     return engine
@@ -100,23 +116,26 @@ class TestBackwardBranches:
             | ((abs_imm >> 11) & 0x1) << 30
         )
         if sign:
-            word |= (1 << 31)
+            word |= 1 << 31
         return word
 
     def test_backward_branch_detected(self):
         from evolution_engine import EvolutionEngine
+
         b_backward = self._make_b_type(-8)
         program = [b_backward, 0x00100073]
         assert EvolutionEngine._count_backward_branches(program) == 1
 
     def test_forward_branch_not_counted(self):
         from evolution_engine import EvolutionEngine
+
         b_forward = self._make_b_type(8)
         program = [b_forward, 0x00100073]
         assert EvolutionEngine._count_backward_branches(program) == 0
 
     def test_multiple_backward_branches(self):
         from evolution_engine import EvolutionEngine
+
         b1 = self._make_b_type(-4)
         b2 = self._make_b_type(-12)
         b3 = self._make_b_type(-20)
@@ -125,16 +144,19 @@ class TestBackwardBranches:
 
     def test_empty_program(self):
         from evolution_engine import EvolutionEngine
+
         assert EvolutionEngine._count_backward_branches([]) == 0
 
     def test_no_branch_instructions(self):
         from evolution_engine import EvolutionEngine
+
         nop = 0x00000013  # ADDI x0, x0, 0
         program = [nop, nop, nop, 0x00100073]
         assert EvolutionEngine._count_backward_branches(program) == 0
 
     def test_mixed_branches(self):
         from evolution_engine import EvolutionEngine
+
         b_backward = self._make_b_type(-8)
         b_forward = self._make_b_type(16)
         program = [b_backward, b_forward, b_backward, 0x00100073]
@@ -142,11 +164,13 @@ class TestBackwardBranches:
 
     def test_non_integer_values_skipped(self):
         from evolution_engine import EvolutionEngine
+
         program_mixed = [0x63, "not_an_int", None, 3.14, 0x00100073]
         assert EvolutionEngine._count_backward_branches(program_mixed) == 0
 
     def test_all_non_integers(self):
         from evolution_engine import EvolutionEngine
+
         assert EvolutionEngine._count_backward_branches(["hello", None, [1, 2], {}, 3.14]) == 0
 
 
@@ -160,12 +184,14 @@ class TestDeltaTracking:
 
     def test_record_and_avg_single(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         sa.record_delta("RANDOM", 10.0)
         assert sa.avg_delta("RANDOM") == pytest.approx(10.0)
 
     def test_record_and_avg_multiple(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         sa.record_delta("RANDOM", 5.0)
         sa.record_delta("RANDOM", 15.0)
@@ -174,11 +200,13 @@ class TestDeltaTracking:
 
     def test_avg_delta_no_records(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         assert sa.avg_delta("UNKNOWN") == 0.0
 
     def test_fifo_cap_on_records(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive(max_records=10)
         for i in range(15):
             sa.record("R", level=0, success=True, generation=i)
@@ -186,6 +214,7 @@ class TestDeltaTracking:
 
     def test_delta_independent_of_records(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive(max_records=5)
         for i in range(10):
             sa.record_delta("R", float(i))
@@ -202,6 +231,7 @@ class TestDeltaTiebreaker:
 
     def test_tiebreaker_prefers_higher_delta(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for _ in range(10):
             sa.record("A", level=0, success=True, generation=0)
@@ -214,6 +244,7 @@ class TestDeltaTiebreaker:
 
     def test_no_tiebreaker_when_scores_differ(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for _ in range(10):
             sa.record("A", level=0, success=True, generation=0)
@@ -235,6 +266,7 @@ class TestLevelDecay:
 
     def test_level_dependent_decay_l0(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for _ in range(20):
             sa.record("R", level=0, success=True, generation=0)
@@ -244,6 +276,7 @@ class TestLevelDecay:
 
     def test_level_dependent_decay_l5(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for _ in range(20):
             sa.record("R", level=5, success=True, generation=0)
@@ -253,6 +286,7 @@ class TestLevelDecay:
 
     def test_level_dependent_decay_l9(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for _ in range(20):
             sa.record("R", level=9, success=True, generation=0)
@@ -262,6 +296,7 @@ class TestLevelDecay:
 
     def test_decay_level_with_no_records(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         modified = sa.decay_level_records(99, level_dependent=True)
         assert modified == 0
@@ -277,6 +312,7 @@ class TestStrategyDiversity:
 
     def test_monoculture_zero_diversity(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for _ in range(20):
             sa.record("RANDOM", level=0, success=True, generation=0)
@@ -284,6 +320,7 @@ class TestStrategyDiversity:
 
     def test_diverse_strategies(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for i in range(30):
             sa.record(["A", "B", "C"][i % 3], level=0, success=True, generation=0)
@@ -291,6 +328,7 @@ class TestStrategyDiversity:
 
     def test_level_filtered_diversity(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for _ in range(20):
             sa.record("RANDOM", level=0, success=True, generation=0)
@@ -301,11 +339,13 @@ class TestStrategyDiversity:
 
     def test_empty_archive_zero(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         assert sa.get_strategy_diversity() == 0.0
 
     def test_global_diversity(self):
         from strategy_archive import StrategyArchive
+
         sa = StrategyArchive()
         for i in range(30):
             sa.record(["A", "B", "C"][i % 3], level=0, success=True, generation=0)
@@ -317,16 +357,27 @@ class TestStrategyDiversity:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _DESC_KEYS = (
-    "inst_diversity", "reg_pressure", "program_length",
-    "branch_fraction", "alu_fraction", "load_store_ratio", "unique_regs_used",
+    "inst_diversity",
+    "reg_pressure",
+    "program_length",
+    "branch_fraction",
+    "alu_fraction",
+    "load_store_ratio",
+    "unique_regs_used",
 )
 
 
 def _desc(**overrides):
     """Build a descriptor dict with sensible defaults."""
-    d = {"inst_diversity": 0.5, "reg_pressure": 0.5, "program_length": 0.5,
-         "branch_fraction": 0.5, "alu_fraction": 0.5, "load_store_ratio": 0.5,
-         "unique_regs_used": 0.5}
+    d = {
+        "inst_diversity": 0.5,
+        "reg_pressure": 0.5,
+        "program_length": 0.5,
+        "branch_fraction": 0.5,
+        "alu_fraction": 0.5,
+        "load_store_ratio": 0.5,
+        "unique_regs_used": 0.5,
+    }
     d.update(overrides)
     return d
 
@@ -336,11 +387,13 @@ class TestNoveltyDiversity:
 
     def test_empty_archive_zero(self):
         from novelty import SparseArchive
+
         sa = SparseArchive(k_neighbors=3, novelty_threshold=0.1)
         assert sa.get_diversity_score() == 0.0
 
     def test_single_entry_zero(self):
         from novelty import SparseArchive
+
         sa = SparseArchive(k_neighbors=3, novelty_threshold=0.1)
         sa.add_to_archive(_desc(inst_diversity=0.5), check_threshold=False)
         assert sa.size == 1
@@ -348,6 +401,7 @@ class TestNoveltyDiversity:
 
     def test_diverse_entries_positive(self):
         from novelty import SparseArchive
+
         sa = SparseArchive(k_neighbors=2, novelty_threshold=0.01)
         for val in (0.1, 0.9, 0.5):
             sa.add_to_archive(_desc(inst_diversity=val), check_threshold=False)
@@ -355,6 +409,7 @@ class TestNoveltyDiversity:
 
     def test_identical_entries_low_diversity(self):
         from novelty import SparseArchive
+
         sa = SparseArchive(k_neighbors=2, novelty_threshold=0.01)
         for _ in range(5):
             sa.add_to_archive(_desc(), check_threshold=False)
@@ -371,6 +426,7 @@ class TestNoveltyTrim:
 
     def test_no_trim_when_under_limit(self):
         from novelty import SparseArchive
+
         sa = SparseArchive(k_neighbors=2, novelty_threshold=0.01)
         for i in range(5):
             sa.add_to_archive(_desc(inst_diversity=i / 5), check_threshold=False)
@@ -380,6 +436,7 @@ class TestNoveltyTrim:
 
     def test_trim_removes_oldest(self):
         from novelty import SparseArchive
+
         sa = SparseArchive(k_neighbors=2, novelty_threshold=0.01)
         for i in range(10):
             sa.add_to_archive(_desc(inst_diversity=i / 10), check_threshold=False)
@@ -389,6 +446,7 @@ class TestNoveltyTrim:
 
     def test_trim_preserves_newest(self):
         from novelty import SparseArchive
+
         sa = SparseArchive(k_neighbors=2, novelty_threshold=0.01)
         for i in range(8):
             sa.add_to_archive(_desc(inst_diversity=i / 8), check_threshold=False)
@@ -406,6 +464,7 @@ class TestQDCellStats:
 
     def test_empty_archive_stats(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         stats = arch.get_cell_stats()
         assert stats["total_cells"] == 100
@@ -417,6 +476,7 @@ class TestQDCellStats:
 
     def test_single_solution_stats(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         arch.add_solution([0.5, 0.5], fitness=100.0, program=[0x00100073])
         stats = arch.get_cell_stats()
@@ -428,6 +488,7 @@ class TestQDCellStats:
 
     def test_multiple_solutions_stats(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         arch.add_solution([0.2, 0.3], fitness=100.0, program=[0x00100073])
         arch.add_solution([0.8, 0.7], fitness=200.0, program=[0x00000013])
@@ -448,11 +509,13 @@ class TestQDNeighborhood:
 
     def test_empty_archive_density_zero(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         assert arch.get_neighborhood_density([0.0, 0.0], radius=1) == 0.0
 
     def test_density_with_occupied_neighbors(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         arch.add_solution([0.0, 0.0], fitness=100.0, program=[0x00100073])
         density = arch.get_neighborhood_density([0.0, 0.0], radius=0)
@@ -460,6 +523,7 @@ class TestQDNeighborhood:
 
     def test_density_radius_one(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         arch.add_solution([0.0, 0.0], fitness=100.0, program=[0x00100073])
         density = arch.get_neighborhood_density([0.0, 0.0], radius=1)
@@ -467,11 +531,13 @@ class TestQDNeighborhood:
 
     def test_density_none_descriptor(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         assert arch.get_neighborhood_density(None, radius=1) == 0.0
 
     def test_density_wrong_length(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         assert arch.get_neighborhood_density([1.0], radius=1) == 0.0
         assert arch.get_neighborhood_density([1.0, 2.0, 3.0], radius=1) == 0.0
@@ -487,6 +553,7 @@ class TestQDFitnessDistribution:
 
     def test_empty_distribution(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         dist = arch.get_fitness_distribution()
         assert dist["bins"] == []
@@ -496,6 +563,7 @@ class TestQDFitnessDistribution:
 
     def test_single_solution_distribution(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         arch.add_solution([0.5, 0.5], fitness=100.0, program=[0x00100073])
         dist = arch.get_fitness_distribution()
@@ -506,6 +574,7 @@ class TestQDFitnessDistribution:
 
     def test_multiple_solutions_distribution(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         for i in range(5):
             arch.add_solution([i / 5, 0.5], fitness=10.0 + i * 20, program=[0x00100073 + i])
@@ -526,6 +595,7 @@ class TestChampionCoverage:
 
     def _make_archive(self, tmp_path):
         from champion_archive import ChampionArchive
+
         path = os.path.join(str(tmp_path), "archive.jsonl")
         return ChampionArchive(path=path, max_size=100)
 
@@ -595,7 +665,7 @@ class TestFailureArchiveEviction:
         with open(jsonl_path, "w") as f:
             f.writelines(json.dumps({"iteration": i}) + "\n" for i in range(5))
         with open(jsonl_path) as f:
-            lines = [l for l in f if l.strip()]
+            lines = [line for line in f if line.strip()]
         assert len(lines) == 5
 
 
@@ -622,15 +692,31 @@ class TestRunDiagnostics:
 
     def test_expected_keys(self):
         engine = _make_engine(
-            champion=[0x00100073] * 5, level=3, fitness=150.0, verified=True, generation=42,
+            champion=[0x00100073] * 5,
+            level=3,
+            fitness=150.0,
+            verified=True,
+            generation=42,
         )
         diag = engine.get_run_diagnostics()
         expected_keys = {
-            "champion_level", "champion_fitness", "champion_words", "champion_verified",
-            "generations_stalled", "current_generation", "novelty_archive_size",
-            "qd_archive_size", "strategy_archive_records", "hall_of_fame_size",
-            "strategy_diversity", "recurrent_examples", "fitness_velocity",
-            "fitness_momentum", "mutation_rate", "population_size", "elite_ratio",
+            "champion_level",
+            "champion_fitness",
+            "champion_words",
+            "champion_verified",
+            "generations_stalled",
+            "current_generation",
+            "novelty_archive_size",
+            "qd_archive_size",
+            "strategy_archive_records",
+            "hall_of_fame_size",
+            "strategy_diversity",
+            "recurrent_examples",
+            "fitness_velocity",
+            "fitness_momentum",
+            "mutation_rate",
+            "population_size",
+            "elite_ratio",
         }
         assert expected_keys.issubset(set(diag.keys()))
         assert diag["champion_words"] == 5
@@ -658,8 +744,11 @@ class TestExportStateAnalysis:
 
     def _engine(self):
         e = _make_engine(
-            champion=[0x00100073, 0x00000013], level=3, fitness=150.0,
-            verified=True, generation=42,
+            champion=[0x00100073, 0x00000013],
+            level=3,
+            fitness=150.0,
+            verified=True,
+            generation=42,
         )
         e.generations_stalled = 5
         e._fitness_velocity = 1.23
@@ -745,13 +834,21 @@ class TestChampionAnalysis:
         assert "estimated_complexity" in result
 
     def test_estimated_complexity_simple(self):
-        assert _make_engine(champion=[0x00100073] * 3).get_champion_program_analysis()["estimated_complexity"] == "simple"
+        assert (
+            _make_engine(champion=[0x00100073] * 3).get_champion_program_analysis()["estimated_complexity"] == "simple"
+        )
 
     def test_estimated_complexity_moderate(self):
-        assert _make_engine(champion=[0x00100073] * 10).get_champion_program_analysis()["estimated_complexity"] == "moderate"
+        assert (
+            _make_engine(champion=[0x00100073] * 10).get_champion_program_analysis()["estimated_complexity"]
+            == "moderate"
+        )
 
     def test_estimated_complexity_complex(self):
-        assert _make_engine(champion=[0x00100073] * 20).get_champion_program_analysis()["estimated_complexity"] == "complex"
+        assert (
+            _make_engine(champion=[0x00100073] * 20).get_champion_program_analysis()["estimated_complexity"]
+            == "complex"
+        )
 
     def test_consistent_results(self):
         engine = _make_engine(champion=[0x00100073] * 5)
@@ -770,8 +867,11 @@ class TestRunSummary:
 
     def test_returns_dict_with_keys(self):
         engine = _make_engine(
-            champion=[0x00100073] * 5, level=3, fitness=150.0,
-            verified=True, generation=42,
+            champion=[0x00100073] * 5,
+            level=3,
+            fitness=150.0,
+            verified=True,
+            generation=42,
         )
         summary = engine.get_run_summary()
         assert isinstance(summary, dict)
@@ -800,18 +900,31 @@ class TestPerformanceMetrics:
 
     def test_returns_dict_with_keys(self):
         metrics = _make_engine(
-            champion=[0x00100073] * 5, level=3, fitness=150.0, generation=42,
+            champion=[0x00100073] * 5,
+            level=3,
+            fitness=150.0,
+            generation=42,
         ).get_performance_metrics()
         expected = {
-            "current_generation", "population_size", "elite_ratio", "eval_budget",
-            "mutation_rate", "champion_words", "novelty_weight", "qd_bonus_weight",
-            "total_recurrent_examples", "hof_size",
+            "current_generation",
+            "population_size",
+            "elite_ratio",
+            "eval_budget",
+            "mutation_rate",
+            "champion_words",
+            "novelty_weight",
+            "qd_bonus_weight",
+            "total_recurrent_examples",
+            "hof_size",
         }
         assert expected.issubset(set(metrics.keys()))
 
     def test_correct_values(self):
         metrics = _make_engine(
-            champion=[0x00100073] * 5, level=3, fitness=150.0, generation=42,
+            champion=[0x00100073] * 5,
+            level=3,
+            fitness=150.0,
+            generation=42,
         ).get_performance_metrics()
         assert metrics["current_generation"] == 42
         assert metrics["population_size"] == 50
@@ -834,16 +947,25 @@ class TestTrainingSummary:
     def test_returns_dict_with_keys(self):
         summary = _make_engine(champion=[0x00100073] * 5, level=3, fitness=150.0).get_training_summary()
         expected = {
-            "recurrent_examples", "champion_fitness", "champion_level",
-            "generations_stalled", "fitness_velocity", "champion_verified",
-            "champion_verify_score", "strategy_diversity", "novelty_diversity",
+            "recurrent_examples",
+            "champion_fitness",
+            "champion_level",
+            "generations_stalled",
+            "fitness_velocity",
+            "champion_verified",
+            "champion_verify_score",
+            "strategy_diversity",
+            "novelty_diversity",
             "qd_coverage",
         }
         assert expected.issubset(set(summary.keys()))
 
     def test_correct_values(self):
         summary = _make_engine(
-            champion=[0x00100073] * 5, level=3, fitness=150.0, verified=True,
+            champion=[0x00100073] * 5,
+            level=3,
+            fitness=150.0,
+            verified=True,
         ).get_training_summary()
         assert summary["champion_fitness"] == 150.0
         assert summary["champion_level"] == 3
@@ -878,8 +1000,15 @@ class TestComprehensiveState:
 
     def test_top_level_keys(self):
         state = self._engine().get_comprehensive_state()
-        expected = {"evolution", "champion_program", "run_diagnostics",
-                    "performance", "training", "archives", "champion_summary"}
+        expected = {
+            "evolution",
+            "champion_program",
+            "run_diagnostics",
+            "performance",
+            "training",
+            "archives",
+            "champion_summary",
+        }
         assert expected.issubset(set(state.keys()))
 
     def test_evolution_subdict(self):
@@ -953,7 +1082,10 @@ class TestEvolutionState:
 
     def test_specific_values(self):
         result = _make_engine(
-            champion=[0x00100073] * 10, level=7, fitness=250.5, generation=100,
+            champion=[0x00100073] * 10,
+            level=7,
+            fitness=250.5,
+            generation=100,
         ).get_evolution_state()
         assert result["state"]["champion_level"] == 7
         assert result["state"]["champion_fitness"] == 250.5
@@ -974,8 +1106,13 @@ class TestComprehensiveStateAdditional:
         engine = _make_engine(champion=[0x00100073] * 5, level=3, fitness=150.0, generation=42)
         state = engine.get_comprehensive_state()
         expected_keys = {
-            "evolution", "champion_program", "run_diagnostics",
-            "performance", "training", "archives", "champion_summary",
+            "evolution",
+            "champion_program",
+            "run_diagnostics",
+            "performance",
+            "training",
+            "archives",
+            "champion_summary",
         }
         assert set(state.keys()) == expected_keys
 
@@ -983,8 +1120,7 @@ class TestComprehensiveStateAdditional:
         """Every top-level value is a dict (or string for champion_summary)."""
         engine = _make_engine(champion=[0x00100073] * 5, level=3, fitness=150.0)
         state = engine.get_comprehensive_state()
-        for key in ("evolution", "champion_program", "run_diagnostics",
-                     "performance", "training", "archives"):
+        for key in ("evolution", "champion_program", "run_diagnostics", "performance", "training", "archives"):
             assert isinstance(state[key], dict), f"{key} should be dict"
         assert isinstance(state["champion_summary"], str)
 
@@ -1028,8 +1164,15 @@ class TestSaveStateToFile:
         engine.save_state_to_file(path)
         with open(path) as f:
             data = json.load(f)
-        expected = {"evolution", "champion_program", "run_diagnostics",
-                    "performance", "training", "archives", "champion_summary"}
+        expected = {
+            "evolution",
+            "champion_program",
+            "run_diagnostics",
+            "performance",
+            "training",
+            "archives",
+            "champion_summary",
+        }
         assert expected.issubset(set(data.keys()))
 
     def test_json_is_roundtrippable(self, tmp_path):
@@ -1100,7 +1243,7 @@ class TestChampionProgramAnalysis:
             | ((abs_imm >> 11) & 0x1) << 30
         )
         if sign:
-            b_backward |= (1 << 31)
+            b_backward |= 1 << 31
         program = [b_backward, 0x00100073]
         engine = _make_engine(champion=program)
         result = engine.get_champion_program_analysis()
@@ -1129,8 +1272,7 @@ class TestChampionProgramAnalysis:
     def test_expected_keys_present(self):
         engine = _make_engine(champion=[0x00100073] * 5)
         result = engine.get_champion_program_analysis()
-        expected = {"exists", "word_count", "unique_opcodes", "backward_branches",
-                    "has_ebreak", "estimated_complexity"}
+        expected = {"exists", "word_count", "unique_opcodes", "backward_branches", "has_ebreak", "estimated_complexity"}
         assert expected.issubset(set(result.keys()))
 
 
@@ -1197,32 +1339,41 @@ class TestBackwardBranchesIntegration:
             | ((abs_imm >> 11) & 0x1) << 30
         )
         if sign:
-            word |= (1 << 31)
+            word |= 1 << 31
         return word
 
     def test_realistic_l9_program(self):
         """A realistic L9 program: init loop, body with backward branch, epilogue."""
         from evolution_engine import EvolutionEngine
 
-        nop = 0x00000013   # ADDI x0, x0, 0
+        nop = 0x00000013  # ADDI x0, x0, 0
         ebreak = 0x00100073
 
         # Build a ~20-word program with 3 backward branches
         program = [
-            nop, nop, nop,                     # init prologue
-            self._make_b_type(-4),             # backward branch 1 (loop start)
-            nop, nop, nop, nop,                # loop body
-            self._make_b_type(-12),            # backward branch 2 (inner loop)
-            nop, nop,                          # inner body
-            self._make_b_type(-20),            # backward branch 3 (outer loop)
-            nop, nop, nop, nop, nop,           # cleanup
-            ebreak,                            # exit
+            nop,
+            nop,
+            nop,  # init prologue
+            self._make_b_type(-4),  # backward branch 1 (loop start)
+            nop,
+            nop,
+            nop,
+            nop,  # loop body
+            self._make_b_type(-12),  # backward branch 2 (inner loop)
+            nop,
+            nop,  # inner body
+            self._make_b_type(-20),  # backward branch 3 (outer loop)
+            nop,
+            nop,
+            nop,
+            nop,
+            nop,  # cleanup
+            ebreak,  # exit
         ]
         assert EvolutionEngine._count_backward_branches(program) == 3
 
     def test_l9_program_through_engine_analysis(self):
         """Verify backward branches propagate through champion analysis."""
-        from evolution_engine import EvolutionEngine
 
         nop = 0x00000013
         ebreak = 0x00100073
@@ -1351,8 +1502,12 @@ class TestEvolutionStateConfig:
         """Config sub-dict must contain all 6 expected keys."""
         cfg = self._engine().get_evolution_state()["config"]
         expected_keys = {
-            "max_generations", "population_size", "elite_ratio",
-            "mutation_rate", "auto_curriculum", "use_gpu",
+            "max_generations",
+            "population_size",
+            "elite_ratio",
+            "mutation_rate",
+            "auto_curriculum",
+            "use_gpu",
         }
         assert expected_keys == set(cfg.keys())
 
@@ -1408,8 +1563,11 @@ class TestRunSummaryStructure:
         """get_run_summary must return exactly these 5 keys."""
         summary = self._engine().get_run_summary()
         expected_keys = {
-            "diagnostics", "performance", "training",
-            "archives", "champion_summary",
+            "diagnostics",
+            "performance",
+            "training",
+            "archives",
+            "champion_summary",
         }
         assert set(summary.keys()) == expected_keys
 
@@ -1438,9 +1596,7 @@ class TestRunSummaryStructure:
         assert summary["champion_summary"] == "No champion"
 
     def test_champion_summary_with_champion(self):
-        summary = self._engine(
-            champion=[0x00100073] * 5, level=7, fitness=300.0, verified=True
-        ).get_run_summary()
+        summary = self._engine(champion=[0x00100073] * 5, level=7, fitness=300.0, verified=True).get_run_summary()
         assert "L7" in summary["champion_summary"]
 
     def test_diagnostics_has_champion_level(self):
@@ -1465,6 +1621,7 @@ class TestQDArchiveSummary:
 
     def test_returns_dict_with_expected_keys(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         summary = arch.get_archive_summary()
         assert isinstance(summary, dict)
@@ -1474,6 +1631,7 @@ class TestQDArchiveSummary:
 
     def test_cells_is_dict_from_get_cell_stats(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         summary = arch.get_archive_summary()
         assert isinstance(summary["cells"], dict)
@@ -1484,6 +1642,7 @@ class TestQDArchiveSummary:
 
     def test_fitness_is_dict_from_get_fitness_distribution(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         summary = arch.get_archive_summary()
         assert isinstance(summary["fitness"], dict)
@@ -1494,6 +1653,7 @@ class TestQDArchiveSummary:
 
     def test_rebins_is_integer(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         summary = arch.get_archive_summary()
         assert isinstance(summary["rebins"], int)
@@ -1501,6 +1661,7 @@ class TestQDArchiveSummary:
 
     def test_empty_archive_summary(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         summary = arch.get_archive_summary()
         assert summary["cells"]["occupied"] == 0
@@ -1510,6 +1671,7 @@ class TestQDArchiveSummary:
 
     def test_with_solutions_populated(self):
         from qd_archive import MAPElitesArchive
+
         arch = MAPElitesArchive(bins=10)
         arch.add_solution([0.2, 0.3], fitness=100.0, program=[0x00100073])
         arch.add_solution([0.8, 0.7], fitness=200.0, program=[0x00000013])
@@ -1529,6 +1691,7 @@ class TestTuningHistorySummaryFull:
     @staticmethod
     def _make_controller(tmp_path):
         from meta_controller import MetaController
+
         return MetaController(checkpoint_dir=str(tmp_path))
 
     def test_empty_log_returns_zero(self, tmp_path):
@@ -1538,6 +1701,7 @@ class TestTuningHistorySummaryFull:
 
     def test_single_action_total(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, "stagnation: fitness_plateau"))
         summary = mc.get_tuning_history_summary()
@@ -1545,6 +1709,7 @@ class TestTuningHistorySummaryFull:
 
     def test_multiple_actions_total(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         for i in range(5):
             mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, "stagnation: fitness_plateau"))
@@ -1553,6 +1718,7 @@ class TestTuningHistorySummaryFull:
 
     def test_by_reason_counts_correctly(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, "stagnation: fitness_plateau"))
         mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, "stagnation: fitness_plateau"))
@@ -1563,6 +1729,7 @@ class TestTuningHistorySummaryFull:
 
     def test_by_param_counts_correctly(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, "stagnation: fitness_plateau"))
         mc._tuning_log.append(TuningAction("evolution", "mutation_rate", 0.1, 0.2, "stagnation: level_stalled"))
@@ -1573,14 +1740,18 @@ class TestTuningHistorySummaryFull:
 
     def test_recent_actions_limited_to_ten(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         for i in range(15):
-            mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, f"stagnation: fitness_plateau (tier {i})"))
+            mc._tuning_log.append(
+                TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, f"stagnation: fitness_plateau (tier {i})")
+            )
         summary = mc.get_tuning_history_summary()
         assert len(summary["recent_actions"]) <= 10
 
     def test_recent_actions_are_dicts(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, "stagnation: fitness_plateau"))
         summary = mc.get_tuning_history_summary()
@@ -1598,6 +1769,7 @@ class TestTuningHistorySummaryFull:
 
     def test_total_matches_log_length(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         for i in range(8):
             mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, "stagnation: fitness_plateau"))
@@ -1616,10 +1788,12 @@ class TestTuningHistoryByDomainFull:
     @staticmethod
     def _make_controller(tmp_path):
         from meta_controller import MetaController
+
         return MetaController(checkpoint_dir=str(tmp_path))
 
     def test_domain_counts_retrain_and_evolution(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, "stagnation: fitness_plateau"))
         mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 5e-4, 1e-3, "stagnation: fitness_plateau"))
@@ -1630,15 +1804,19 @@ class TestTuningHistoryByDomainFull:
 
     def test_domain_counts_only_evolution(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         for i in range(4):
-            mc._tuning_log.append(TuningAction("evolution", "mutation_rate", 0.1, 0.2, f"stagnation: fitness_plateau (tier {i})"))
+            mc._tuning_log.append(
+                TuningAction("evolution", "mutation_rate", 0.1, 0.2, f"stagnation: fitness_plateau (tier {i})")
+            )
         report = mc.get_effectiveness_report()
         assert report["domain_counts"]["evolution"] == 4
         assert "retrain" not in report["domain_counts"]
 
     def test_domain_counts_mixed_domains(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         mc._tuning_log.append(TuningAction("retrain", "retrain_lr", 1e-4, 5e-4, "stagnation: fitness_plateau"))
         mc._tuning_log.append(TuningAction("evolution", "mutation_rate", 0.1, 0.2, "stagnation: level_stalled"))
@@ -1655,6 +1833,7 @@ class TestTuningHistoryByDomainFull:
 
     def test_total_tuning_actions_matches(self, tmp_path):
         from meta_controller import TuningAction
+
         mc = self._make_controller(tmp_path)
         for i in range(5):
             domain = "retrain" if i % 2 == 0 else "evolution"
@@ -1771,12 +1950,14 @@ class TestChampionHistoryEmptyMock:
 
     def test_returns_empty_list_when_none(self):
         from evolution_engine import EvolutionEngine
+
         engine = EvolutionEngine.__new__(EvolutionEngine)
         engine._champion_replacement_history = None
         assert engine.get_champion_history() == []
 
     def test_returns_empty_list_when_attr_missing(self):
         from evolution_engine import EvolutionEngine
+
         engine = EvolutionEngine.__new__(EvolutionEngine)
         if hasattr(engine, "_champion_replacement_history"):
             delattr(engine, "_champion_replacement_history")

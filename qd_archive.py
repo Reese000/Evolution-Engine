@@ -74,6 +74,10 @@ class MAPElitesArchive:
         # Per-cell program history: maps cell index -> list of program hashes.
         # Tracks every program that has occupied each cell for diversity analysis.
         self._cell_program_history: dict[int, list[int]] = {}
+        self._illum_cache_key: int | None = None
+        self._illum_cache: dict[str, Any] | None = None
+        self._freshness_cache_key: tuple | None = None
+        self._freshness_cache: dict[str, Any] | None = None
 
         # Illumination diversity history: list of snapshots taken at each
         # record_illumination_snapshot() call.  Each entry is a dict with
@@ -123,6 +127,70 @@ class MAPElitesArchive:
     # Public API
     # ------------------------------------------------------------------
 
+    def _insert_empty_cell(
+        self,
+        idx: int,
+        fitness: float,
+        program: list[int],
+        trace: dict[str, Any] | None,
+        descriptor: list[float],
+        prog_hash: int,
+    ) -> None:
+        """Insert a solution into an empty cell."""
+        self._grid[idx] = {
+            "fitness": fitness,
+            "program": list(program),
+            "trace": trace,
+            "descriptor": list(descriptor),
+        }
+        self._occupied += 1
+        self._addition_counter += 1
+        self._cell_addition_counts[idx] = self._addition_counter
+        self._cell_last_updated[idx] = self._addition_counter
+        self._cell_program_history.setdefault(idx, []).append(prog_hash)
+
+    def _compute_replacement_score(self, idx: int) -> tuple[float, float]:
+        """Compute effective incumbent fitness and minimum improvement margin.
+
+        Returns (effective_incumbent, min_margin).
+        """
+        cell_age = max(0, self._addition_counter - self._cell_last_updated[idx])
+        staleness_score = 1.0 - math.exp(-cell_age / 300.0)
+        coverage = self._occupied / max(1, self.bins * self.bins)
+        staleness_weight = 0.15 + 0.30 * coverage
+        freshness_factor = 1.0 - staleness_weight * staleness_score
+        history = self._cell_program_history.get(idx, [])
+        diversity_ratio = 0.0
+        if len(history) > 1:
+            unique_count = len(set(history))
+            diversity_ratio = unique_count / len(history)
+        diversity_discount = 0.05 * diversity_ratio
+        effective_incumbent = self._grid[idx]["fitness"] * freshness_factor * (1.0 - diversity_discount)
+        min_margin = 0.03 * (1.0 - staleness_score)
+        return effective_incumbent, min_margin
+
+    def _replace_cell(
+        self,
+        idx: int,
+        fitness: float,
+        program: list[int],
+        trace: dict[str, Any] | None,
+        descriptor: list[float],
+        prog_hash: int,
+    ) -> None:
+        """Replace an occupied cell with a better solution."""
+        self._grid[idx] = {
+            "fitness": fitness,
+            "program": list(program),
+            "trace": trace,
+            "descriptor": list(descriptor),
+        }
+        self._rebins += 1
+        self._addition_counter += 1
+        self._cell_addition_counts[idx] = self._addition_counter
+        self._cell_last_updated[idx] = self._addition_counter
+        self._cell_program_history.setdefault(idx, []).append(prog_hash)
+
     def add_solution(
         self,
         descriptor: list[float],
@@ -167,71 +235,15 @@ class MAPElitesArchive:
         existing = self._grid[idx]
         if existing is None:
             # Empty cell — always insert.
-            self._grid[idx] = {
-                "fitness": fitness,
-                "program": list(program),
-                "trace": trace,
-                "descriptor": list(descriptor),
-            }
-            self._occupied += 1
-            self._addition_counter += 1
-            self._cell_addition_counts[idx] = self._addition_counter
-            self._cell_last_updated[idx] = self._addition_counter
-            self._cell_program_history.setdefault(idx, []).append(prog_hash)
+            self._insert_empty_cell(idx, fitness, program, trace, descriptor, prog_hash)
             return True
 
-        # ------------------------------------------------------------------
         # Cell occupied — composite fitness + freshness replacement strategy
-        # ------------------------------------------------------------------
+        effective_incumbent, min_margin = self._compute_replacement_score(idx)
 
-        # (1) Staleness of the incumbent cell.
-        #     Exponential decay: ~63 % stale after 300 archive-wide updates,
-        #     ~95 % stale after 1 000.  Gentler than the old 0.005 rate so
-        #     that moderately-old cells still retain some protection.
-        cell_age = max(0, self._addition_counter - self._cell_last_updated[idx])
-        staleness_score = 1.0 - math.exp(-cell_age / 300.0)
-
-        # (2) Coverage-adaptive staleness weight.
-        #     Low coverage  → keep what we have (max 15 % discount).
-        #     High coverage → prioritise freshness (max 45 % discount).
-        coverage = self._occupied / max(1, self.bins * self.bins)
-        staleness_weight = 0.15 + 0.30 * coverage  # range: [0.15, 0.45]
-
-        # (3) Effective incumbent fitness: stale cells have a reduced
-        #     effective fitness, making them easier to replace.
-        freshness_factor = 1.0 - staleness_weight * staleness_score
-
-        # (4) Diversity-aware adjustment: cells with many unique programs
-        #     have already contributed to the archive's diversity, so they
-        #     carry a slight replaceability bonus (up to 5 %).
-        history = self._cell_program_history.get(idx, [])
-        diversity_ratio = 0.0
-        if len(history) > 1:
-            unique_count = len(set(history))
-            diversity_ratio = unique_count / len(history)
-        diversity_discount = 0.05 * diversity_ratio  # max 5 %
-
-        effective_incumbent = existing["fitness"] * freshness_factor * (1.0 - diversity_discount)
-
-        # (5) Minimum improvement margin: fresh cells demand a meaningful
-        #     improvement to displace the incumbent; stale cells can be
-        #     replaced by marginal gains.  This prevents rapid churn in
-        #     recently-populated cells.
-        min_margin = 0.03 * (1.0 - staleness_score)  # 3 % for fresh → 0 % for stale
-
-        # (6) Replacement decision.
+        # Replacement decision.
         if fitness > effective_incumbent * (1.0 + min_margin):
-            self._grid[idx] = {
-                "fitness": fitness,
-                "program": list(program),
-                "trace": trace,
-                "descriptor": list(descriptor),
-            }
-            self._rebins += 1
-            self._addition_counter += 1
-            self._cell_addition_counts[idx] = self._addition_counter
-            self._cell_last_updated[idx] = self._addition_counter
-            self._cell_program_history.setdefault(idx, []).append(prog_hash)
+            self._replace_cell(idx, fitness, program, trace, descriptor, prog_hash)
             return True
 
         return False
@@ -258,7 +270,7 @@ class MAPElitesArchive:
         row, col = divmod(idx, self.bins)
         occupied_neighbours = 0
         total_neighbours = 0
-        min_dist = float("inf")
+        float("inf")
 
         for dr in range(-1, 2):
             for dc in range(-1, 2):
@@ -287,15 +299,19 @@ class MAPElitesArchive:
 
         # Freshness modulation: stale cells get a bonus, fresh cells get reduced
         try:
-            if hasattr(self, '_cell_last_updated') and hasattr(self, '_addition_counter'):
-                cell_age = max(0, self._addition_counter - self._cell_last_updated[idx]) if self._cell_last_updated[idx] > 0 else 100
+            if hasattr(self, "_cell_last_updated") and hasattr(self, "_addition_counter"):
+                cell_age = (
+                    max(0, self._addition_counter - self._cell_last_updated[idx])
+                    if self._cell_last_updated[idx] > 0
+                    else 100
+                )
                 # Stale cells (>50 updates ago) get up to 20% boost
                 # Fresh cells (last 10 updates) get up to 10% reduction
                 if cell_age > 50:
                     base_bias *= 1.0 + min(0.2, cell_age / 500.0)
                 elif cell_age < 10:
                     base_bias *= max(0.8, 1.0 - (10 - cell_age) * 0.02)
-        except Exception:
+        except (KeyError, TypeError):  # Intentional: QD archive lookup may fail; fallback to base bias
             pass
         return max(0.1, min(1.0, base_bias))
 
@@ -318,6 +334,13 @@ class MAPElitesArchive:
     def size(self) -> int:
         """Number of occupied cells."""
         return self._occupied
+
+    def cell_is_empty(self, descriptor: list[float]) -> bool:
+        """True when the descriptor maps to a valid unoccupied cell."""
+        idx = self._cell_index(descriptor)
+        if idx is None:
+            return False
+        return self._grid[idx] is None
 
     # ------------------------------------------------------------------
     # Diagnostics / introspection
@@ -454,6 +477,10 @@ class MAPElitesArchive:
         Freshness = 1.0 for recently updated cells, decaying to 0.0 for old cells.
         Uses the same exponential decay as novelty decayed_novelty.
         """
+        cache_key = (self._addition_counter, int(current_generation))
+        cached = getattr(self, "_freshness_cache", None)
+        if cached is not None and getattr(self, "_freshness_cache_key", None) == cache_key:
+            return cached
         freshness_grid = [0.0] * (self.bins * self.bins)
         occupied = 0
         total_freshness = 0.0
@@ -466,11 +493,14 @@ class MAPElitesArchive:
                 freshness_grid[idx] = freshness
                 total_freshness += freshness
         avg_freshness = total_freshness / max(occupied, 1)
-        return {
-            'freshness_grid': freshness_grid,
-            'avg_freshness': avg_freshness,
-            'occupied_cells': occupied,
+        result = {
+            "freshness_grid": freshness_grid,
+            "avg_freshness": avg_freshness,
+            "occupied_cells": occupied,
         }
+        self._freshness_cache = result
+        self._freshness_cache_key = cache_key
+        return result
 
     def get_cell_program_diversity(self, cell_idx: int) -> dict[str, Any]:
         """Return the program diversity score for a specific cell.
@@ -597,6 +627,107 @@ class MAPElitesArchive:
             "velocity_stddev": velocity_stddev,
         }
 
+    def _compute_centroid_distance(self, occupied_count: int) -> float:
+        """Compute average Euclidean distance from grid center."""
+        if occupied_count == 0:
+            return 0.0
+        centroid_row = (self.bins - 1) / 2.0
+        centroid_col = (self.bins - 1) / 2.0
+        total_dist = 0.0
+        for idx, cell in enumerate(self._grid):
+            if cell is not None:
+                row, col = divmod(idx, self.bins)
+                dist = math.sqrt((row - centroid_row) ** 2 + (col - centroid_col) ** 2)
+                total_dist += dist
+        return total_dist / occupied_count
+
+    def _compute_neighborhood_densities(self) -> tuple[list[float], list[float]]:
+        """Compute standard and quality-weighted neighborhood densities."""
+        fitness_lookup: list[float] = [0.0] * (self.bins * self.bins)
+        for idx, cell in enumerate(self._grid):
+            if cell is not None:
+                fitness_lookup[idx] = cell["fitness"]
+        densities: list[float] = []
+        qw_densities: list[float] = []
+        for idx, cell in enumerate(self._grid):
+            if cell is not None:
+                row, col = divmod(idx, self.bins)
+                occ = 0
+                tot = 0
+                weighted_sum = 0.0
+                for dr in range(-1, 2):
+                    for dc in range(-1, 2):
+                        nr, nc = row + dr, col + dc
+                        if 0 <= nr < self.bins and 0 <= nc < self.bins:
+                            n_idx = nr * self.bins + nc
+                            tot += 1
+                            if self._grid[n_idx] is not None:
+                                occ += 1
+                                weighted_sum += fitness_lookup[n_idx]
+                density = occ / tot if tot > 0 else 0.0
+                densities.append(density)
+                qw_densities.append(weighted_sum / tot if occ > 0 else 0.0)
+        return densities, qw_densities
+
+    def _compute_uniformity(self, densities: list[float]) -> float:
+        """Compute uniformity from neighborhood densities."""
+        if not densities:
+            return 0.0
+        mean_density = sum(densities) / len(densities)
+        if mean_density > 0:
+            density_variance = sum((d - mean_density) ** 2 for d in densities) / len(densities)
+            density_stddev = density_variance**0.5
+            uniformity = 1.0 - (density_stddev / mean_density)
+        else:
+            uniformity = 0.0
+        return max(0.0, min(1.0, uniformity))
+
+    def _compute_quality_weighted_uniformity(self, qw_densities: list[float]) -> float:
+        """Compute quality-weighted uniformity from fitness-weighted densities."""
+        if not qw_densities:
+            return 0.0
+        mean_qw = sum(qw_densities) / len(qw_densities)
+        if mean_qw > 0:
+            qw_variance = sum((d - mean_qw) ** 2 for d in qw_densities) / len(qw_densities)
+            qw_stddev = qw_variance**0.5
+            quality_weighted_uniformity = 1.0 - (qw_stddev / mean_qw)
+        else:
+            quality_weighted_uniformity = 0.0
+        return max(0.0, min(1.0, quality_weighted_uniformity))
+
+    def _compute_quality_weighted_shannon_entropy(self) -> float:
+        """Compute quality-weighted Shannon entropy over occupied bins."""
+        occupied_fitnesses: list[float] = []
+        for idx, cell in enumerate(self._grid):
+            if cell is not None:
+                occupied_fitnesses.append(cell["fitness"])
+        if not occupied_fitnesses:
+            return 0.0
+        total_fitness = sum(occupied_fitnesses)
+        if total_fitness <= 0:
+            return 0.0
+        qw_probs = [f / total_fitness for f in occupied_fitnesses]
+        qw_entropy = 0.0
+        for p in qw_probs:
+            if p > 0:
+                qw_entropy -= p * math.log2(p)
+        n_occupied = len(occupied_fitnesses)
+        max_qw_entropy = math.log2(n_occupied) if n_occupied > 1 else 0.0
+        return qw_entropy / max_qw_entropy if max_qw_entropy > 0 else 0.0
+
+    def _compute_empty_diversity(self) -> dict[str, Any]:
+        """Return default diversity dict for empty archive."""
+        return {
+            "coverage_ratio": 0.0,
+            "centroid_distance": 0.0,
+            "uniformity": 0.0,
+            "overall_diversity_score": 0.0,
+            "quality_weighted_uniformity": 0.0,
+            "quality_weighted_diversity": 0.0,
+            "quality_weighted_shannon_entropy": 0.0,
+            "quality_weighted_illumination_diversity": 0.0,
+        }
+
     def get_illumination_diversity(self) -> dict[str, Any]:
         """Measure behavioral space coverage quality beyond simple occupancy.
 
@@ -630,146 +761,25 @@ class MAPElitesArchive:
         quality_weighted_diversity, quality_weighted_shannon_entropy, and
         quality_weighted_illumination_diversity.
         """
+        key = self._addition_counter
+        cached = getattr(self, "_illum_cache", None)
+        if cached is not None and getattr(self, "_illum_cache_key", None) == key:
+            return cached
         total = self.bins * self.bins
         if total == 0:
-            return {
-                "coverage_ratio": 0.0,
-                "centroid_distance": 0.0,
-                "uniformity": 0.0,
-                "overall_diversity_score": 0.0,
-                "quality_weighted_uniformity": 0.0,
-                "quality_weighted_diversity": 0.0,
-                "quality_weighted_shannon_entropy": 0.0,
-                "quality_weighted_illumination_diversity": 0.0,
-            }
+            return self._compute_empty_diversity()
 
         occupied_count = self._occupied
         coverage_ratio = occupied_count / total
-
-        # (b) Centroid distance: average Euclidean distance from grid center.
-        centroid_distance = 0.0
-        if occupied_count > 0:
-            centroid_row = (self.bins - 1) / 2.0
-            centroid_col = (self.bins - 1) / 2.0
-            total_dist = 0.0
-            for idx, cell in enumerate(self._grid):
-                if cell is not None:
-                    row, col = divmod(idx, self.bins)
-                    dist = math.sqrt((row - centroid_row) ** 2 + (col - centroid_col) ** 2)
-                    total_dist += dist
-            centroid_distance = total_dist / occupied_count
-
-        # (c) Uniformity: coefficient of variation of neighborhood densities.
-        #     Also compute quality-weighted density for each cell — the local
-        #     density is scaled by the fitness of the cell's occupant so that
-        #     high-quality bins contribute more strongly to uniformity.
-        densities: list[float] = []
-        quality_weighted_densities: list[float] = []
-
-        # Precompute per-cell fitness lookup for quality weighting.
-        fitness_lookup: list[float] = [0.0] * total
-        for idx, cell in enumerate(self._grid):
-            if cell is not None:
-                fitness_lookup[idx] = cell["fitness"]
-
-        for idx, cell in enumerate(self._grid):
-            if cell is not None:
-                row, col = divmod(idx, self.bins)
-                occ = 0
-                tot = 0
-                weighted_sum = 0.0
-                for dr in range(-1, 2):
-                    for dc in range(-1, 2):
-                        nr, nc = row + dr, col + dc
-                        if 0 <= nr < self.bins and 0 <= nc < self.bins:
-                            n_idx = nr * self.bins + nc
-                            tot += 1
-                            if self._grid[n_idx] is not None:
-                                occ += 1
-                                weighted_sum += fitness_lookup[n_idx]
-                density = occ / tot if tot > 0 else 0.0
-                densities.append(density)
-                # Quality-weighted density: weight each occupied neighbour's
-                # contribution by its fitness.  We normalise by the total
-                # fitness of all neighbours (occupied or not) so the result
-                # is comparable across cells with different fitness scales.
-                if occ > 0:
-                    qw_density = weighted_sum / tot
-                else:
-                    qw_density = 0.0
-                quality_weighted_densities.append(qw_density)
-
-        if densities:
-            mean_density = sum(densities) / len(densities)
-            if mean_density > 0:
-                density_variance = sum((d - mean_density) ** 2 for d in densities) / len(densities)
-                density_stddev = density_variance**0.5
-                uniformity = 1.0 - (density_stddev / mean_density)
-            else:
-                uniformity = 0.0
-        else:
-            uniformity = 0.0
-
-        uniformity = max(0.0, min(1.0, uniformity))
+        centroid_distance = self._compute_centroid_distance(occupied_count)
+        densities, qw_densities = self._compute_neighborhood_densities()
+        uniformity = self._compute_uniformity(densities)
         overall_diversity_score = coverage_ratio * uniformity
-
-        # (d) Quality-weighted uniformity: coefficient of variation of the
-        #     fitness-weighted neighborhood densities.  Bins occupied by
-        #     high-fitness programs produce higher weighted-density values,
-        #     shifting the uniformity measurement to favour quality-aware
-        #     spatial distribution.  The coefficient of variation is
-        #     normalised similarly to the unweighted uniformity so that a
-        #     perfectly even quality-weighted distribution yields 1.0.
-        quality_weighted_uniformity = 0.0
-        if quality_weighted_densities:
-            mean_qw = sum(quality_weighted_densities) / len(quality_weighted_densities)
-            if mean_qw > 0:
-                qw_variance = sum(
-                    (d - mean_qw) ** 2 for d in quality_weighted_densities
-                ) / len(quality_weighted_densities)
-                qw_stddev = qw_variance**0.5
-                quality_weighted_uniformity = 1.0 - (qw_stddev / mean_qw)
-            else:
-                quality_weighted_uniformity = 0.0
-        quality_weighted_uniformity = max(0.0, min(1.0, quality_weighted_uniformity))
-
-        # (e) Quality-weighted overall diversity: combines coverage with the
-        #     quality-aware uniformity metric so that high-fitness regions
-        #     of behaviour space contribute more to the overall score.
+        quality_weighted_uniformity = self._compute_quality_weighted_uniformity(qw_densities)
         quality_weighted_diversity = coverage_ratio * quality_weighted_uniformity
-
-        # (f) Quality-weighted Shannon entropy: weight each occupied bin's
-        #     contribution to the probability distribution by its fitness,
-        #     so high-quality bins dominate the entropy calculation.
-        #     P(cell_i) = fitness_i / sum(fitness_j) for all occupied j.
-        #     Then H = -sum(P * log2(P)), normalised by log2(N_occupied)
-        #     so the result is in [0.0, 1.0].
-        quality_weighted_shannon_entropy = 0.0
-        occupied_fitnesses: list[float] = []
-        for idx, cell in enumerate(self._grid):
-            if cell is not None:
-                occupied_fitnesses.append(cell["fitness"])
-
-        if occupied_fitnesses:
-            total_fitness = sum(occupied_fitnesses)
-            if total_fitness > 0:
-                qw_probs = [f / total_fitness for f in occupied_fitnesses]
-                qw_entropy = 0.0
-                for p in qw_probs:
-                    if p > 0:
-                        qw_entropy -= p * math.log2(p)
-                # Normalise by maximum possible entropy (uniform distribution)
-                n_occupied = len(occupied_fitnesses)
-                max_qw_entropy = math.log2(n_occupied) if n_occupied > 1 else 0.0
-                quality_weighted_shannon_entropy = (
-                    qw_entropy / max_qw_entropy if max_qw_entropy > 0 else 0.0
-                )
-
-        quality_weighted_illumination_diversity = (
-            coverage_ratio * quality_weighted_shannon_entropy
-        )
-
-        return {
+        quality_weighted_shannon_entropy = self._compute_quality_weighted_shannon_entropy()
+        quality_weighted_illumination_diversity = coverage_ratio * quality_weighted_shannon_entropy
+        result = {
             "coverage_ratio": coverage_ratio,
             "centroid_distance": centroid_distance,
             "uniformity": uniformity,
@@ -779,6 +789,9 @@ class MAPElitesArchive:
             "quality_weighted_shannon_entropy": quality_weighted_shannon_entropy,
             "quality_weighted_illumination_diversity": quality_weighted_illumination_diversity,
         }
+        self._illum_cache = result
+        self._illum_cache_key = key
+        return result
 
     def record_illumination_snapshot(self) -> dict[str, Any]:
         """Record the current illumination diversity as a history snapshot.
@@ -806,9 +819,7 @@ class MAPElitesArchive:
         self._illumination_history.append(entry)
         # Enforce history cap — drop oldest entries first.
         if len(self._illumination_history) > self._MAX_ILLUMINATION_HISTORY:
-            self._illumination_history = self._illumination_history[
-                -self._MAX_ILLUMINATION_HISTORY:
-            ]
+            self._illumination_history = self._illumination_history[-self._MAX_ILLUMINATION_HISTORY :]
         return entry
 
     def get_illumination_history(self) -> list[dict[str, Any]]:
@@ -911,8 +922,8 @@ class MAPElitesArchive:
             archive._cell_addition_counts = list(saved_counts)
         else:
             archive._cell_addition_counts = [0] * (archive.bins * archive.bins)
-        if 'cell_last_updated' in data:
-            archive._cell_last_updated = data['cell_last_updated']
+        if "cell_last_updated" in data:
+            archive._cell_last_updated = data["cell_last_updated"]
         else:
             archive._cell_last_updated = [0] * (archive.bins * archive.bins)
         # Restore per-cell program history (stored as str keys for JSON compat).

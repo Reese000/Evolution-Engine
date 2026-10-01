@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -107,13 +106,13 @@ def _make_mock_runner(
         "total_errors": 0,
         "consecutive_errors": 0,
         "error_types": {},
-        "start_timestamp": datetime.now().isoformat(),
+        "start_timestamp": datetime.now(timezone.utc).isoformat(),
     }
     runner._config = config or {
         "evolution": {"population_size": 50},
     }
     runner._health = MagicMock()
-    runner._health._start_time = datetime.now().timestamp()
+    runner._health._start_time = datetime.now(timezone.utc).timestamp()
 
     # MetricsCollector mock
     runner._metrics = MagicMock()

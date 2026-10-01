@@ -43,7 +43,7 @@ import hashlib
 import json
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 SCHEMA_VERSION = 2
@@ -98,7 +98,7 @@ def default_cycle_state() -> dict[str, Any]:
         "consecutive_errors": 0,
         "total_errors": 0,
         "last_cycle_timestamp": "",
-        "start_timestamp": datetime.now().isoformat(),
+        "start_timestamp": datetime.now(timezone.utc).isoformat(),
         "cycles_completed": 0,
         "stop_reason": None,
         "population_size": 50,
@@ -126,7 +126,7 @@ class CycleState:
         Uses temp file + rename to prevent corruption if the process
         crashes mid-write.  Returns True on success.
         """
-        self.data["last_cycle_timestamp"] = datetime.now().isoformat()
+        self.data["last_cycle_timestamp"] = datetime.now(timezone.utc).isoformat()
         self.data["checksum"] = _compute_checksum(self.data)
         try:
             dir_name = os.path.dirname(self.path) or "."
@@ -203,7 +203,7 @@ class CycleState:
 
     def reset(self) -> None:
         """Reset to fresh defaults (preserves start_timestamp)."""
-        start = self.data.get("start_timestamp", datetime.now().isoformat())
+        start = self.data.get("start_timestamp", datetime.now(timezone.utc).isoformat())
         self.data = default_cycle_state()
         self.data["start_timestamp"] = start
 

@@ -6,11 +6,6 @@ APIs return expected shapes.  No actual evolution is run.
 """
 from __future__ import annotations
 
-import os
-import sys
-
-import pytest
-
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
@@ -20,6 +15,7 @@ from tests.conftest import make_engine
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TestEngineHealth
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestEngineHealth:
     """Verify EvolutionEngine can be instantiated and exposes expected API."""
@@ -97,6 +93,7 @@ class TestEngineHealth:
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. TestConfigHealth
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestConfigHealth:
     """Verify EvolutionConfig / EvolutionSection default construction."""

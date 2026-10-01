@@ -12,7 +12,6 @@ All tests are read-only and finish quickly.
 from __future__ import annotations
 
 import ast
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -27,11 +26,25 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 def _discover_source_files() -> list[Path]:
     """Return top-level .py source files (non-test, non-archive)."""
     skip_dirs = {
-        "tests", "archive", "champions", "cycle_data",
-        "milestone0", "milestone1", "milestone2", "milestone3",
-        "milestone4", "milestone5", "milestone6", "milestone7",
-        "simulation", "benchmarks", "metrics", "logs",
-        "__pycache__", ".git", "config",
+        "tests",
+        "archive",
+        "champions",
+        "cycle_data",
+        "milestone0",
+        "milestone1",
+        "milestone2",
+        "milestone3",
+        "milestone4",
+        "milestone5",
+        "milestone6",
+        "milestone7",
+        "simulation",
+        "benchmarks",
+        "metrics",
+        "logs",
+        "__pycache__",
+        ".git",
+        "config",
     }
     files: list[Path] = []
     for child in sorted(ROOT.iterdir()):
@@ -50,8 +63,11 @@ def _get_recently_modified_files() -> list[Path]:
     try:
         result = subprocess.run(
             ["git", "diff", "--name-only", "HEAD~5", "HEAD"],
-            capture_output=True, text=True, cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            cwd=str(ROOT),
             timeout=10,
+            check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             modified = set()
@@ -80,6 +96,7 @@ _COMPLEXITY_SKIP = {"run_multi_cycle.py"}
 # 1. TestNoBareExceptClauses
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestNoBareExceptClauses:
     """Verify no bare ``except:`` clauses in source files."""
 
@@ -102,9 +119,8 @@ class TestNoBareExceptClauses:
 
         content = src_file.read_text(encoding="utf-8", errors="replace")
         matches = self._BARE_EXCEPT_RE.findall(content)
-        assert not matches, (
-            f"{src_file.name}: found {len(matches)} bare except clause(s).\n"
-            + "\n".join(f"  • {m.strip()}" for m in matches)
+        assert not matches, f"{src_file.name}: found {len(matches)} bare except clause(s).\n" + "\n".join(
+            f"  • {m.strip()}" for m in matches
         )
 
 
@@ -138,15 +154,13 @@ class TestNoHardcodedSecrets:
             for m in pat.finditer(content):
                 line_no = content[: m.start()].count("\n") + 1
                 violations.append(f"  line {line_no}: {m.group().strip()}")
-        assert not violations, (
-            f"{src_file.name}: possible hardcoded secrets found:\n"
-            + "\n".join(violations)
-        )
+        assert not violations, f"{src_file.name}: possible hardcoded secrets found:\n" + "\n".join(violations)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 3. TestConsistentErrorHandling
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestConsistentErrorHandling:
     """Verify specific exceptions are caught and dict-returning methods are consistent."""
@@ -171,9 +185,8 @@ class TestConsistentErrorHandling:
             if isinstance(node, ast.ExceptHandler) and node.type is None:
                 violations.append(f"  line {node.lineno}: bare except in function/method body")
 
-        assert not violations, (
-            f"{src_file.name}: bare except found in {len(violations)} location(s):\n"
-            + "\n".join(violations)
+        assert not violations, f"{src_file.name}: bare except found in {len(violations)} location(s):\n" + "\n".join(
+            violations
         )
 
     @pytest.mark.parametrize(
@@ -224,10 +237,7 @@ class TestConsistentErrorHandling:
                             f"annotation but returns None explicitly"
                         )
 
-        assert not violations, (
-            f"{src_file.name}: dict-annotated methods with None return:\n"
-            + "\n".join(violations)
-        )
+        assert not violations, f"{src_file.name}: dict-annotated methods with None return:\n" + "\n".join(violations)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -324,13 +334,12 @@ class TestMethodComplexity:
                 continue
             line_count = _method_body_lines(source_lines, node)
             if line_count > _MAX_METHOD_LINES:
-                violations.append(
-                    f"  {node.name}(): {line_count} lines (limit {_MAX_METHOD_LINES})"
-                )
+                violations.append(f"  {node.name}(): {line_count} lines (limit {_MAX_METHOD_LINES})")
 
-        assert not violations, (
-            f"{src_file.name}: {len(violations)} method(s) exceed {_MAX_METHOD_LINES}-line limit:\n"
-            + "\n".join(violations)
+        assert (
+            not violations
+        ), f"{src_file.name}: {len(violations)} method(s) exceed {_MAX_METHOD_LINES}-line limit:\n" + "\n".join(
+            violations
         )
 
     @pytest.mark.parametrize(
@@ -362,11 +371,8 @@ class TestMethodComplexity:
                 continue
             line_count = _method_body_lines(source_lines, node)
             if line_count > 100:
-                violations.append(
-                    f"  {node.name}(): {line_count} lines (absolute ceiling: 100)"
-                )
+                violations.append(f"  {node.name}(): {line_count} lines (absolute ceiling: 100)")
 
-        assert not violations, (
-            f"{src_file.name}: {len(violations)} method(s) exceed 100-line ceiling:\n"
-            + "\n".join(violations)
+        assert not violations, f"{src_file.name}: {len(violations)} method(s) exceed 100-line ceiling:\n" + "\n".join(
+            violations
         )

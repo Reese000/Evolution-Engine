@@ -9,9 +9,8 @@ Three test classes verifying:
 from __future__ import annotations
 
 import importlib
-import inspect
 import os
-import textwrap
+from typing import ClassVar
 
 import pytest
 
@@ -31,6 +30,7 @@ _PIPELINE_METHOD_FILES: dict[str, str] = {
     "send_monoculture_alert": "monitoring_alerts.py",
     "send_recovery_stuck_alert": "monitoring_alerts.py",
     "get_plateau_analysis": "evolution/mutation_helpers.py",
+    "manage_capacity": "evolution/qd_archive_mixin.py",
 }
 
 
@@ -42,7 +42,7 @@ _PIPELINE_METHOD_FILES: dict[str, str] = {
 class TestAllModulesImportable:
     """Verify all 12 enhanced modules import without errors."""
 
-    MODULES = [
+    MODULES: ClassVar[list[str]] = [
         "meta_controller",
         "strategy_archive",
         "champion_archive",
@@ -88,7 +88,7 @@ class TestAllNewMethodsCallable:
     """
 
     # -- strategy_archive.py : StrategyArchive class — 6 methods -----------
-    SA_METHODS = [
+    SA_METHODS: ClassVar[list[str]] = [
         "adaptive_exploration_bonus",
         "get_strategy_diversity",
         "get_dominance_report",
@@ -98,7 +98,7 @@ class TestAllNewMethodsCallable:
     ]
 
     # -- champion_archive.py : ChampionArchive class — 6 methods ------------
-    CA_METHODS = [
+    CA_METHODS: ClassVar[list[str]] = [
         "quality_weighted_prune",
         "get_diversity_report",
         "get_quality_distribution",
@@ -108,7 +108,7 @@ class TestAllNewMethodsCallable:
     ]
 
     # -- novelty.py : SparseArchive class — 5 methods -----------------------
-    NOV_METHODS = [
+    NOV_METHODS: ClassVar[list[str]] = [
         "manage_capacity",
         "decayed_novelty",
         "adaptive_threshold",
@@ -117,7 +117,7 @@ class TestAllNewMethodsCallable:
     ]
 
     # -- qd_archive.py : MAPElitesArchive class — 4 methods ----------------
-    QD_METHODS = [
+    QD_METHODS: ClassVar[list[str]] = [
         "get_improvement_velocity",
         "get_illumination_diversity",
         "selection_bias",
@@ -125,24 +125,24 @@ class TestAllNewMethodsCallable:
     ]
 
     # -- mutation_proposer.py : DirectedMutator class — 2 static methods ----
-    MP_METHODS = [
+    MP_METHODS: ClassVar[list[str]] = [
         "record_mutation_outcome",
         "get_mutation_stats",
     ]
 
     # -- monitoring_alerts.py : AlertManager class — 2 methods --------------
-    MON_METHODS = [
+    MON_METHODS: ClassVar[list[str]] = [
         "send_monoculture_alert",
         "send_recovery_stuck_alert",
     ]
 
     # -- progression_tracker.py : ProgressionTracker class — 1 method -------
-    PT_METHODS = [
+    PT_METHODS: ClassVar[list[str]] = [
         "get_plateau_analysis",
     ]
 
     # Aggregate map: class_or_module_path -> (import_path, class_name, methods)
-    METHOD_MAP = [
+    METHOD_MAP: ClassVar[list[tuple]] = [
         ("strategy_archive", "StrategyArchive", SA_METHODS),
         ("champion_archive", "ChampionArchive", CA_METHODS),
         ("novelty", "SparseArchive", NOV_METHODS),
@@ -203,7 +203,7 @@ class TestAllNewMethodsCallable:
 class TestPipelineWiringVerified:
     """Verify evolution_engine.py source contains all 13 wiring references."""
 
-    WIRING_REFS = [
+    WIRING_REFS: ClassVar[list[str]] = [
         "adaptive_exploration_bonus",
         "manage_capacity",
         "get_cross_cycle_trends",
@@ -219,8 +219,9 @@ class TestPipelineWiringVerified:
         "get_plateau_analysis",
     ]
 
+    @staticmethod
     @pytest.fixture(scope="class")
-    def evolution_source(self) -> str:
+    def evolution_source() -> str:
         """Read evolution_engine.py source once per class."""
         src_path = os.path.join(PROJECT_ROOT, "evolution_engine.py")
         assert os.path.isfile(src_path), f"Missing {src_path}"

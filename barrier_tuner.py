@@ -35,6 +35,7 @@ class CycleMetrics:
     fitness: float
     level: int
     champion_words: int = 0
+    verify_score: float = 0.0
     diversity: float = 0.3
     qd_occupied: int = 0
     qd_total: int = 100
@@ -148,6 +149,7 @@ class BarrierTuner:
                     "fitness": m.fitness,
                     "level": m.level,
                     "champion_words": m.champion_words,
+                    "verify_score": m.verify_score,
                     "diversity": m.diversity,
                     "qd_occupied": m.qd_occupied,
                     "qd_total": m.qd_total,
@@ -175,6 +177,75 @@ class BarrierTuner:
                 pass
             raise
 
+    def _detect_level_stall(self, metrics: CycleMetrics) -> tuple[BarrierType, int, float]:
+        """Detect level stall from history."""
+        barrier = BarrierType.NORMAL
+        consecutive = 0
+        severity = 0.0
+        if len(self.history) >= 2:
+            prev = self.history[-2]
+            if metrics.level > prev.level:
+                self.level_stall_cycles = 0
+            else:
+                self.level_stall_cycles += 1
+            if self.level_stall_cycles >= 3:
+                barrier = BarrierType.LEVEL_STALL
+                consecutive = self.level_stall_cycles
+                severity = min(1.0, self.level_stall_cycles / 10.0)
+        return barrier, consecutive, severity
+
+    def _detect_fitness_plateau(self, metrics: CycleMetrics) -> tuple[BarrierType, int, float]:
+        """Detect fitness plateau from history."""
+        barrier = BarrierType.NORMAL
+        consecutive = 0
+        severity = 0.0
+        if len(self.history) >= 3:
+            recent = self.history[-3:]
+            fitnesses = [m.fitness for m in recent]
+            if max(fitnesses) - min(fitnesses) < 1.0:
+                self.fitness_plateau_cycles += 1
+                if self.fitness_plateau_cycles >= 3:
+                    barrier = BarrierType.FITNESS_PLATEAU
+                    consecutive = self.fitness_plateau_cycles
+                    severity = min(1.0, self.fitness_plateau_cycles / 8.0)
+            else:
+                self.fitness_plateau_cycles = 0
+        return barrier, consecutive, severity
+
+    def _detect_diversity_collapse(self, metrics: CycleMetrics) -> tuple[BarrierType, int, float]:
+        """Detect diversity collapse."""
+        barrier = BarrierType.NORMAL
+        consecutive = 0
+        severity = 0.0
+        if metrics.diversity < self.diversity_collapse_threshold:
+            self.diversity_collapse_cycles += 1
+            if self.diversity_collapse_cycles >= 2:
+                barrier = BarrierType.DIVERSITY_COLLAPSE
+                consecutive = self.diversity_collapse_cycles
+                severity = min(1.0, self.diversity_collapse_cycles / 5.0)
+        else:
+            self.diversity_collapse_cycles = 0
+        return barrier, consecutive, severity
+
+    def _detect_val_loss_regression(self, metrics: CycleMetrics) -> tuple[BarrierType, int, float]:
+        """Detect validation loss regression."""
+        barrier = BarrierType.NORMAL
+        consecutive = 0
+        severity = 0.0
+        if len(self.history) >= 2 and metrics.val_loss is not None:
+            prev_vals = [h.val_loss for h in self.history[:-1] if h.val_loss is not None]
+            if prev_vals:
+                best_prev = min(prev_vals)
+                if metrics.val_loss > best_prev * 1.1:
+                    self.val_loss_regression_cycles += 1
+                    if self.val_loss_regression_cycles >= 2:
+                        barrier = BarrierType.VAL_LOSS_REGRESSION
+                        consecutive = self.val_loss_regression_cycles
+                        severity = min(1.0, self.val_loss_regression_cycles / 5.0)
+                else:
+                    self.val_loss_regression_cycles = 0
+        return barrier, consecutive, severity
+
     def update(self, metrics: CycleMetrics) -> BarrierInfo:
         """Update with new cycle metrics and return barrier analysis.
 
@@ -183,77 +254,26 @@ class BarrierTuner:
         and returns a BarrierInfo with the detected barrier type.
         """
         self.history.append(metrics)
-
         barrier = BarrierType.NORMAL
         consecutive = 0
         severity = 0.0
-
-        # --- Level stall detection ---
-        if len(self.history) >= 2:
-            prev = self.history[-2]
-            if metrics.level > prev.level:
-                # Level advanced — reset stall counter
-                self.level_stall_cycles = 0
-            else:
-                self.level_stall_cycles += 1
-
-            if self.level_stall_cycles >= 3:
-                barrier = BarrierType.LEVEL_STALL
-                consecutive = self.level_stall_cycles
-                severity = min(1.0, self.level_stall_cycles / 10.0)
-
-        # --- Fitness plateau detection ---
-        if len(self.history) >= 3:
-            recent = self.history[-3:]
-            fitnesses = [m.fitness for m in recent]
-            if max(fitnesses) - min(fitnesses) < 1.0:
-                self.fitness_plateau_cycles += 1
-                if self.fitness_plateau_cycles >= 3:
-                    if barrier == BarrierType.NORMAL:
-                        barrier = BarrierType.FITNESS_PLATEAU
-                    consecutive = max(consecutive, self.fitness_plateau_cycles)
-                    severity = max(severity, min(1.0, self.fitness_plateau_cycles / 8.0))
-            else:
-                self.fitness_plateau_cycles = 0
-
-        # --- Diversity collapse detection ---
-        if metrics.diversity < self.diversity_collapse_threshold:
-            self.diversity_collapse_cycles += 1
-            if self.diversity_collapse_cycles >= 2:
+        for detector in (
+            self._detect_level_stall,
+            self._detect_fitness_plateau,
+            self._detect_diversity_collapse,
+            self._detect_val_loss_regression,
+        ):
+            b, c, s = detector(metrics)
+            if b != BarrierType.NORMAL:
                 if barrier == BarrierType.NORMAL:
-                    barrier = BarrierType.DIVERSITY_COLLAPSE
-                consecutive = max(consecutive, self.diversity_collapse_cycles)
-                severity = max(severity, min(1.0, self.diversity_collapse_cycles / 5.0))
-        else:
-            self.diversity_collapse_cycles = 0
-
-        # --- Val loss regression detection ---
-        if len(self.history) >= 2 and metrics.val_loss is not None:
-            prev_vals = [h.val_loss for h in self.history[:-1] if h.val_loss is not None]
-            if prev_vals:
-                best_prev = min(prev_vals)
-                if metrics.val_loss > best_prev * 1.1:  # 10% regression
-                    self.val_loss_regression_cycles += 1
-                    if self.val_loss_regression_cycles >= 2:
-                        if barrier == BarrierType.NORMAL:
-                            barrier = BarrierType.VAL_LOSS_REGRESSION
-                        consecutive = max(consecutive, self.val_loss_regression_cycles)
-                        severity = max(severity, min(1.0, self.val_loss_regression_cycles / 5.0))
-                else:
-                    self.val_loss_regression_cycles = 0
-
-        # Track barrier for history
+                    barrier = b
+                consecutive = max(consecutive, c)
+                severity = max(severity, s)
         if barrier != BarrierType.NORMAL:
             self.barriers_detected.append(barrier)
-
-        # Generate recommendations
         recommendations = self._generate_recommendations(barrier, metrics)
-
         barrier_info = BarrierInfo(
-            barrier=barrier,
-            consecutive_count=consecutive,
-            severity=severity,
-            recommendations=recommendations,
+            barrier=barrier, consecutive_count=consecutive, severity=severity, recommendations=recommendations
         )
         self._last_barrier_info = barrier_info
         self.tuning_history.append(
@@ -264,7 +284,6 @@ class BarrierTuner:
                 "recommendations": recommendations,
             }
         )
-
         return barrier_info
 
     def _generate_recommendations(self, barrier: BarrierType, metrics: CycleMetrics) -> dict:
@@ -320,6 +339,12 @@ class BarrierTuner:
         params: dict[str, Any] = {}
         info = self._last_barrier_info
 
+        # Certified L30+ plateau is expected progress — do not inflate gens and
+        # slow the EPI momentum window flush (daemon stays at --gens 50).
+        recent = self.history[-3:] if self.history else []
+        if self._certified_terminal_plateau(recent):
+            return params
+
         if info.barrier == BarrierType.LEVEL_STALL and info.severity > 0.5:
             params["max_generations"] = 80  # Extend evolution time
         elif info.barrier == BarrierType.DIVERSITY_COLLAPSE:
@@ -339,17 +364,37 @@ class BarrierTuner:
             self._baseline_fitness = last.fitness
             self._baseline_level = last.level
 
+    def _certified_terminal_plateau(self, recent: list[CycleMetrics]) -> bool:
+        """Sustained L30 + high fitness is goal progress, not batch stagnation."""
+        if not recent:
+            return False
+        min_level = int(os.environ.get("EE_TERMINAL_PLATEAU_MIN_LEVEL", "30"))
+        min_fitness = float(os.environ.get("EE_TERMINAL_PLATEAU_MIN_FITNESS", "250"))
+        min_verify = float(os.environ.get("EE_TERMINAL_PLATEAU_MIN_VERIFY", "0.99"))
+        for m in recent:
+            if m.level < min_level or m.fitness < min_fitness:
+                return False
+            verify = float(getattr(m, "verify_score", 0.0) or 0.0)
+            if verify > 0.0 and verify < min_verify:
+                return False
+        return True
+
     def should_terminate(self) -> bool:
         """Check if the run should auto-terminate due to prolonged stagnation.
 
         Terminates when no meaningful progress (fitness improvement or
         level advancement) has been made for _max_stagnation_cycles.
         """
+        if os.environ.get("EE_BARRIER_AUTO_TERMINATE", "1") == "0":
+            return False
         if len(self.history) < 3:
             return False
 
         recent = self.history[-self._max_stagnation_cycles :]
         if len(recent) < self._max_stagnation_cycles:
+            return False
+
+        if self._certified_terminal_plateau(recent):
             return False
 
         fitness_range = max(m.fitness for m in recent) - min(m.fitness for m in recent)
@@ -362,7 +407,7 @@ class BarrierTuner:
         """Return human-readable reason for auto-termination."""
         if not self.should_terminate():
             return ""
-        n = len(self.history)
+        len(self.history)
         recent = self.history[-self._max_stagnation_cycles :]
         fitness_range = max(m.fitness for m in recent) - min(m.fitness for m in recent)
         return (

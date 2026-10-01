@@ -10,7 +10,6 @@ Tests cover:
 import os
 import sys
 
-import pytest
 import torch
 
 # Ensure milestone1/ is on sys.path for rv32i_model import

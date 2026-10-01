@@ -12,22 +12,17 @@ The final end-to-end test exercises the full ScaleCoordinator pipeline.
 from __future__ import annotations
 
 import os
-import shutil
 import sys
-import tempfile
 
 # Ensure USERNAME is set on Windows — torch's getuser() falls back to
 # the pwd module which does not exist on Windows.
 if os.name == "nt" and "USERNAME" not in os.environ:
     os.environ["USERNAME"] = os.environ.get("COMPUTERNAME", "test_user")
 
-from dataclasses import dataclass
-from typing import Dict, List
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
-from torch import nn
 
 # ---------------------------------------------------------------------------
 # Path setup
@@ -45,13 +40,7 @@ from milestone1.training.scaling.saturation_detector import SaturationDetector
 from milestone1.training.scaling.scale_coordinator import ScaleCoordinator, ScaleState
 from milestone1.training.scaling.scale_validator import ScaleValidator
 from milestone1.training.scaling.scaling_planner import ScalingPlanner
-from milestone1.training.scaling.types import (
-    MigrationResult,
-    SaturationReport,
-    ScalingDecision,
-    TrendSnapshot,
-    ValidationResult,
-)
+from milestone1.training.scaling.types import MigrationResult, TrendSnapshot, ValidationResult
 from milestone1.training.scaling.warm_start_trainer import WarmStartConfig, WarmStartTrainer
 
 # ---------------------------------------------------------------------------
@@ -698,8 +687,8 @@ class TestFullPipelineRollback:
         assert decision is not None
 
         # ── Step 3: Migrate (we do migrate, but will reject on validation) ──
-        old_model = _make_model(OLD_MODEL_CONFIG, seed=42)
-        new_model = _make_model(NEW_MODEL_CONFIG, seed=999)
+        _make_model(OLD_MODEL_CONFIG, seed=42)
+        _make_model(NEW_MODEL_CONFIG, seed=999)
 
         # ── Step 4: Skip warm-start for bad migration scenario ──
         # (validation is what decides, not warm-start)
@@ -870,7 +859,7 @@ class TestScaleCoordinatorPipeline:
         assert migration_result.success
         coord.state = ScaleState.MIGRATING
 
-        warm_result = coord.warm_start.warm_start()
+        coord.warm_start.warm_start()
         coord.state = ScaleState.WARMSTARTING
 
         val_result = coord.validator.validate()
@@ -891,7 +880,7 @@ class TestScaleCoordinatorPipeline:
         sat_report = coord.detector.evaluate(snapshot)
         coord.state = ScaleState.DETECTING
 
-        decision = coord.planner.plan(coord.current_stage, sat_report)
+        coord.planner.plan(coord.current_stage, sat_report)
         coord.state = ScaleState.PLANNING
 
         migration_result = coord.migrator.migrate(None, None, None, None)

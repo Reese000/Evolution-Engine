@@ -15,9 +15,7 @@ Covers:
 """
 
 import collections
-import os
 import random
-import sys
 
 import pytest
 
@@ -97,7 +95,7 @@ class TestQDStallScalingIntegration:
         _set_champion(eng)
         eng.generations_stalled = 10
         # Verify: stall > 10 is the condition for multiplier
-        assert not (10 > 10), "stall=10 should not trigger multiplier"
+        assert not (eng.generations_stalled > 10), "stall=10 should not trigger multiplier"
 
     def test_stall_11_starts_scaling(self):
         """At stall=11, the multiplier just barely activates."""
@@ -180,7 +178,8 @@ class TestNicheSharingIntegration:
         # dist=1.0: penalty = 0.10 * (1 - 0.5) = 0.05
         assert abs(0.10 * (1.0 - 1.0 / 2.0) - 0.05) < 0.001
         # dist=2.0: no penalty (dist >= 2.0)
-        assert 2.0 >= 2.0  # condition for no penalty
+        dist = 2.0
+        assert dist >= 2.0  # condition for no penalty
 
     def test_niche_penalty_linear_decay(self):
         """Penalty should decrease linearly from dist=0 to dist=2."""
@@ -309,7 +308,7 @@ class TestOscillationWindowDeque:
 
         # Now add a negative delta: oldest positive gets evicted
         eng.champion_fitness += 0.1
-        result = eng._should_replace_champion(eng.champion_fitness - 5.0)
+        eng._should_replace_champion(eng.champion_fitness - 5.0)
         # Negative delta won't be accepted (candidate_fitness <= champion_fitness)
         # So the window state is: the negative delta is NOT added because
         # candidate_fitness <= champion_fitness returns False early
@@ -422,6 +421,9 @@ class TestChampionQDCaching:
             def selection_bias(self, desc):
                 return 0.01
 
+            def get_illumination_diversity(self):
+                return {"overall_diversity_score": 0.5}
+
         eng.qd_archive = _FakeArchive()
 
         prog = [0x00000033, 0x00100073]
@@ -457,6 +459,9 @@ class TestChampionQDCaching:
         class _FakeArchive:
             def selection_bias(self, desc):
                 return 0.01
+
+            def get_illumination_diversity(self):
+                return {"overall_diversity_score": 0.5}
 
         eng.qd_archive = _FakeArchive()
 
@@ -507,7 +512,7 @@ class TestAdaptiveMutationBoundaries:
         rate = eng._compute_adaptive_mutation_rate()
         # vel=5.0: not > 5.0, not > 1.0 (it IS > 1.0), so moderate (0.75x)
         # Actually 5.0 > 1.0 is True, so moderate branch
-        adaptive = max(0.15, 0.4 * 0.75)  # 0.3
+        max(0.15, 0.4 * 0.75)  # 0.3
         blended = 0.5 * 0.3 + 0.5 * 0.4  # 0.35
         assert abs(rate - blended) < 0.001, f"Expected ~{blended}, got {rate}"
 
@@ -516,7 +521,7 @@ class TestAdaptiveMutationBoundaries:
         eng = self._make(0.3)
         eng._fitness_velocity = 1.0
         rate = eng._compute_adaptive_mutation_rate()
-        adaptive = min(0.85, 0.3 * 1.3)  # 0.39
+        min(0.85, 0.3 * 1.3)  # 0.39
         blended = 0.5 * 0.39 + 0.5 * 0.3  # 0.345
         assert abs(rate - blended) < 0.001, f"Expected ~{blended}, got {rate}"
 
@@ -528,7 +533,7 @@ class TestAdaptiveMutationBoundaries:
         # vel=-1.0: not > 5, not > 1, not > -1 (it's NOT > -1)
         # Wait: -1.0 > -1.0 is False, so falls to vel > -5.0 branch (1.6x)
         # Actually: vel=-1.0, vel > -1.0 is False, vel > -5.0 is True -> 1.6x
-        adaptive = min(0.85, 0.3 * 1.6)  # 0.48
+        min(0.85, 0.3 * 1.6)  # 0.48
         blended = 0.5 * 0.48 + 0.5 * 0.3  # 0.39
         assert abs(rate - blended) < 0.001, f"Expected ~{blended}, got {rate}"
 
@@ -538,7 +543,7 @@ class TestAdaptiveMutationBoundaries:
         eng._fitness_velocity = -5.0
         rate = eng._compute_adaptive_mutation_rate()
         # vel=-5.0: not > -5.0, so strong regression (2.0x)
-        adaptive = min(0.85, 0.3 * 2.0)  # 0.6
+        min(0.85, 0.3 * 2.0)  # 0.6
         blended = 0.5 * 0.6 + 0.5 * 0.3  # 0.45
         assert abs(rate - blended) < 0.001, f"Expected ~{blended}, got {rate}"
 

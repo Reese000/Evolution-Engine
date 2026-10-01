@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
+from typing import Any
 
 from evolution_engine import EvolutionConfig
 
@@ -363,56 +364,8 @@ class MetaGenome:
 
         return child1, child2
 
-    def decode(self) -> EvolutionConfig:
-        """Decode this meta-genome into an ``EvolutionConfig``.
-
-        Only the fields that the meta-genome encodes are set on the
-        returned config; all other ``EvolutionConfig`` fields retain
-        their current defaults.
-
-        Returns
-        -------
-        EvolutionConfig
-            A fully-populated evolution configuration reflecting the
-            hyper-parameters encoded in this genome.
-        """
-        conf = EvolutionConfig(
-            mutation_rate=self.mutation_rate,
-            crossover_rate=self.crossover_rate,
-            elite_ratio=self.elite_ratio,
-            tournament_size=self.tournament_size,
-            population_size=self.population_size,
-            curriculum_stall_threshold=self.stall_threshold,
-            novelty_weight=self.novelty_weight,
-            # New float fields
-            meta_weight_improvement=self.meta_weight_improvement,
-            meta_weight_depth=self.meta_weight_depth,
-            meta_weight_diversity=self.meta_weight_diversity,
-            max_fitness=self.max_fitness,
-            variance_penalty_coeff=self.variance_penalty_coeff,
-            bias_register_prob=self.bias_register_prob,
-            anchor_retention_floor=self.anchor_retention_floor,
-            adaptive_elite_low=self.adaptive_elite_low,
-            adaptive_elite_mid=self.adaptive_elite_mid,
-            adaptive_elite_high=self.adaptive_elite_high,
-            adaptive_elite_max=self.adaptive_elite_max,
-            adaptive_cx_mid_add=self.adaptive_cx_mid_add,
-            adaptive_cx_high_add=self.adaptive_cx_high_add,
-            archive_crossover_success_trigger=self.archive_crossover_success_trigger,
-            archive_all_low_trigger=self.archive_all_low_trigger,
-            archive_cx_adjust_factor=self.archive_cx_adjust_factor,
-            archive_pop_adjust_factor=self.archive_pop_adjust_factor,
-            archive_elite_reduce_factor=self.archive_elite_reduce_factor,
-            # New int fields
-            max_level=self.max_level,
-            adaptive_tourney_mid_add=self.adaptive_tourney_mid_add,
-            adaptive_tourney_high_add=self.adaptive_tourney_high_add,
-            archive_consecutive_wins_trigger=self.archive_consecutive_wins_trigger,
-        )
-        # R33: Pass retrain pipeline fields to EvolutionConfig.
-        # Sentinel -1.0 means "use default" -- only override when the
-        # meta-genome has a non-sentinel value, so that the EvolutionConfig
-        # defaults are preserved for un-evolved fields.
+    def _apply_retrain_fields(self, conf: EvolutionConfig) -> None:
+        """Apply retrain pipeline fields to EvolutionConfig if non-sentinel."""
         _SENTINEL = -1.0
         _retrain_map = (
             ("retrain_lr", "retrain_lr"),
@@ -427,23 +380,63 @@ class MetaGenome:
             ("retrain_timeout", "retrain_timeout"),
             ("retrain_min_examples", "retrain_min_examples"),
         )
+        _int_fields = {
+            "retrain_batch_size",
+            "retrain_patience",
+            "retrain_max_epochs",
+            "retrain_freeze_layers",
+            "retrain_max_per_level",
+            "retrain_timeout",
+            "retrain_min_examples",
+        }
         for genome_field, config_field in _retrain_map:
             val = getattr(self, genome_field)
             if val > _SENTINEL:
-                # Cast int-like fields to int for EvolutionConfig
-                if genome_field in (
-                    "retrain_batch_size",
-                    "retrain_patience",
-                    "retrain_max_epochs",
-                    "retrain_freeze_layers",
-                    "retrain_max_per_level",
-                    "retrain_timeout",
-                    "retrain_min_examples",
-                ):
+                if genome_field in _int_fields:
                     setattr(conf, config_field, round(val))
                 else:
                     setattr(conf, config_field, val)
+
+    def decode(self) -> EvolutionConfig:
+        """Decode this meta-genome into an ``EvolutionConfig``."""
+        kw = self._build_config_kwargs()
+        conf = EvolutionConfig(**kw)
+        self._apply_retrain_fields(conf)
         return conf
+
+    def _build_config_kwargs(self) -> dict[str, Any]:
+        """Return config kwargs from genome fields."""
+        return {
+            "mutation_rate": self.mutation_rate,
+            "crossover_rate": self.crossover_rate,
+            "elite_ratio": self.elite_ratio,
+            "tournament_size": self.tournament_size,
+            "population_size": self.population_size,
+            "curriculum_stall_threshold": self.stall_threshold,
+            "novelty_weight": self.novelty_weight,
+            "meta_weight_improvement": self.meta_weight_improvement,
+            "meta_weight_depth": self.meta_weight_depth,
+            "meta_weight_diversity": self.meta_weight_diversity,
+            "max_fitness": self.max_fitness,
+            "variance_penalty_coeff": self.variance_penalty_coeff,
+            "bias_register_prob": self.bias_register_prob,
+            "anchor_retention_floor": self.anchor_retention_floor,
+            "adaptive_elite_low": self.adaptive_elite_low,
+            "adaptive_elite_mid": self.adaptive_elite_mid,
+            "adaptive_elite_high": self.adaptive_elite_high,
+            "adaptive_elite_max": self.adaptive_elite_max,
+            "adaptive_cx_mid_add": self.adaptive_cx_mid_add,
+            "adaptive_cx_high_add": self.adaptive_cx_high_add,
+            "archive_crossover_success_trigger": self.archive_crossover_success_trigger,
+            "archive_all_low_trigger": self.archive_all_low_trigger,
+            "archive_cx_adjust_factor": self.archive_cx_adjust_factor,
+            "archive_pop_adjust_factor": self.archive_pop_adjust_factor,
+            "archive_elite_reduce_factor": self.archive_elite_reduce_factor,
+            "max_level": self.max_level,
+            "adaptive_tourney_mid_add": self.adaptive_tourney_mid_add,
+            "adaptive_tourney_high_add": self.adaptive_tourney_high_add,
+            "archive_consecutive_wins_trigger": self.archive_consecutive_wins_trigger,
+        }
 
     # ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
     # Class methods

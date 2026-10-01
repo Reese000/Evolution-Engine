@@ -26,9 +26,8 @@ import json
 import os
 import random
 import shutil
-import sys
 import tempfile
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 from unittest.mock import patch
 
 import pytest
@@ -601,7 +600,7 @@ class TestChooseMutationStrategy:
         eng._consecutive_same_strategy = 16  # above halved cap (15)
         eng._last_strategy_used = "RANDOM"
         eng.generations_stalled = 0
-        strat = eng._choose_mutation_strategy(0)
+        eng._choose_mutation_strategy(0)
         # After exceeding cap, counter resets to 0, then chosen strat
         # (HYBRID, different from RANDOM) sets counter to 1
         assert eng._consecutive_same_strategy == 1
@@ -691,6 +690,55 @@ class TestGetModelGuidedRatio:
         assert eng._get_model_guided_ratio() == eng.config.model_guided_ratio_high
 
 
+def test_skip_model_guided_at_terminal_saturated():
+    from evolution.mutation_helpers import skip_model_guided_at_terminal
+
+    assert skip_model_guided_at_terminal(30, 1.0) is True
+    assert skip_model_guided_at_terminal(30, 0.5) is False
+    assert skip_model_guided_at_terminal(10, 1.0) is False
+
+
+def test_compact_terminal_prefers_task_aware():
+    from types import SimpleNamespace
+
+    from evolution.mutation_helpers import apply_level_aware_strategy_bias
+    from mutation_proposer import MutationStrategy
+
+    class _R:
+        def random(self):
+            return 0.0
+
+        def choice(self, xs):
+            return xs[0]
+
+    eng = SimpleNamespace(
+        champion_level=30,
+        champion=[0] * 46,
+        rng=_R(),
+        _LEVEL_WEIGHT_PROFILES={"L17_plus": {"RANDOM": 1.0}},
+        _LEVEL_OVERRIDE_PROBS={"L17_plus": 0.0},
+    )
+    eng._log = lambda *_a, **_k: None
+    chosen = apply_level_aware_strategy_bias(eng, MutationStrategy.RANDOM)
+    assert chosen == MutationStrategy.TASK_AWARE
+
+    eng.champion = [0] * 19
+
+    class _RHigh:
+        def random(self):
+            return 0.65
+
+        def choice(self, xs):
+            return xs[0]
+
+    eng.rng = _RHigh()
+    chosen_short = apply_level_aware_strategy_bias(eng, MutationStrategy.RANDOM)
+    assert chosen_short == MutationStrategy.TASK_AWARE
+    eng.champion = [0] * 46
+    chosen_long = apply_level_aware_strategy_bias(eng, MutationStrategy.RANDOM)
+    assert chosen_long == MutationStrategy.RANDOM
+
+
 # ───────────────────────────────────────────────────────────────────────
 # 9. EvolutionEngine._try_qd_crossover / _try_qd_champion_reset
 # ───────────────────────────────────────────────────────────────────────
@@ -709,9 +757,9 @@ class TestTryQDCrossover:
         eng.generations_stalled = 20
         assert eng._try_qd_crossover() is None
 
-    def test_stall_below_15_returns_none(self):
+    def test_stall_below_threshold_returns_none(self):
         eng = self._make_engine()
-        eng.generations_stalled = 10
+        eng.generations_stalled = 7
         assert eng._try_qd_crossover() is None
 
     def test_qd_archive_too_few_solutions_returns_none(self):
@@ -791,39 +839,56 @@ class TestTryQDChampionReset:
         eng.champion_fitness = 5.0
         eng.champion = [0x00100073]
         # Patch _HAS_QD to True so the method proceeds
+        from unittest.mock import patch
+
         import evolution_engine
 
         orig = evolution_engine._HAS_QD
         evolution_engine._HAS_QD = True
         try:
-            # QD fitness * 0.9 = 12.0 * 0.9 = 10.8 > 5.0 -> replace
+
             class FakeArchive:
                 def grid_solutions(self):
                     return [{"program": [0x00000033, 0x00100073], "fitness": 12.0}]
 
+                def selection_bias(self, desc):
+                    return 0.0
+
+                def get_illumination_diversity(self):
+                    return {"overall_diversity_score": 0.0}
+
             eng.qd_archive = FakeArchive()
 
-            result = eng._try_qd_champion_reset()
+            with patch.object(eng, "_verify_champion", return_value=(True, 1.0)):
+                result = eng._try_qd_champion_reset()
             assert result is True
             assert eng.champion == [0x00000033, 0x00100073]
+            assert eng.champion_fitness > 5.0
             assert eng.generations_stalled == 0
+            assert eng._champion_verified is True
         finally:
             evolution_engine._HAS_QD = orig
 
     def test_archive_worse_keeps_champion(self):
         eng = self._make_engine()
         eng.generations_stalled = 50
-        eng.champion_fitness = 10.0
+        eng.champion_fitness = 60.0
         eng.champion = [0x00000033, 0x00100073]
         import evolution_engine
 
         orig = evolution_engine._HAS_QD
         evolution_engine._HAS_QD = True
         try:
-            # QD fitness * 0.9 = 5.0 * 0.9 = 4.5 < 10.0 -> keep
+
             class FakeArchive:
                 def grid_solutions(self):
                     return [{"program": [0x00100073], "fitness": 5.0}]
+
+                def selection_bias(self, desc):
+                    return 0.0
+
+                def get_illumination_diversity(self):
+                    return {"overall_diversity_score": 0.0}
 
             eng.qd_archive = FakeArchive()
 
@@ -879,6 +944,41 @@ class TestRecordStrategyOutcomes:
         eng._record_strategy_outcomes()
         # Should record only the 1 result that has a matching strategy
         assert eng.strategy_archive.total_records() == 1
+
+    def test_stall_widens_success_threshold(self):
+        eng = self._make_engine()
+        eng.generations_stalled = 20
+        eng.current_generation = 1
+        eng.champion_level = 0
+        eng._last_challenger_strategies = ["RANDOM"] * 10
+        eng._last_challenger_fitnesses = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+        eng._record_strategy_outcomes()
+        success_count = sum(1 for r in eng.strategy_archive._records if r["success"])
+        assert success_count == 2
+
+    def test_beats_champion_marks_success(self):
+        eng = self._make_engine()
+        eng.current_generation = 1
+        eng.champion_level = 0
+        eng._champion_stage1_fitness = 85.0
+        eng._last_challenger_strategies = ["RANDOM"] * 10
+        eng._last_challenger_fitnesses = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 86.0, 100.0]
+        eng._record_strategy_outcomes()
+        success = [r["success"] for r in eng.strategy_archive._records]
+        assert success[8] is True
+        assert success[9] is True
+        assert sum(success) == 2
+
+    def test_generate_challengers_records_strategies(self):
+        eng = self._make_engine(population_size=12)
+        eng.champion = [0x00100073]
+        eng.champion_trace = {"status": "ok", "final_regs": {10: 42}, "instructions_count": 1}
+        eng.champion_fitness = 50.0
+        eng.champion_level = 0
+        challengers = eng._generate_challengers()
+        assert len(challengers) == 12
+        assert len(eng._last_challenger_strategies) == 12
+        assert all(isinstance(s, str) and s for s in eng._last_challenger_strategies)
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -1438,7 +1538,7 @@ class TestTuneRetrainParamsEdgeCases:
         # Now fitness stops improving
         for c in range(5, 10):
             mc.update_cycle(_snapshot(c, fitness=5.0, level=5, val_loss=None))
-            params = mc.tune_retrain_params(c)
+            mc.tune_retrain_params(c)
 
         # After 5+ cycles with no fitness improvement and val_loss=None,
         # the fallback should halve LR
@@ -2293,6 +2393,9 @@ class TestQDAxesCaching:
             def selection_bias(self, desc):
                 return 0.01
 
+            def get_illumination_diversity(self):
+                return {"overall_diversity_score": 0.5}
+
         eng.qd_archive = FakeArchive()
         prog = [0x00000033, 0x00100073]
         trace = {"status": "ok", "final_regs": {10: 42}, "instructions_count": 2, "trap_cause": ""}
@@ -2308,6 +2411,9 @@ class TestQDAxesCaching:
         class FakeArchive:
             def selection_bias(self, desc):
                 return 0.01
+
+            def get_illumination_diversity(self):
+                return {"overall_diversity_score": 0.5}
 
         eng.qd_archive = FakeArchive()
         prog = [0x00000033, 0x00100073]

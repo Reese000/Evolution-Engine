@@ -64,9 +64,7 @@ class TestEngineHealth:
         for key in expected_keys:
             assert key in diag, f"Missing diagnostic key: {key}"
 
-    def test_get_performance_metrics_returns_dict(
-        self, engine: EvolutionEngine
-    ) -> None:
+    def test_get_performance_metrics_returns_dict(self, engine: EvolutionEngine) -> None:
         """get_performance_metrics returns a dict with expected metric keys."""
         perf = engine.get_performance_metrics()
         assert isinstance(perf, dict)
@@ -134,9 +132,5 @@ class TestConfigHealth:
             warnings.simplefilter("always")
             EvolutionConfig()
             # Filter out non-config warnings (e.g. third-party)
-            config_warnings = [
-                x for x in w if "evolution_engine" in str(x.filename)
-            ]
-            assert config_warnings == [], (
-                f"Default config produced {len(config_warnings)} warning(s)"
-            )
+            config_warnings = [x for x in w if "evolution_engine" in str(x.filename)]
+            assert config_warnings == [], f"Default config produced {len(config_warnings)} warning(s)"

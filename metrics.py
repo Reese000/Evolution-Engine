@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -45,7 +45,7 @@ class MetricsCollector:
         """
         record = dict(cycle_data)
         if "timestamp" not in record:
-            record["timestamp"] = datetime.now().isoformat()
+            record["timestamp"] = datetime.now(timezone.utc).isoformat()
 
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
@@ -90,6 +90,40 @@ class MetricsCollector:
             return records[-last_n:]
         return records
 
+    def _extract_metric_values(self, records: list[dict[str, Any]], metric: str) -> list[float]:
+        """Extract numeric values for a metric from records."""
+        values: list[float] = []
+        for r in records:
+            v = r.get(metric)
+            if isinstance(v, (int, float)):
+                values.append(float(v))
+        return values
+
+    def _compute_trend(self, values: list[float]) -> str:
+        """Determine trend direction from values."""
+        n = len(values)
+        if n >= 4:
+            mid = n // 2
+            first_half_sum = sum(values[:mid])
+            second_half_sum = sum(values[mid:])
+            first_half_avg = first_half_sum / mid
+            second_half_avg = second_half_sum / (n - mid)
+            delta = second_half_avg - first_half_avg
+            threshold = max(abs(first_half_avg) * 0.01, 0.001)
+            if delta > threshold:
+                return "improving"
+            elif delta < -threshold:
+                return "declining"
+            return "stable"
+        elif n >= 2:
+            delta = values[-1] - values[0]
+            if abs(delta) < max(abs(values[0]) * 0.01, 0.001):
+                return "stable"
+            elif delta > 0:
+                return "improving"
+            return "declining"
+        return "stable"
+
     def get_trend(self, metric: str, window: int = 10) -> dict[str, Any]:
         """Compute rolling average trend for a metric.
 
@@ -111,85 +145,21 @@ class MetricsCollector:
               - window_size: actual number of points used
         """
         records = self.get_history(last_n=window)
-
-        n = 0
+        values = self._extract_metric_values(records, metric)
+        n = len(values)
+        if n == 0:
+            return {"current": None, "avg": None, "min": None, "max": None, "trend": "unknown", "window_size": 0}
+        current = values[-1]
         total = 0.0
         mn = float("inf")
         mx = float("-inf")
-        first_val = None
-        last_val = None
-        # R24: Compute first-half and second-half sums during the same pass
-        # that computes min/max/total. This eliminates the separate
-        # sum(values[mid:]) call.
-        first_half_sum = 0.0
-        second_half_sum = 0.0
-
-        # We need to know n first to compute mid, so collect values in
-        # a small buffer, then process. But since window is typically
-        # small (10), a two-pass approach with a tiny list is fine.
-        values: list[float] = []
-        append = values.append
-        for r in records:
-            v = r.get(metric)
-            if isinstance(v, (int, float)):
-                append(float(v))
-
-        n = len(values)
-        if n == 0:
-            return {
-                "current": None,
-                "avg": None,
-                "min": None,
-                "max": None,
-                "trend": "unknown",
-                "window_size": 0,
-            }
-
-        current = values[-1]
-        # R24: Single pass for total, min, max, and half-sums
-        mid = n // 2
-        for i in range(n):
-            v = values[i]
+        for v in values:
             total += v
             mn = min(mn, v)
             mx = max(mx, v)
-            if i < mid:
-                first_half_sum += v
-            else:
-                second_half_sum += v
         avg = total / n
-
-        # Determine trend: compare first half average to second half average
-        if n >= 4:
-            first_half_avg = first_half_sum / mid
-            second_half_avg = second_half_sum / (n - mid)
-            delta = second_half_avg - first_half_avg
-            threshold = max(abs(first_half_avg) * 0.01, 0.001)
-            if delta > threshold:
-                trend = "improving"
-            elif delta < -threshold:
-                trend = "declining"
-            else:
-                trend = "stable"
-        elif n >= 2:
-            delta = values[-1] - values[0]
-            if abs(delta) < max(abs(values[0]) * 0.01, 0.001):
-                trend = "stable"
-            elif delta > 0:
-                trend = "improving"
-            else:
-                trend = "declining"
-        else:
-            trend = "stable"
-
-        return {
-            "current": current,
-            "avg": round(avg, 6),
-            "min": mn,
-            "max": mx,
-            "trend": trend,
-            "window_size": n,
-        }
+        trend = self._compute_trend(values)
+        return {"current": current, "avg": round(avg, 6), "min": mn, "max": mx, "trend": trend, "window_size": n}
 
     def count_records(self) -> int:
         """Return total number of metric records.
@@ -282,6 +252,41 @@ class MetricsCollector:
 
         return anomalies
 
+    def _extract_paired_values(
+        self, records: list[dict[str, Any]], metric_a: str, metric_b: str
+    ) -> tuple[list[float], list[float]]:
+        """Extract paired values for two metrics from records."""
+        a_vals: list[float] = []
+        b_vals: list[float] = []
+        for r in records:
+            va = r.get(metric_a)
+            vb = r.get(metric_b)
+            if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+                a_vals.append(float(va))
+                b_vals.append(float(vb))
+        return a_vals, b_vals
+
+    @staticmethod
+    def _pearson_correlation(a_vals: list[float], b_vals: list[float]) -> float:
+        """Compute Pearson correlation coefficient."""
+        n = len(a_vals)
+        if n < 2:
+            return 0.0
+        mean_a = sum(a_vals) / n
+        mean_b = sum(b_vals) / n
+        sum_ab = 0.0
+        sum_a2 = 0.0
+        sum_b2 = 0.0
+        for i in range(n):
+            da = a_vals[i] - mean_a
+            db = b_vals[i] - mean_b
+            sum_ab += da * db
+            sum_a2 += da * da
+            sum_b2 += db * db
+        denom = (sum_a2**0.5) * (sum_b2**0.5)
+        r = sum_ab / denom if denom > 0 else 0.0
+        return max(-1.0, min(1.0, r))
+
     def correlate_metrics(self, metric_a: str, metric_b: str, window: int = 20) -> dict[str, Any]:
         """Compute Pearson correlation between two metrics over a window.
 
@@ -304,20 +309,8 @@ class MetricsCollector:
               - sample_size: number of paired observations used
         """
         records = self.get_history(last_n=window)
-
-        # Extract paired values (only records where both metrics are present)
-        a_vals: list[float] = []
-        b_vals: list[float] = []
-        for r in records:
-            va = r.get(metric_a)
-            vb = r.get(metric_b)
-            if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
-                a_vals.append(float(va))
-                b_vals.append(float(vb))
-
+        a_vals, b_vals = self._extract_paired_values(records, metric_a, metric_b)
         n = len(a_vals)
-
-        # Not enough data
         if n < 2:
             return {
                 "metric_a": metric_a,
@@ -327,33 +320,7 @@ class MetricsCollector:
                 "direction": "none",
                 "sample_size": n,
             }
-
-        # Compute means
-        mean_a = sum(a_vals) / n
-        mean_b = sum(b_vals) / n
-
-        # Compute Pearson r using the formula:
-        #   r = sum((a - mean_a)*(b - mean_b)) / (sqrt(sum((a - mean_a)^2)) * sqrt(sum((b - mean_b)^2)))
-        sum_ab = 0.0
-        sum_a2 = 0.0
-        sum_b2 = 0.0
-        for i in range(n):
-            da = a_vals[i] - mean_a
-            db = b_vals[i] - mean_b
-            sum_ab += da * db
-            sum_a2 += da * da
-            sum_b2 += db * db
-
-        denom = (sum_a2**0.5) * (sum_b2**0.5)
-
-        if denom > 0:
-            r = sum_ab / denom
-        else:
-            r = 0.0
-
-        r = max(-1.0, min(1.0, r))  # Clamp to valid range
-
-        # Determine strength and direction
+        r = self._pearson_correlation(a_vals, b_vals)
         abs_r = abs(r)
         if abs_r >= 0.7:
             strength = "strong"
@@ -363,14 +330,12 @@ class MetricsCollector:
             strength = "weak"
         else:
             strength = "none"
-
         if r > 0:
             direction = "positive"
         elif r < 0:
             direction = "negative"
         else:
             direction = "none"
-
         return {
             "metric_a": metric_a,
             "metric_b": metric_b,

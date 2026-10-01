@@ -1,5 +1,4 @@
 import os
-import sys
 
 proj_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 import torch

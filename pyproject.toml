@@ -21,7 +21,7 @@ classifiers = [
 
 dependencies = [
     "torch==2.4.1",
-    "numpy>=1.24.0",
+    "numpy>=1.24.0,<2.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +31,7 @@ gpu = [
 ]
 dev = [
     "pytest>=7.0.0",
+    "hypothesis>=6.100.0",
 ]
 all = [
     "evolution-engine[gpu,dev]",
@@ -62,6 +63,7 @@ py-modules = [
     "prefix_generator",
     "qd_archive",
     "run_multi_cycle",
+    "run_multi_cycle_loop",
     "strategy_archive",
     "tasks_rv32i",
     "v11_dashboard",
@@ -83,6 +85,7 @@ addopts = "-v --tb=short"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+exclude = ["archive", ".venv*", ".venv-win*", ".venv-win2", ".venv_linux", ".venv.bak"]
 
 [tool.ruff.lint]
 # E501: handled by black/line-length instead.

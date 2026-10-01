@@ -163,4 +163,3 @@ class CheckpointManager:
 
 class CheckpointMismatchError(Exception):
     """Raised when checkpoint architecture doesn't match requested config."""
-

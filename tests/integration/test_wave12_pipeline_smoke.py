@@ -7,11 +7,7 @@ and basic diagnostic/state/config methods work without running actual evolution.
 from __future__ import annotations
 
 import collections
-import os
 import random
-import sys
-
-import pytest
 
 # Ensure project root is on sys.path
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame
@@ -178,9 +174,7 @@ class TestEngineState:
         assert isinstance(state, dict)
         # Top-level keys are structural; the actual data lives in sub-dicts
         expected_top = {"champion", "run_summary", "state", "config"}
-        assert expected_top & set(state.keys()), (
-            f"Expected at least one of {expected_top}, got {set(state.keys())}"
-        )
+        assert expected_top & set(state.keys()), f"Expected at least one of {expected_top}, got {set(state.keys())}"
 
     def test_get_champion_summary_returns_string(self):
         engine = _make_engine()
@@ -206,18 +200,21 @@ class TestConfigIntegration:
 
     def test_config_has_get_config_summary(self):
         from config import EvolutionSection
+
         cfg = EvolutionSection()
         assert hasattr(cfg, "get_config_summary")
         assert callable(cfg.get_config_summary)
 
     def test_config_has_validate_config(self):
         from config import EvolutionSection
+
         cfg = EvolutionSection()
         assert hasattr(cfg, "validate_config")
         assert callable(cfg.validate_config)
 
     def test_validate_config_returns_list(self):
         from config import EvolutionSection
+
         cfg = EvolutionSection()
         result = cfg.validate_config()
         assert isinstance(result, list)

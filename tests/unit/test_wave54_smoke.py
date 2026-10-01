@@ -6,8 +6,6 @@ running actual evolution — fast, deterministic, fixture-based.
 """
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
@@ -21,7 +19,7 @@ class TestEngineHealth:
 
     def test_engine_creation_with_defaults(self):
         """EvolutionEngine can be constructed from defaults (no VM needed)."""
-        cfg = EvolutionConfig()
+        EvolutionConfig()
         engine = EvolutionEngine.__new__(EvolutionEngine)
         assert engine is not None
 

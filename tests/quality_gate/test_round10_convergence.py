@@ -2,9 +2,7 @@
 """R28: Convergence quality tests -- adaptive mutation, oscillation control,
 Hall of Fame recency, MetaController fitness momentum, diversity injection."""
 
-import os
 import random
-import sys
 
 import pytest
 

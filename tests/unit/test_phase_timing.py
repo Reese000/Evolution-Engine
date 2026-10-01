@@ -701,15 +701,41 @@ def test_nested_or_misplaced_marker_is_reported_not_silently_absorbed(capsys):
     assert sum(subs.values()) >= rec["phase_seconds"]["mutation_propagation"] - 1e-9
 
 
-def test_engine_marker_sites_fire_on_a_real_generation():
-    """Wiring proof for both committed marker sites (review S2).
+def test_engine_marker_sites_fire_on_a_real_generation(monkeypatch):
+    """Wiring proof for all five committed marker sites (review S2, EE-W6b).
 
-    The timer-level tests above cannot see a MISSING marker: deleting either
-    `_pt_sub(...)` call in evolution_engine.py must fail this test, because
-    it runs `_run_one_generation` end to end on stubbed-out heavy work.
+    The timer-level tests above cannot see a MISSING marker: deleting any one
+    of the five `_pt_sub(...)` calls in evolution_engine.py must fail this
+    test, because it runs `_run_one_generation` end to end on stubbed-out
+    heavy work and gives every block a measurable (>=10 ms) body.  Blocks
+    whose body is inline (the length-capping try/except and the dedupe call)
+    get theirs by patching the functions they import from *inside* the
+    block, so what is timed is the marker site itself.
     """
     engine_mod = pytest.importorskip("evolution_engine")
     from types import SimpleNamespace
+
+    from evolution import mutation_helpers as _mh
+    from evolution import terminal_stagnation as _ts
+
+    def _sleep_cap(challengers, champ, **kwargs):
+        time.sleep(0.010)
+        return challengers
+
+    def _sleep_dedupe(challengers):
+        time.sleep(0.010)
+        return list(challengers), {}
+
+    # length_capping: force the stalled path and make its (normally sub-ms)
+    # body measurable.
+    monkeypatch.setattr(_ts, "_scan_floor_probe_stall_mode", lambda words: True)
+    monkeypatch.setattr(_ts, "get_scan_floor_gate", lambda champ: None)
+    monkeypatch.setattr(_mh, "scan_floor_stalled_challenger_max_words", lambda *a, **k: 64)
+    monkeypatch.setattr(_mh, "cap_scan_floor_challenger_lengths", _sleep_cap)
+    # dedupe: same treatment for the one-line call.
+    monkeypatch.setattr(_mh, "dedupe_programs_for_eval", _sleep_dedupe)
+    # not a marker site; must not run real archive writes in a unit test.
+    monkeypatch.setattr(_mh, "record_l10_lift_growth_discoveries", lambda *a, **k: None)
 
     engine = engine_mod.EvolutionEngine.__new__(engine_mod.EvolutionEngine)
     timer = PhaseTimer()
@@ -720,20 +746,29 @@ def test_engine_marker_sites_fire_on_a_real_generation():
         mutation_rate_start=0.3,
         mutation_rate_end=0.1,
         mutation_schedule_generations=100,
+        max_generations=100,
     )
     engine.champion = [0x00000013, 0x00100073]
     engine.champion_level = 1
     engine.generations_stalled = 0
+    engine.current_generation = 6
 
     # Heavy work is stubbed with a measurable sleep so a marker that fires
     # shows a non-zero share (a bare 0.0 would be indistinguishable from a
     # marker that never ran, now that the key set is stable).
     engine._compute_adaptive_mutation_rate = lambda: (time.sleep(0.010), 0.3)[1]
-    engine._choose_mutation_strategy = lambda idx: None
-    engine._apply_mutation = lambda strategy: (time.sleep(0.010), [0x00000013])[1]
+    engine._choose_mutation_strategy = lambda idx: SimpleNamespace(value="STUB")
+    engine._pick_mutation_parent = lambda: (list(engine.champion), None)
+    engine._apply_mutation = lambda strategy, **kw: (time.sleep(0.010), [0x00000013])[1]
     engine._generate_diversity_injection = lambda challengers, pop_size: None
+    engine._inject_terminal_verify_probes = lambda challengers, pop_size: None
     engine._apply_model_guided_slots = lambda challengers: None
+    engine._inject_qd_archive_hybrids = lambda challengers: None
+    # diversity_topup marker site body
+    engine._maybe_topup_scan_floor_diversity = lambda challengers: time.sleep(0.010)
+    engine._compute_population_diversity = lambda challengers: 0.0
     engine._evaluate_batch = lambda challengers: []
+    engine._fill_empty_qd_cells_from_evaluated = lambda *a, **k: None
     engine._select_elite = lambda challengers, results: ([], [], None)
     engine._evaluate_batch_detailed = lambda elite: []
     engine._run_generation_update = lambda *a, **k: False
@@ -745,8 +780,51 @@ def test_engine_marker_sites_fire_on_a_real_generation():
     assert len(timer.records) == 1
     rec = timer.records[0]
     subs = rec[SUBPHASE_RECORD_KEY]
-    assert subs["generation_init"] >= 0.010, "generation_init marker did not fire"
-    assert subs["challenger_generation"] >= 0.010, "challenger_generation marker did not fire"
+    for name in ("generation_init", "challenger_generation", "diversity_topup", "length_capping", "dedupe"):
+        assert subs[name] >= 0.010, f"{name} marker did not fire"
     # the identity holds on the real code path, not just in synthetic tests
     assert sum(subs.values()) == pytest.approx(rec["phase_seconds"]["mutation_propagation"], abs=0.01)
-    assert rec["phase_seconds"]["mutation_propagation"] >= 0.020
+    assert rec["phase_seconds"]["mutation_propagation"] >= 0.050
+    # EE-W6b: the sibling lane's diagnostic markers ride the same record
+    # under their own key -- two systems, two keys, two meanings.
+    assert SUBPHASE_RECORD_KEY != "subphase_seconds"
+    assert "subphase_seconds" in rec
+
+
+def test_sibling_diagnostic_markers_and_additive_subphases_share_a_record():
+    """EE-W6b reconciliation: both marker systems, neither borrowing a key.
+
+    The sibling lane's ``subphase()`` markers are VM-inclusive and nest
+    inside each other, so they are a HOTSPOT MAP (their sum overshoots the
+    phase).  EE-W6's ``sub_phase()`` markers are VM-subtracted and
+    partition the phase (named + residual == phase).  Both are written to
+    one generation record -- each under its own key, and only the EE-W6 key
+    may ever be read as a partition.
+    """
+    assert SUBPHASE_RECORD_KEY != "subphase_seconds"
+    assert SUBPHASE_RECORD_KEY == "mutation_subphase_seconds"
+
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"), _phase_timing.subphase("generate_challengers"):
+        with timer.sub_phase("challenger_generation"):
+            time.sleep(0.030)
+        with _phase_timing.subphase("topup_diversity"):  # nests inside the marker above
+            with timer.sub_phase("diversity_topup"):
+                time.sleep(0.060)
+    rec = timer.end_generation()
+
+    subs = rec[SUBPHASE_RECORD_KEY]
+    diag = rec["subphase_seconds"]
+    phase = rec["phase_seconds"]["mutation_propagation"]
+
+    # additive partition: named sub-phases + residual == the phase
+    assert sum(subs.values()) == pytest.approx(phase, abs=0.005)
+    assert subs["challenger_generation"] == pytest.approx(0.030, abs=0.005)
+    assert subs["diversity_topup"] == pytest.approx(0.060, abs=0.005)
+    assert subs["generation_init"] == 0.0  # stable key set, block did not run
+
+    # diagnostic markers nest and do NOT partition: 0.090 + 0.060 > 0.090
+    assert diag["generate_challengers"] == pytest.approx(0.090, abs=0.005)
+    assert diag["topup_diversity"] == pytest.approx(0.060, abs=0.005)
+    assert sum(diag.values()) > phase * 1.5

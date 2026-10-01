@@ -16,9 +16,7 @@ Tests:
 from __future__ import annotations
 
 import collections
-import os
 import random
-import sys
 
 import pytest
 
@@ -397,7 +395,7 @@ class TestDiversityMixedWords:
 class TestGenerationStateClearing:
     def test_generation_state_consumed_flag_exists(self):
         """EvolutionEngine has _generation_state_consumed flag."""
-        engine = EvolutionEngine.__new__(EvolutionEngine)
+        EvolutionEngine.__new__(EvolutionEngine)
         # Verify the flag is declared in _init_state or __init__ by checking the source
         import inspect
 

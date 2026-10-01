@@ -12,13 +12,9 @@ Uses pytest, tempfile, unittest.mock.  No existing files are modified.
 """
 from __future__ import annotations
 
-import json
-import math
 import os
 import sys
 import tempfile
-from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -371,11 +367,13 @@ class TestMetricsFullCycle:
 
         mc = MetricsCollector(self.path)
         for i in range(30):
-            mc.record_cycle({
-                "cycle": i,
-                "metric_a": float(i),
-                "metric_b": float(i) * 2.0,
-            })
+            mc.record_cycle(
+                {
+                    "cycle": i,
+                    "metric_a": float(i),
+                    "metric_b": float(i) * 2.0,
+                }
+            )
         result = mc.correlate_metrics("metric_a", "metric_b", window=30)
         assert isinstance(result, dict)
         assert result["metric_a"] == "metric_a"
@@ -390,11 +388,13 @@ class TestMetricsFullCycle:
 
         mc = MetricsCollector(self.path)
         for i in range(30):
-            mc.record_cycle({
-                "cycle": i,
-                "metric_a": float(i),
-                "metric_b": 100.0 - float(i),
-            })
+            mc.record_cycle(
+                {
+                    "cycle": i,
+                    "metric_a": float(i),
+                    "metric_b": 100.0 - float(i),
+                }
+            )
         result = mc.correlate_metrics("metric_a", "metric_b", window=30)
         assert result["correlation"] < -0.99
         assert result["direction"] == "negative"
@@ -553,6 +553,7 @@ class TestProgressionTrackerFullCycle:
 
     def _make_tracker(self):
         from progression_tracker import ProgressionTracker
+
         return ProgressionTracker(path=self.path)
 
     def _record_cycles(self, tracker, n: int, fitness_values: list[float] | None = None):
@@ -564,18 +565,20 @@ class TestProgressionTrackerFullCycle:
                 fitness = fitness_values[i]
             else:
                 fitness = 10.0 + i * 0.5  # steady improvement
-            tracker.record(CycleMetrics(
-                cycle=i + 1,
-                level=min(i // 3, 13),
-                fitness=fitness,
-                words=100 + i * 5,
-                archive_size=50 + i,
-                val_loss=1.0 - i * 0.02 if i < 40 else 0.2,
-                time_s=5.0 + i * 0.1,
-                mg_count=i % 5,
-                total_challengers=10,
-                champion_improvements=1 if i % 3 == 0 else 0,
-            ))
+            tracker.record(
+                CycleMetrics(
+                    cycle=i + 1,
+                    level=min(i // 3, 13),
+                    fitness=fitness,
+                    words=100 + i * 5,
+                    archive_size=50 + i,
+                    val_loss=1.0 - i * 0.02 if i < 40 else 0.2,
+                    time_s=5.0 + i * 0.1,
+                    mg_count=i % 5,
+                    total_challengers=10,
+                    champion_improvements=1 if i % 3 == 0 else 0,
+                )
+            )
 
     def test_record_20_cycles(self):
         """Record 20 cycles and verify history length."""
@@ -657,11 +660,20 @@ class TestProgressionTrackerFullCycle:
         from progression_tracker import CycleMetrics
 
         for i in range(8):
-            tracker.record(CycleMetrics(
-                cycle=i + 1, level=3, fitness=50.0, words=100,
-                archive_size=50, val_loss=0.5, time_s=5.0,
-                mg_count=1, total_challengers=10, champion_improvements=0,
-            ))
+            tracker.record(
+                CycleMetrics(
+                    cycle=i + 1,
+                    level=3,
+                    fitness=50.0,
+                    words=100,
+                    archive_size=50,
+                    val_loss=0.5,
+                    time_s=5.0,
+                    mg_count=1,
+                    total_challengers=10,
+                    champion_improvements=0,
+                )
+            )
         assert tracker.is_stagnant(window=5) is True
 
     def test_is_stagnant_false_with_improvement(self):
@@ -684,6 +696,7 @@ class TestProgressionTrackerFullCycle:
 
         # Create a new tracker from the same file
         from progression_tracker import ProgressionTracker
+
         tracker2 = ProgressionTracker(path=self.path)
         assert len(tracker2.history) == 10
         assert tracker2.history[0].cycle == 1

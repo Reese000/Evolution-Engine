@@ -20,7 +20,6 @@ class IntegrityError(Exception):
     """Raised when a champion file's SHA-256 checksum doesn't match."""
 
 
-
 def sha256_program(program: list[int]) -> str:
     """Compute SHA-256 hash of a program (list of ints).
 

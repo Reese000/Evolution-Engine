@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 try:
     import run_evolution_supervised
+
     _has_supervisor = True
 except ImportError:
     _has_supervisor = False

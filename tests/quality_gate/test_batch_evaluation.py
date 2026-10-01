@@ -11,7 +11,6 @@ import random
 import sys
 import time
 
-import numpy as np
 import pytest
 
 # Ensure project root is importable
@@ -22,9 +21,8 @@ _tests_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _tests_dir not in sys.path:
     sys.path.insert(0, _tests_dir)
 
-from conftest import make_engine, make_engine_with_task
+from conftest import make_engine
 
-from evolution_engine import EvolutionConfig, EvolutionEngine
 from mutation_proposer import EBREAK, NOP, make_rv32i
 
 # ══════════════════════════════════════════════════════════════════════
@@ -517,7 +515,7 @@ class TestBatchPerformance:
             engine.batch_compute_fitness(programs, traces)
         batch_time = time.perf_counter() - t0
 
-        speedup = individual_time / batch_time if batch_time > 0 else float("inf")
+        individual_time / batch_time if batch_time > 0 else float("inf")
         # For small populations (n=5), batch may be slower due to numpy overhead.
         # The batch method is designed for larger populations (50+).
         # For small n, we just verify it doesn't fail — speedup is tested separately.

@@ -20,7 +20,6 @@ from __future__ import annotations
 import collections
 import os
 import random
-import sys
 
 import pytest
 
@@ -206,7 +205,7 @@ class TestReorderBlockCorrectness:
 
     def test_rotation_matches_concatenation(self):
         """Verify rotation produces same permutation as slice-concat."""
-        rng = random.Random(42)
+        random.Random(42)
         for block_len in range(3, 11):
             for split in range(1, block_len):
                 block = list(range(100, 100 + block_len))
@@ -507,7 +506,7 @@ class TestMetaControllerFastPath:
         """When fitness is improving, level fresh, and diversity healthy,
         detect_stagnation should return NORMAL via fast path."""
         mc = MetaController(checkpoint_dir="/tmp/mc_r38_test")
-        for c, (f, l, d) in enumerate(
+        for c, (f, lvl, d) in enumerate(
             [
                 (1.0, 0, 0.5),
                 (2.0, 0, 0.5),
@@ -519,7 +518,7 @@ class TestMetaControllerFastPath:
             snap = TelemetrySnapshot(
                 cycle=c,
                 fitness=f,
-                level=l,
+                level=lvl,
                 champion_words=10,
                 val_loss=None,
                 diversity=d,

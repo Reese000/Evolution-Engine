@@ -12,12 +12,8 @@ Tests cover:
 """
 from __future__ import annotations
 
-import json
 import os
-import shutil
-import sys
 import tempfile
-import time
 
 import pytest
 
@@ -29,6 +25,7 @@ from mutation_proposer import DirectedMutator
 # ══════════════════════════════════════════════════════════════════════
 # 1. TestDetectAnomalies
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestDetectAnomalies:
     """Tests for MetricsCollector.detect_anomalies()."""
@@ -95,6 +92,7 @@ class TestDetectAnomalies:
 # 2. TestCorrelateMetrics
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestCorrelateMetrics:
     """Tests for MetricsCollector.correlate_metrics()."""
 
@@ -116,16 +114,19 @@ class TestCorrelateMetrics:
     def test_no_correlation_between_independent_data(self):
         """Uncorrelated metrics should have |r| close to 0."""
         import random
+
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "metrics.jsonl")
             mc = MetricsCollector(path)
 
             rng = random.Random(123)
             for _ in range(30):
-                mc.record_cycle({
-                    "metric_a": rng.gauss(10, 1),
-                    "metric_b": rng.gauss(50, 5),
-                })
+                mc.record_cycle(
+                    {
+                        "metric_a": rng.gauss(10, 1),
+                        "metric_b": rng.gauss(50, 5),
+                    }
+                )
 
             result = mc.correlate_metrics("metric_a", "metric_b", window=30)
             # With random data, |r| should be small (below moderate threshold)
@@ -163,6 +164,7 @@ class TestCorrelateMetrics:
 # ══════════════════════════════════════════════════════════════════════
 # 3. TestMutationTracker
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestMutationTracker:
     """Tests for DirectedMutator mutation outcome tracking."""
@@ -207,9 +209,7 @@ class TestMutationTracker:
 
         stats = DirectedMutator.get_mutation_stats()
         assert stats["by_type"]["delete"]["success_rate"] == pytest.approx(0.75)
-        assert stats["recent_avg_delta"] == pytest.approx(
-            (0.5 + 0.5 + 0.5 + (-1.0)) / 4
-        )
+        assert stats["recent_avg_delta"] == pytest.approx((0.5 + 0.5 + 0.5 + (-1.0)) / 4)
 
     def test_history_truncation_at_200(self):
         """Mutation history should be capped at 200 entries."""
@@ -235,13 +235,14 @@ class TestMutationTracker:
 # 4. TestMonocultureAlert
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestTestMonocultureAlert:
     """Tests for AlertManager.send_monoculture_alert()."""
 
     def test_alert_fires_when_dominance_above_07(self):
         """High dominance ratio (> 0.7) should produce a warning-level alert."""
         am = AlertManager()
-        result = am.send_monoculture_alert("RANDOM", 0.85, "Increase mutation diversity")
+        am.send_monoculture_alert("RANDOM", 0.85, "Increase mutation diversity")
         # No webhooks configured → returns False, but alert is recorded
         history = am.get_alert_history()
         assert len(history) == 1
@@ -252,7 +253,7 @@ class TestTestMonocultureAlert:
     def test_info_level_for_moderate_dominance(self):
         """Moderate dominance (<= 0.7) should produce an info-level alert."""
         am = AlertManager()
-        result = am.send_monoculture_alert("TASK_AWARE", 0.6, "Monitor diversity")
+        am.send_monoculture_alert("TASK_AWARE", 0.6, "Monitor diversity")
         history = am.get_alert_history()
         assert len(history) == 1
         assert history[0]["level"] == "info"
@@ -269,6 +270,7 @@ class TestTestMonocultureAlert:
 # ══════════════════════════════════════════════════════════════════════
 # 5. TestRecoveryStuckAlert
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestRecoveryStuckAlert:
     """Tests for AlertManager.send_recovery_stuck_alert()."""
@@ -312,6 +314,7 @@ class TestRecoveryStuckAlert:
 # 6. TestGetDiskUsage
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestGetDiskUsage:
     """Tests for data_rotation.get_disk_usage()."""
 
@@ -321,8 +324,13 @@ class TestGetDiskUsage:
 
         result = get_disk_usage()
         required_keys = [
-            "total_bytes", "used_bytes", "free_bytes", "usage_percent",
-            "checkpoint_size", "recurrent_size", "total_project_size",
+            "total_bytes",
+            "used_bytes",
+            "free_bytes",
+            "usage_percent",
+            "checkpoint_size",
+            "recurrent_size",
+            "total_project_size",
         ]
         for key in required_keys:
             assert key in result, f"Missing key: {key}"
@@ -351,6 +359,7 @@ class TestGetDiskUsage:
 # 7. TestQualityAwareRotateCheckpoints
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestQualityAwareRotateCheckpoints:
     """Tests for data_rotation.quality_aware_rotate_checkpoints()."""
 
@@ -373,12 +382,11 @@ class TestQualityAwareRotateCheckpoints:
 
             # Patch the module-level M1_CHECKPOINTS to point to our temp dir
             import data_rotation as dr
+
             original_ckpt = dr.M1_CHECKPOINTS
             try:
                 dr.M1_CHECKPOINTS = type(dr.M1_CHECKPOINTS)(ckpt_dir)
-                deleted = quality_aware_rotate_checkpoints(
-                    keep_n=2, fitness_scores=files
-                )
+                deleted = quality_aware_rotate_checkpoints(keep_n=2, fitness_scores=files)
                 # 3 files should be deleted (the 3 lowest fitness: 0, 1, 2)
                 assert len(deleted) == 3
                 # Remaining files should be epoch_3 and epoch_4 (highest fitness)
@@ -406,13 +414,12 @@ class TestQualityAwareRotateCheckpoints:
                     f.write(f"data_{i}")
 
             import data_rotation as dr
+
             original_ckpt = dr.M1_CHECKPOINTS
             try:
                 dr.M1_CHECKPOINTS = type(dr.M1_CHECKPOINTS)(ckpt_dir)
                 # fitness_scores=None should fall back to mtime rotation
-                deleted = quality_aware_rotate_checkpoints(
-                    keep_n=2, fitness_scores=None
-                )
+                quality_aware_rotate_checkpoints(keep_n=2, fitness_scores=None)
                 # Should still delete files (mtime-based)
                 remaining = os.listdir(ckpt_dir)
                 assert len(remaining) <= 3  # at most keep_n + sacred (none sacred here)
@@ -439,12 +446,11 @@ class TestQualityAwareRotateCheckpoints:
                 scores[name] = 0.5  # all same fitness
 
             import data_rotation as dr
+
             original_ckpt = dr.M1_CHECKPOINTS
             try:
                 dr.M1_CHECKPOINTS = type(dr.M1_CHECKPOINTS)(ckpt_dir)
-                deleted = quality_aware_rotate_checkpoints(
-                    keep_n=2, fitness_scores=scores
-                )
+                quality_aware_rotate_checkpoints(keep_n=2, fitness_scores=scores)
                 remaining = os.listdir(ckpt_dir)
                 # Sacred files must always remain
                 for name in sacred:
@@ -466,12 +472,11 @@ class TestQualityAwareRotateCheckpoints:
                 f.write("data")
 
             import data_rotation as dr
+
             original_ckpt = dr.M1_CHECKPOINTS
             try:
                 dr.M1_CHECKPOINTS = type(dr.M1_CHECKPOINTS)(ckpt_dir)
-                deleted = quality_aware_rotate_checkpoints(
-                    keep_n=5, fitness_scores=scores
-                )
+                deleted = quality_aware_rotate_checkpoints(keep_n=5, fitness_scores=scores)
                 assert deleted == []
                 assert os.path.isfile(fpath)
             finally:

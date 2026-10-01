@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import warnings
 
-import pytest
-
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
 # Re-use the conftest factory (not the fixture, to keep tests standalone)
@@ -120,8 +118,5 @@ class TestConfigHealth:
             warnings.simplefilter("always")
             _ = EvolutionConfig()
             # Filter out irrelevant warnings (deprecation, import, etc.)
-            relevant = [
-                x for x in w
-                if "config" in str(x.message).lower() or "evolution" in str(x.message).lower()
-            ]
+            relevant = [x for x in w if "config" in str(x.message).lower() or "evolution" in str(x.message).lower()]
             assert len(relevant) == 0, f"Unexpected config warnings: {relevant}"

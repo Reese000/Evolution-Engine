@@ -6,10 +6,8 @@ running actual evolution — fast, deterministic, fixture-based.
 """
 from __future__ import annotations
 
-import pytest
-
 from config import EvolutionSection
-from evolution_engine import EvolutionConfig, EvolutionEngine
+from evolution_engine import EvolutionEngine
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. TestEngineHealth — EvolutionEngine basics

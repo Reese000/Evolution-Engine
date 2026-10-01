@@ -16,9 +16,7 @@ Tests for:
   10. Niche sharing: no penalty for distant behavioral descriptors
 """
 
-import os
 import random
-import sys
 
 import pytest
 
@@ -45,7 +43,6 @@ class TestAdaptiveTournamentSizing:
         """High diversity (>0.6) should increase tournament size."""
         eng = self._make_engine(population_size=20)
         eng._current_diversity = 0.8
-        base_tourney = eng.config.tournament_size  # default 3
         # At div=0.8, adaptive_tourney = base + 2 = 5
         # Verify by checking the engine picks larger tournament
         assert eng._current_diversity >= 0.6

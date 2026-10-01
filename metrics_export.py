@@ -69,7 +69,7 @@ def _get_gpu_utilization() -> float:
             _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
         util = pynvml.nvmlDeviceGetUtilizationRates(_nvml_handle)
         return float(util.gpu)
-    except Exception:
+    except (ImportError, OSError, ValueError, TypeError):
         return 0.0
 
 
@@ -254,7 +254,7 @@ def stop_metrics_app(server: Any) -> None:
         try:
             http_server = server[0] if isinstance(server, tuple) else server
             http_server.shutdown()
-        except Exception:
+        except OSError:  # Intentional: server may already be stopped or in invalid state
             pass
 
 
