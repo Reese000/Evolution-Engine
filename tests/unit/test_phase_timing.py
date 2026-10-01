@@ -879,18 +879,21 @@ def test_engine_marker_sites_fire_on_a_real_generation(monkeypatch):
 
     # EE-W6c: the additive split this record carries is operator-visible on
     # its own [PhaseSub] line, leading with the dominant named sub-phase.
-    part_lines = [m for m in logged if "mutation:" in m]
+    # Filters are anchored on the [PhaseSub] prefix so a future line that
+    # merely MENTIONS "mutation:" cannot satisfy them.
+    part_lines = [m for m in logged if m.startswith("[PhaseSub]") and " mutation: " in m]
     assert len(part_lines) == 1, logged
     dominant = max((k for k in subs if k != "unattributed"), key=lambda k: subs[k])
     line = part_lines[0]
     assert f"gen={rec['generation']}" in line
     assert f"{dominant}=" in line
     assert "unattributed=" in line
-    # biggest-first ordering: the dominant block leads the listing
-    assert line.index(f"{dominant}=") < line.index("unattributed=")
+    # biggest-first ordering: whatever leads the listing IS the dominant
+    # block (an index-vs-residual comparison would pass for ascending too)
+    assert line.split("mutation: ", 1)[1].startswith(f"{dominant}=")
     # the sibling hotspot line is a DIFFERENT system with its own gate
     # (3 s >> these ~10 ms blocks), so it stays independent -- and quiet.
-    assert not [m for m in logged if "top:" in m]
+    assert not [m for m in logged if m.startswith("[PhaseSub]") and " top: " in m]
 
     # Quiet generation: raise the partition gate above every named block so
     # only residual time remains -> nothing at all is emitted.
@@ -957,7 +960,9 @@ def test_phase_sub_partition_line_gates_on_largest_named_subphase(monkeypatch):
       direction (two systems, two keys, two independently tuned gates);
     * tolerate records that lack the new key entirely (old records,
       sibling-only code paths) without raising -- markers must never
-      break evolution.
+      break evolution -- and ignore garbage INSIDE the partition (unknown
+      names, non-numeric, non-finite) exactly the way ``summary()``
+      ignores it, so it can neither lead the line nor abort it.
     """
     engine_mod = pytest.importorskip("evolution_engine")
     engine = engine_mod.EvolutionEngine.__new__(engine_mod.EvolutionEngine)
@@ -1004,15 +1009,15 @@ def test_phase_sub_partition_line_gates_on_largest_named_subphase(monkeypatch):
     logged.clear()
     monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "100")  # close partition gate
     engine._log_subphase_marker(both)
-    assert [m for m in logged if "top:" in m], logged
-    assert not [m for m in logged if "mutation:" in m]
+    assert [m for m in logged if " top: " in m], logged
+    assert not [m for m in logged if " mutation: " in m]
 
     logged.clear()
     monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "3")  # reopen
     monkeypatch.setenv("EE_PHASE_SUB_LOG_MIN", "100")  # close hotspot gate
     engine._log_subphase_marker(both)
-    assert [m for m in logged if "mutation:" in m], logged
-    assert not [m for m in logged if "top:" in m]
+    assert [m for m in logged if " mutation: " in m], logged
+    assert not [m for m in logged if " top: " in m]
 
     # 5. records without the additive key (pre-EE-W6) behave exactly as
     #    before: no partition line, no exception, sibling line untouched.
@@ -1024,4 +1029,49 @@ def test_phase_sub_partition_line_gates_on_largest_named_subphase(monkeypatch):
     assert logged == []
     legacy = {"generation": 5, "generation_seconds": 9.0, "subphase_seconds": {"enrich": 4.0}}
     engine._log_subphase_marker(legacy)
-    assert len(logged) == 1 and "top:" in logged[0] and "mutation:" not in logged[0]
+    assert len(logged) == 1 and " top: " in logged[0] and " mutation: " not in logged[0]
+
+    # 6. a truthy NON-DICT record must not raise: the pre-EE-W6c form read
+    #    `record.get(...)` inside its try and swallowed the AttributeError;
+    #    the guard keeps that "diagnostics never break evolution" promise
+    #    for both lines.
+    logged.clear()
+    for junk in ([1, 2, 3], "hello", 42, object()):
+        engine._log_subphase_marker(junk)  # type: ignore[arg-type]
+    assert logged == []
+
+    # 7. a gate of 0 ("log every generation") still cannot print a line
+    #    that names no stage: residual-only stays quiet, a real stage prints.
+    monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "0")
+    logged.clear()
+    engine._log_subphase_marker(_record(unattributed=42.0))
+    assert logged == []
+    engine._log_subphase_marker(_record(challenger_generation=0.5))
+    assert len(logged) == 1 and "challenger_generation=0.50s" in logged[0]
+
+    # 8. sub-10 ms dominant under a sub-10 ms gate: the 10 ms display filter
+    #    must not eat the block the gate just admitted, so the line still
+    #    names a stage and still leads with it.
+    monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "0.005")
+    logged.clear()
+    engine._log_subphase_marker(_record(challenger_generation=0.007, unattributed=89.5))
+    assert len(logged) == 1, logged
+    assert logged[0].split("mutation: ", 1)[1].startswith("challenger_generation=")
+    assert "unattributed=89.50s" in logged[0]
+
+    # 9. garbage inside the partition: unknown names and non-numeric /
+    #    non-finite values are ignored the way summary() ignores them --
+    #    they neither lead the line nor abort it.
+    monkeypatch.setenv("EE_PHASE_SUBPART_LOG_MIN", "3")
+    dirty = _record(challenger_generation=67.7)
+    dirty[SUBPHASE_RECORD_KEY]["covered"] = 500.0
+    dirty[SUBPHASE_RECORD_KEY]["length_capping"] = "oops"
+    dirty[SUBPHASE_RECORD_KEY]["dedupe"] = float("nan")
+    logged.clear()
+    engine._log_subphase_marker(dirty)
+    assert len(logged) == 1, logged
+    body = logged[0].split("mutation: ", 1)[1]
+    assert body.startswith("challenger_generation=67.70s")
+    assert "covered=" not in body
+    assert "length_capping=" not in body
+    assert "dedupe=" not in body

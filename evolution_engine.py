@@ -106,7 +106,14 @@ ensure_project_on_path()
 # EE-W5: per-generation phase timing -- splits generation wall time into
 # VM-farm fitness evaluation vs Python orchestration so the
 # phase_evolution_seconds band can be attributed to a dominant phase.
-from evolution.phase_timing import SUBPHASE_RECORD_KEY, PhaseTimer, default_log_path, timed_vm_eval, timers_enabled
+from evolution.phase_timing import (
+    MUTATION_SUBPHASES,
+    SUBPHASE_RECORD_KEY,
+    PhaseTimer,
+    default_log_path,
+    timed_vm_eval,
+    timers_enabled,
+)
 from vm_farm import EvalResult, _run_one_evaluation  # type: ignore
 
 
@@ -3695,32 +3702,60 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         tuned independently: ``EE_PHASE_SUB_LOG_MIN`` for the hotspot map,
         ``EE_PHASE_SUBPART_LOG_MIN`` for the additive partition (both
         default 3 seconds).
+
+        Diagnostics must never break evolution, so each line is guarded on
+        its own and a malformed record degrades to "no line" (a truthy
+        non-dict record returns before either read; ``_log`` itself is not
+        ours to guard).
         """
-        if not record:
+        if not isinstance(record, dict) or not record:
             return
         gen = record.get("generation")
         try:
             subs = record.get("subphase_seconds") or {}
             if subs:
                 worst = max(subs.values())
-                if worst >= float(os.environ.get("EE_PHASE_SUB_LOG_MIN", "3")):
+                # Polarity mirrors the original `if worst < gate: return`
+                # exactly -- NaN included: rewriting this as
+                # `worst >= gate` would flip a NaN from "log" to "quiet".
+                if not (worst < float(os.environ.get("EE_PHASE_SUB_LOG_MIN", "3"))):
                     top = ", ".join(f"{k}={v:.1f}" for k, v in list(subs.items())[:5])
                     self._log(f"[PhaseSub] gen={gen} " f"total={record.get('generation_seconds', 0.0):.1f}s top: {top}")
         except Exception:  # noqa: BLE001 -- markers must never break evolution
             pass
         try:
-            split = record.get(SUBPHASE_RECORD_KEY) or {}
-            named = {k: v for k, v in split.items() if k != "unattributed"}
+            split = record.get(SUBPHASE_RECORD_KEY)
+            named: dict[str, float] = {}
+            residual = 0.0
+            if isinstance(split, dict):
+                for key, value in split.items():
+                    # Read the partition the way `summary()` reads it: only
+                    # the documented names, only finite numbers.  A
+                    # record-borne "covered" must not lead this line, and a
+                    # stray string must not abort it while formatting below.
+                    if key not in MUTATION_SUBPHASES or isinstance(value, bool):
+                        continue
+                    if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                        continue
+                    if key == "unattributed":
+                        residual = float(value)
+                    else:
+                        named[key] = float(value)
             if not named:
                 return
             dominant = max(named, key=lambda k: named[k])
-            if named[dominant] < float(os.environ.get("EE_PHASE_SUBPART_LOG_MIN", "3")):
+            best = named[dominant]
+            # Gate on the largest NAMED sub-phase (the residual is excluded
+            # by construction): a residual-only generation stays quiet even
+            # with a gate of 0, i.e. even under "log every generation".
+            if best <= 0.0 or best < float(os.environ.get("EE_PHASE_SUBPART_LOG_MIN", "3")):
                 return
             # Show every named block that actually spent time (>= 10 ms, so
             # 0.001s bookkeeping noise stays out) plus the residual itself,
-            # biggest first, dominant sub-phase leading.
-            shown = [(k, v) for k, v in sorted(named.items(), key=lambda kv: -kv[1]) if v >= 0.01]
-            shown.append(("unattributed", split.get("unattributed", 0.0)))
+            # biggest first -- but the dominant block is ALWAYS named, or a
+            # sub-10 ms dominant could print a line with no stage in it.
+            shown = [(k, v) for k, v in sorted(named.items(), key=lambda kv: -kv[1]) if v >= 0.01 or k == dominant]
+            shown.append(("unattributed", residual))
             parts = " ".join(f"{k}={v:.2f}s" for k, v in shown)
             self._log(f"[PhaseSub] gen={gen} mutation: {parts}")
         except Exception:  # noqa: BLE001 -- markers must never break evolution
