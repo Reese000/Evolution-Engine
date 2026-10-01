@@ -631,6 +631,7 @@ def test_summary_skips_a_corrupt_phase_row_without_losing_the_others():
     summary = timer.summary(run_wall=1.0)
     assert summary["gen_phase_generations"] == 2
     assert "gen_phase_error" not in summary  # no degradation to the fallback
+    assert summary["gen_phase_skipped_rows"] == 1  # and not silently zeroed either
     # the good row still contributes its phase and sub-phase totals
     assert summary["gen_phase_mutation_propagation_seconds"] > 0
     assert summary["gen_phase_sub_generation_init_seconds"] > 0
@@ -657,6 +658,29 @@ def test_summary_ignores_unlisted_subphase_names():
     assert "gen_phase_sub_bogus_seconds" not in summary
     assert summary[SUBPHASE_COVERED_KEY] == pytest.approx(summary["gen_phase_sub_generation_init_seconds"], abs=0.001)
     assert summary[SUBPHASE_COVERED_KEY] < 99.0
+    assert all(k.startswith("gen_phase_") for k in summary)
+
+
+def test_summary_survives_a_non_dict_record_row():
+    """A non-dict entry in ``records`` must not raise either (round-2 review).
+
+    Every other row read in ``_build_summary`` is guarded; the sub-phase loop
+    and ``_phase_row`` now are too, so the symmetric case is pinned by a test
+    instead of by the ``list[dict]`` type hint alone.
+    """
+    timer = PhaseTimer()
+    timer.begin_generation(0)
+    with timer.phase("mutation_propagation"):
+        with timer.sub_phase("generation_init"):
+            time.sleep(0.002)
+    timer.end_generation()
+    timer.records.append(None)  # type: ignore[arg-type]
+
+    summary = timer.summary(run_wall=1.0)
+    assert "gen_phase_error" not in summary
+    assert summary["gen_phase_generations"] == 2
+    assert summary["gen_phase_skipped_rows"] == 1
+    assert summary["gen_phase_sub_generation_init_seconds"] > 0
     assert all(k.startswith("gen_phase_") for k in summary)
 
 

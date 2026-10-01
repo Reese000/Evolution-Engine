@@ -528,8 +528,8 @@ class PhaseTimer:
                 return default
             return float(value) if math.isfinite(float(value)) else default
 
-        def _phase_row(row: dict[str, Any]) -> dict[str, Any]:
-            ps = row.get("phase_seconds")
+        def _phase_row(row: Any) -> dict[str, Any]:
+            ps = row.get("phase_seconds") if isinstance(row, dict) else None
             return ps if isinstance(ps, dict) else {}
 
         totals = {p: round(sum(_num(_phase_row(r), p) for r in self.records), 3) for p in PHASES}
@@ -538,6 +538,10 @@ class PhaseTimer:
         wall = run_wall if run_wall is not None else (time.perf_counter() - self._run_start)
         named = sum(totals[p] for p in NAMED_PHASES)
         vm_farm = round(sum(_num(r, "vm_eval_seconds") for r in self.records), 3)
+        # Rows we could not read are counted, not silently zeroed: a
+        # healthy-looking summary that quietly dropped data would be the
+        # opposite failure of the raise it replaced (round-2 review).
+        skipped_rows = sum(1 for r in self.records if not _phase_row(r))
         # EE-W6: per-sub-phase totals across the run, additive and independent
         # of the phase keys above.  Non-finite values are dropped because
         # json.dumps would emit bare NaN/Infinity, which is not valid JSON for
@@ -548,6 +552,8 @@ class PhaseTimer:
         # t_9b0b3680).
         sub_totals: dict[str, float] = {name: 0.0 for name in MUTATION_SUBPHASES}
         for r in self.records:
+            if not isinstance(r, dict):
+                continue
             subs = r.get(SUBPHASE_RECORD_KEY)
             if not isinstance(subs, dict):
                 continue
@@ -584,6 +590,15 @@ class PhaseTimer:
         }
         for name in sorted(sub_totals, key=lambda n: -sub_totals[n]):
             summary[f"gen_phase_sub_{name}_seconds"] = round(sub_totals[name], 3)
+        if skipped_rows:
+            # Emitted only when it happens, so the normal key set is
+            # unchanged while data loss can no longer be mistaken for a
+            # healthy run (round-2 review).
+            summary["gen_phase_skipped_rows"] = int(skipped_rows)
+            try:
+                sys.stderr.write(f"[phase_timing] {skipped_rows} record row(s) unreadable, skipped in summary\n")
+            except Exception:  # noqa: BLE001 -- the reporter must not raise either
+                pass
         return summary
 
 
