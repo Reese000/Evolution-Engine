@@ -75,3 +75,24 @@ multi_cycle_summary.json
 # Test-generated scratch artifacts left behind by local test runs
 test_atomic_state.json
 .venv_linux/
+
+# Public-release cleanup: caches, local tooling, logs, backups
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+node_modules/
+.venv/
+venv/
+*.log
+tmp/
+temp/
+scratch/
+.idea/
+*.code-workspace
+.claude/
+.hermes/
+*.bak
+*.bak-*
+*.orig
+*~
