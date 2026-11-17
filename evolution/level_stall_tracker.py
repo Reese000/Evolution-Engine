@@ -6,11 +6,7 @@ import json
 import os
 from typing import Any
 
-from evolution.curriculum_advance import (
-    curriculum_verify_threshold,
-    nudge_fitness_floor,
-    nudge_fitness_passes,
-)
+from evolution.curriculum_advance import curriculum_verify_threshold, nudge_fitness_floor, nudge_fitness_passes
 
 
 def _state_path(project_root: str) -> str:
@@ -61,10 +57,7 @@ def update_and_maybe_nudge_start_level(
     stall = max(3, cycles)
     threshold = curriculum_verify_threshold(final_level, stall, 3)
     fitness_floor = min_fitness if min_fitness is not None else nudge_fitness_floor(final_level)
-    fitness_ok = (
-        final_fitness >= fitness_floor
-        or nudge_fitness_passes(final_level, final_fitness, verify_score)
-    )
+    fitness_ok = final_fitness >= fitness_floor or nudge_fitness_passes(final_level, final_fitness, verify_score)
     if verify_score >= threshold and fitness_ok:
         return final_level + 1
     return None

@@ -1,4 +1,5 @@
 """Print recent cycle timestamps from trajectory / gen-phase logs (read-only)."""
+
 from __future__ import annotations
 
 import json
@@ -20,9 +21,23 @@ def tail_records(path: str, n: int = 8):
                 continue
     print(f"--- {path}: {len(recs)} records")
     for r in recs[-n:]:
-        keep = {k: v for k, v in r.items()
-                if k in ("ts", "timestamp", "cycle", "cycle_number", "elapsed_seconds",
-                         "event", "kind", "status", "fitness", "prom_raw")}
+        keep = {
+            k: v
+            for k, v in r.items()
+            if k
+            in (
+                "ts",
+                "timestamp",
+                "cycle",
+                "cycle_number",
+                "elapsed_seconds",
+                "event",
+                "kind",
+                "status",
+                "fitness",
+                "prom_raw",
+            )
+        }
         print(json.dumps(keep, default=str)[:400])
 
 

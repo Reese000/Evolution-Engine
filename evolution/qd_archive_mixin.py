@@ -3,12 +3,13 @@
 Extracted from EvolutionEngine in evolution_engine.py.
 Uses mixin pattern: all methods access self.* from the host EvolutionEngine.
 """
+
 from __future__ import annotations
 
 import heapq
+import importlib.util
 from typing import Any
 
-import importlib.util
 _HAS_QD = importlib.util.find_spec("qd_archive") is not None
 
 from mutation_proposer import _crossover_mutation, trim_dead_code  # noqa: E402
@@ -18,7 +19,6 @@ class QDArchiveMixin:
     """Mixin providing QD archive and novelty archive operations."""
 
     def _try_qd_crossover(self) -> list[int] | None:
-
         """Attempt to breed a hybrid program from the QD archive.
 
 
@@ -51,8 +51,6 @@ class QDArchiveMixin:
 
             return None
 
-
-
         try:
 
             solutions = self.qd_archive.grid_solutions()
@@ -60,8 +58,6 @@ class QDArchiveMixin:
             if len(solutions) < 2:
 
                 return None
-
-
 
             # R39: Use heapq.nlargest(3) to find top-3 by fitness.
 
@@ -81,8 +77,6 @@ class QDArchiveMixin:
 
             second = top3[1] if len(top3) > 1 else None
 
-
-
             if best["program"] == (second["program"] if second else []):
 
                 second = top3[2] if len(top3) > 2 else None
@@ -91,20 +85,12 @@ class QDArchiveMixin:
 
                     return None
 
-
-
             hybrid = _crossover_mutation(
-
                 program=list(best["program"]),
-
                 task_level=self.champion_level,
-
                 rng=self.rng,
-
                 champion=list(second["program"]),
-
                 champion_crossover_prob=self.config.champion_crossover_prob,
-
             )
 
             if not hybrid:
@@ -174,9 +160,7 @@ class QDArchiveMixin:
                 self._scan_floor_growth_crossover_pool = pool
                 self._scan_floor_growth_crossover_pool_cycle = cycle_no
                 if pool:
-                    self._log(
-                        f"[GrowthCross] Built {len(pool)} hybrid(s) for cycle {cycle_no}"
-                    )
+                    self._log(f"[GrowthCross] Built {len(pool)} hybrid(s) for cycle {cycle_no}")
             if not pool:
                 return None
             from evolution.mutation_helpers import scan_floor_growth_crossover_max_words
@@ -187,11 +171,7 @@ class QDArchiveMixin:
             usable = [
                 p
                 for p in pool
-                if len(p) <= max_words
-                and (
-                    len(p) == len(champ)
-                    or scan_floor_growth_heldout_qualifies(champ, p)
-                )
+                if len(p) <= max_words and (len(p) == len(champ) or scan_floor_growth_heldout_qualifies(champ, p))
             ]
             if not usable:
                 return None
@@ -255,18 +235,10 @@ class QDArchiveMixin:
             lift_prob = float(os.environ.get("EE_L10_LIFT_MUTATION_PARENT_PROB", "0.45"))
             if rng.random() < lift_prob:
                 try:
-                    from evolution.champion_rollback import (
-                        collect_growth_material_compress_parents,
-                    )
+                    from evolution.champion_rollback import collect_growth_material_compress_parents
 
-                    parents = collect_growth_material_compress_parents(
-                        list(champ), max_parents=8
-                    )
-                    l10_parents = [
-                        list(p)
-                        for p in parents
-                        if _curriculum_l10_cached(list(p)) > champ_l10 + 0.01
-                    ]
+                    parents = collect_growth_material_compress_parents(list(champ), max_parents=8)
+                    l10_parents = [list(p) for p in parents if _curriculum_l10_cached(list(p)) > champ_l10 + 0.01]
                     if l10_parents:
                         l10_parents.sort(
                             key=lambda p: (
@@ -289,9 +261,7 @@ class QDArchiveMixin:
         pool: list[list[int]] = []
         if qd is not None:
             try:
-                sols = [
-                    s for s in qd.grid_solutions() if isinstance(s, dict) and s.get("program")
-                ]
+                sols = [s for s in qd.grid_solutions() if isinstance(s, dict) and s.get("program")]
             except (AttributeError, RuntimeError, TypeError):
                 sols = []
             champ_key = tuple(champ)
@@ -336,10 +306,7 @@ class QDArchiveMixin:
         cross_stall = 2 if at_floor else 8
         cells = self._distinct_qd_cell_programs(longer_first=at_floor)
         if at_floor and cells and self.champion:
-            from evolution.epi_momentum_governor import (
-                promotion_raw_capability_stalled,
-                scan_floor_length_prom_stalled,
-            )
+            from evolution.epi_momentum_governor import promotion_raw_capability_stalled, scan_floor_length_prom_stalled
             from evolution.mutation_helpers import (
                 _evolution_project_root,
                 compress_growth_probe_pool,
@@ -350,10 +317,7 @@ class QDArchiveMixin:
             champ = list(self.champion)
             long_cells = [c for c in cells if len(c) > len(champ)]
             root = _evolution_project_root()
-            stalled = (
-                promotion_raw_capability_stalled(root)
-                or scan_floor_length_prom_stalled(root, len(champ))
-            )
+            stalled = promotion_raw_capability_stalled(root) or scan_floor_length_prom_stalled(root, len(champ))
             compress_src = scan_floor_growth_compress_sources(
                 champ,
                 long_cells,
@@ -400,9 +364,7 @@ class QDArchiveMixin:
             _place(idx, hybrid, label)
             injected += 1
         if injected:
-            self._log(
-                f"[QD] Injected {injected} archive program(s) into population"
-            )
+            self._log(f"[QD] Injected {injected} archive program(s) into population")
         return injected
 
     # ------------------------------------------------------------------
@@ -411,12 +373,7 @@ class QDArchiveMixin:
 
     # ------------------------------------------------------------------
 
-
-
-
-
     def _should_skip_qd_archive_update(self) -> bool:
-
         """Return True when QD archive update should not run this generation."""
 
         qd = self.qd_archive
@@ -435,12 +392,7 @@ class QDArchiveMixin:
 
         return self.config.qd_bonus_weight <= 0.0 and not self.config.use_qd_archive
 
-
-
-
-
     def _log_qd_descriptor_diagnostics(self, qd: Any, qd_desc: Any, was_added: bool) -> None:
-
         """Log QD descriptor range and cell-add events for diagnostics."""
 
         gen = self.current_generation
@@ -448,43 +400,25 @@ class QDArchiveMixin:
         if gen % 25 == 0 or was_added:
 
             self._log(
-
                 f"[QD] Descriptor range gen={gen}: "
-
                 f"inst_div=[{qd._descriptor_min[0]:+.2f}, {qd._descriptor_max[0]:+.2f}], "
-
                 f"reg_press=[{qd._descriptor_min[1]:+.2f}, {qd._descriptor_max[1]:+.2f}], "
-
                 f"bounds=[{qd._per_dim_lower[0]:+.2f}..{qd._per_dim_upper[0]:+.2f}, "
-
                 f"{qd._per_dim_lower[1]:+.2f}..{qd._per_dim_upper[1]:+.2f}], "
-
                 f"coverage={qd.coverage():.0%}, "
-
                 f"rebins={qd._rebins}"
-
             )
 
         if was_added:
 
             self._log(
-
                 f"[QD] Added champion to grid cell "
-
                 f"(inst_div={qd_desc[0]:+.2f}, "
-
                 f"reg_press={qd_desc[1]:+.2f}, "
-
                 f"coverage={qd.coverage():.0%})"
-
             )
 
-
-
-
-
     def _update_qd_archive(self) -> None:
-
         """Extract champion descriptor and add to MAP-Elites QD archive.
 
 
@@ -514,6 +448,7 @@ class QDArchiveMixin:
         try:
 
             from evolution_engine import compute_qd_axes  # lazy to avoid circular import
+
             qd_desc = compute_qd_axes(champion, trace)
 
             # R31: Cache the computed descriptor for _compute_fitness niche penalty
@@ -527,15 +462,10 @@ class QDArchiveMixin:
                 return
 
             was_added = qd.add_solution(
-
                 descriptor=qd_desc,
-
                 fitness=self.champion_fitness,
-
                 program=champion,
-
                 trace=trace,
-
             )
 
             self._qd_coverage = qd.coverage()
@@ -546,12 +476,7 @@ class QDArchiveMixin:
 
             self._log(f"[QD] Skipped: {exc}")
 
-
-
-
-
     def _attempt_qd_archive_champion_replace(self, qd_prog: list[int], archive_fitness: float) -> bool:
-
         """Evaluate, verify (R50), and optionally replace champion from QD archive."""
 
         qd_trace = self._evaluate(qd_prog)
@@ -560,37 +485,22 @@ class QDArchiveMixin:
 
         qd_discounted = qd_fitness * 0.9
 
-
-
         self._log(
-
             f"[QD Reset] Found archive candidate: "
-
             f"archive_fitness={archive_fitness:.4f}, "
-
             f"recomputed={qd_fitness:.4f}, "
-
             f"{len(qd_prog)} words (stalled={self.generations_stalled})"
-
         )
-
-
 
         if qd_discounted <= self.champion_fitness:
 
             self._log(
-
                 f"[QD Reset] Candidate not better: "
-
                 f"current={self.champion_fitness:.4f}, "
-
                 f"qd={qd_discounted:.4f} -- keeping champion"
-
             )
 
             return False
-
-
 
         _old_champion = self.champion
 
@@ -611,10 +521,7 @@ class QDArchiveMixin:
             current_verify,
         )
         if bloat_reason is not None:
-            self._log(
-                f"[QD Reset] BLOCKED bloat: {bloat_reason} "
-                f"({len(qd_prog)}w vs champion {champ_words}w)"
-            )
+            self._log(f"[QD Reset] BLOCKED bloat: {bloat_reason} " f"({len(qd_prog)}w vs champion {champ_words}w)")
             return False
 
         self.champion = qd_prog
@@ -638,10 +545,7 @@ class QDArchiveMixin:
             self.champion = _old_champion
             self.champion_trace = _old_trace
             self.champion_fitness = _old_fitness
-            self._log(
-                f"[QD Reset] BLOCKED verify regression "
-                f"{verify_score:.3f} < {current_verify:.3f}"
-            )
+            self._log(f"[QD Reset] BLOCKED verify regression " f"{verify_score:.3f} < {current_verify:.3f}")
             return False
 
         bloat_reason = champion_bloat_blocks(
@@ -666,17 +570,9 @@ class QDArchiveMixin:
 
             self.champion_fitness = _old_fitness
 
-            self._log(
-
-                f"[QD Reset] BLOCKED (R50): verify failed "
-
-                f"({verify_score:.2f}), keeping champion"
-
-            )
+            self._log(f"[QD Reset] BLOCKED (R50): verify failed " f"({verify_score:.2f}), keeping champion")
 
             return False
-
-
 
         old_fitness = self.champion_fitness
 
@@ -695,13 +591,9 @@ class QDArchiveMixin:
         self._champion_changed_since_last_novelty = True
 
         self._log(
-
             f"[QD Reset] Champion replaced: "
-
             f"{old_fitness:.4f} -> {qd_fitness:.4f} "
-
             f"(from QD archive, stall reset, verify={verify_score:.2f})"
-
         )
 
         self._champion_qd_valid = False
@@ -710,12 +602,7 @@ class QDArchiveMixin:
 
         return True
 
-
-
-
-
     def _try_qd_champion_reset(self) -> bool:
-
         """Replace champion with best QD archive program when deeply stalled.
 
 
@@ -754,11 +641,7 @@ class QDArchiveMixin:
 
             return False
 
-
-
         self._qd_champion_reset_tried = True
-
-
 
         try:
 
@@ -770,15 +653,9 @@ class QDArchiveMixin:
 
                 return False
 
-
-
             best_qd = max(solutions, key=lambda s: s["fitness"])
 
-            return self._attempt_qd_archive_champion_replace(
-
-                list(best_qd["program"]), best_qd["fitness"]
-
-            )
+            return self._attempt_qd_archive_champion_replace(list(best_qd["program"]), best_qd["fitness"])
 
         except RuntimeError as e:
 
@@ -786,20 +663,13 @@ class QDArchiveMixin:
 
             return False
 
-
-
     # ------------------------------------------------------------------
 
     # Novelty archive (v13)
 
     # ------------------------------------------------------------------
 
-
-
-
-
     def _should_skip_novelty_archive_update(self) -> bool:
-
         """Return True when novelty archive update should not run this generation."""
 
         if self.novelty_archive is None:
@@ -816,36 +686,19 @@ class QDArchiveMixin:
 
         return self._extract_behavioral_descriptor is None
 
-
-
-
-
     def _build_novelty_archive_metadata(self, champion: list[int], trace: dict[str, Any]) -> dict[str, Any]:
-
         """Build metadata payload stored alongside a novelty archive descriptor."""
 
         return {
-
             "generation": self.current_generation,
-
             "level": self.champion_level,
-
             "fitness": self.champion_fitness,
-
             "champion_size": len(champion),
-
             "instructions_count": trace.get("instructions_count", 0),
-
             "status": trace.get("status", ""),
-
         }
 
-
-
-
-
     def _manage_novelty_archive_capacity(self) -> None:
-
         """Evict low-novelty entries when the archive exceeds capacity."""
 
         if self.novelty_archive is None:
@@ -864,12 +717,7 @@ class QDArchiveMixin:
 
             pass
 
-
-
-
-
     def _update_novelty_archive(self) -> None:
-
         """Extract champion descriptor and add to the novelty archive.
 
 
@@ -905,25 +753,17 @@ class QDArchiveMixin:
         try:
 
             descriptor = self._extract_behavioral_descriptor(
-
                 trace,
-
                 champion,
-
                 budget=self.config.eval_budget,
-
             )
 
             metadata = self._build_novelty_archive_metadata(champion, trace)
 
             was_added, score = novelty_archive.add_to_archive(
-
                 descriptor,
-
                 metadata=metadata,
-
                 check_threshold=novelty_archive.size > 0,
-
             )
 
             if was_added:
@@ -940,9 +780,7 @@ class QDArchiveMixin:
 
         self._manage_novelty_archive_capacity()
 
-    def _fill_empty_qd_cells_from_evaluated(
-        self, programs, traces, strategies: list[str] | None = None
-    ) -> int:
+    def _fill_empty_qd_cells_from_evaluated(self, programs, traces, strategies: list[str] | None = None) -> int:
         """Insert evaluated programs into empty MAP-Elites cells only.
 
         Uses existing traces (no extra VM eval). Does not replace occupied
@@ -950,9 +788,7 @@ class QDArchiveMixin:
         enough for QD crossover to fire.
         """
         try:
-            return self._fill_empty_qd_cells_from_evaluated_inner(
-                programs, traces, strategies=strategies
-            )
+            return self._fill_empty_qd_cells_from_evaluated_inner(programs, traces, strategies=strategies)
         except Exception as exc:  # noqa: BLE001 — must not abort the generation loop
             try:
                 self._log(f"[QD] Population fill skipped: {type(exc).__name__}: {exc}")
@@ -962,9 +798,7 @@ class QDArchiveMixin:
 
     _QD_FILL_SKIP_STRATEGIES = frozenset({"DIVERSITY_INJECT", "TERMINAL_VERIFY_PROBE"})
 
-    def _fill_empty_qd_cells_from_evaluated_inner(
-        self, programs, traces, strategies: list[str] | None = None
-    ) -> int:
+    def _fill_empty_qd_cells_from_evaluated_inner(self, programs, traces, strategies: list[str] | None = None) -> int:
         qd = getattr(self, "qd_archive", None)
         if qd is None or not _HAS_QD or not programs or not traces:
             return 0
@@ -1027,8 +861,5 @@ class QDArchiveMixin:
                 added += 1
         if added:
             self._qd_coverage = qd.coverage()
-            self._log(
-                f"[QD] Filled {added} empty cells from evaluated population "
-                f"(coverage={qd.coverage():.0%})"
-            )
+            self._log(f"[QD] Filled {added} empty cells from evaluated population " f"(coverage={qd.coverage():.0%})")
         return added

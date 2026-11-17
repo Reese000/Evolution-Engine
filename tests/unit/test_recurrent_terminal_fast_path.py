@@ -55,9 +55,7 @@ def test_apply_novelty_skipped_at_terminal_fast_path():
     eng.champion_level = 30
     eng.config = SimpleNamespace(max_level=30)
     eng._champion_verify_score = 1.0
-    weights, applied = eng._apply_novelty_weights(
-        [(["a"], 1.0, {}, "s")], [1.0], "/nonexistent/path.jsonl"
-    )
+    weights, applied = eng._apply_novelty_weights([(["a"], 1.0, {}, "s")], [1.0], "/nonexistent/path.jsonl")
     assert weights == [1.0]
     assert applied is False
 
@@ -92,9 +90,7 @@ def test_evict_skips_full_parse_when_under_entry_cap(tmp_path):
     from evolution.shared import MAX_RECURRENT_ENTRIES
 
     path = tmp_path / "recurrent_data.jsonl"
-    lines = [
-        '{"fitness": 1.0, "champion_sha256": "a"}\n' for _ in range(MAX_RECURRENT_ENTRIES)
-    ]
+    lines = ['{"fitness": 1.0, "champion_sha256": "a"}\n' for _ in range(MAX_RECURRENT_ENTRIES)]
     path.write_text("".join(lines), encoding="utf-8")
 
     class E(RecurrentMixin):
@@ -136,9 +132,7 @@ def test_collect_skips_task_aware_at_scan_floor(monkeypatch):
     eng._champion_verify_score = 1.0
     eng.champion = [0x00000013] * 59 + [0x00100073]
     eng._last_challengers = [[0x00000013, 0x00000013, 0x00000013, 0x00100073]]
-    eng._last_results = [
-        {"status": "ok", "instructions_count": 5, "final_regs": {}, "final_memory": {}}
-    ]
+    eng._last_results = [{"status": "ok", "instructions_count": 5, "final_regs": {}, "final_memory": {}}]
     eng._last_challenger_fitnesses = [50.0]
     eng._last_challenger_strategies = ["TASK_AWARE"]
     eng._saved_sha256s = {}

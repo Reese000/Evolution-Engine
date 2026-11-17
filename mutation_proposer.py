@@ -220,16 +220,23 @@ class TraceAnalyzer:
         """Handle empty trace case."""
         if error:
             return TraceAnalysis(
-                divergence_point=0, divergence_type="illegal_instruction",
-                final_regs=[0] * 32, trace_length=0,
+                divergence_point=0,
+                divergence_type="illegal_instruction",
+                final_regs=[0] * 32,
+                trace_length=0,
                 suggestion={"type": "replace_program", "reason": f"execution error: {error}"},
-                error=error, expected=expected, inputs=inputs,
+                error=error,
+                expected=expected,
+                inputs=inputs,
             )
         return TraceAnalysis(
-            divergence_point=0, divergence_type="unknown",
-            final_regs=[0] * 32, trace_length=0,
+            divergence_point=0,
+            divergence_type="unknown",
+            final_regs=[0] * 32,
+            trace_length=0,
             suggestion={"type": "regenerate", "reason": "empty trace"},
-            expected=expected, inputs=inputs,
+            expected=expected,
+            inputs=inputs,
         )
 
     @staticmethod
@@ -237,20 +244,29 @@ class TraceAnalyzer:
         """Handle illegal instruction error."""
         div_pc = TraceAnalyzer._extract_pc_from_error(error)
         return TraceAnalysis(
-            divergence_point=len(trace) - 1, divergence_type="illegal_instruction",
-            final_regs=trace[-1].get("regs", [0] * 32), trace_length=len(trace),
+            divergence_point=len(trace) - 1,
+            divergence_type="illegal_instruction",
+            final_regs=trace[-1].get("regs", [0] * 32),
+            trace_length=len(trace),
             suggestion={"type": "replace_instruction", "pc": div_pc, "reason": error},
-            divergence_pc=div_pc, error=error, expected=expected, inputs=inputs,
+            divergence_pc=div_pc,
+            error=error,
+            expected=expected,
+            inputs=inputs,
         )
 
     @staticmethod
     def _analyze_pc_out_of_bounds(trace, error, expected, inputs):
         """Handle PC out of bounds error."""
         return TraceAnalysis(
-            divergence_point=len(trace) - 1, divergence_type="pc_out_of_bounds",
-            final_regs=trace[-1].get("regs", [0] * 32), trace_length=len(trace),
+            divergence_point=len(trace) - 1,
+            divergence_type="pc_out_of_bounds",
+            final_regs=trace[-1].get("regs", [0] * 32),
+            trace_length=len(trace),
             suggestion={"type": "add_terminator", "reason": "PC went out of bounds; program likely needs EBREAK"},
-            error=error, expected=expected, inputs=inputs,
+            error=error,
+            expected=expected,
+            inputs=inputs,
         )
 
     @staticmethod
@@ -299,34 +315,49 @@ class TraceAnalyzer:
             primary_reg = min(wrong_regs.keys())
         primary_info = wrong_regs[primary_reg]
         return TraceAnalysis(
-            divergence_point=len(trace) - 1, divergence_type="wrong_reg_value",
-            final_regs=final_regs, trace_length=len(trace),
+            divergence_point=len(trace) - 1,
+            divergence_type="wrong_reg_value",
+            final_regs=final_regs,
+            trace_length=len(trace),
             suggestion={
-                "type": "fix_register", "reg": primary_reg,
-                "actual": primary_info["actual"], "expected": primary_info["expected"],
+                "type": "fix_register",
+                "reg": primary_reg,
+                "actual": primary_info["actual"],
+                "expected": primary_info["expected"],
                 "reason": f'reg[{primary_reg}] = {primary_info["actual"]}, expected {primary_info["expected"]}',
             },
-            expected=expected, inputs=inputs,
+            expected=expected,
+            inputs=inputs,
         )
 
     @staticmethod
     def _analyze_ran_out_of_budget(trace, final_regs, expected, inputs, has_ebreak):
         """Handle ran out of budget case."""
         return TraceAnalysis(
-            divergence_point=len(trace) - 1, divergence_type="ran_out_of_budget",
-            final_regs=final_regs, trace_length=len(trace),
-            suggestion={"type": "reduce_complexity", "reason": "program exceeded instruction budget without halting", "has_ebreak": has_ebreak},
-            expected=expected, inputs=inputs,
+            divergence_point=len(trace) - 1,
+            divergence_type="ran_out_of_budget",
+            final_regs=final_regs,
+            trace_length=len(trace),
+            suggestion={
+                "type": "reduce_complexity",
+                "reason": "program exceeded instruction budget without halting",
+                "has_ebreak": has_ebreak,
+            },
+            expected=expected,
+            inputs=inputs,
         )
 
     @staticmethod
     def _analyze_no_terminator(trace, final_regs, expected, inputs):
         """Handle no EBREAK in program."""
         return TraceAnalysis(
-            divergence_point=len(trace) - 1, divergence_type="no_terminator",
-            final_regs=final_regs, trace_length=len(trace),
+            divergence_point=len(trace) - 1,
+            divergence_type="no_terminator",
+            final_regs=final_regs,
+            trace_length=len(trace),
             suggestion={"type": "add_ebreak", "reason": "program has no EBREAK instruction"},
-            expected=expected, inputs=inputs,
+            expected=expected,
+            inputs=inputs,
         )
 
     @staticmethod
@@ -337,15 +368,30 @@ class TraceAnalyzer:
             curr_pc = trace[i].get("pc", 0)
             if curr_pc == prev_pc and i < len(trace) - 1:
                 return TraceAnalysis(
-                    divergence_point=i, divergence_type="halted_early",
-                    final_regs=final_regs, trace_length=len(trace),
-                    suggestion={"type": "check_halt_position", "reason": f"program halted at step {i}; may be too short"},
-                    divergence_pc=curr_pc, expected=expected, inputs=inputs,
+                    divergence_point=i,
+                    divergence_type="halted_early",
+                    final_regs=final_regs,
+                    trace_length=len(trace),
+                    suggestion={
+                        "type": "check_halt_position",
+                        "reason": f"program halted at step {i}; may be too short",
+                    },
+                    divergence_pc=curr_pc,
+                    expected=expected,
+                    inputs=inputs,
                 )
         return None
 
     @staticmethod
-    def analyze(trace: list[dict[str, Any]], expected: dict[str, Any], inputs: dict[str, Any], program: list[int] | None = None, error: str | None = None, budget: int | None = None, task_level: int | None = None) -> TraceAnalysis:
+    def analyze(
+        trace: list[dict[str, Any]],
+        expected: dict[str, Any],
+        inputs: dict[str, Any],
+        program: list[int] | None = None,
+        error: str | None = None,
+        budget: int | None = None,
+        task_level: int | None = None,
+    ) -> TraceAnalysis:
         """Analyze a safety-kernel execution trace and return failure analysis."""
         if not trace:
             return TraceAnalyzer._analyze_empty_trace(trace, error, expected, inputs)
@@ -368,10 +414,13 @@ class TraceAnalyzer:
         if result is not None:
             return result
         return TraceAnalysis(
-            divergence_point=len(trace) - 1, divergence_type="unknown",
-            final_regs=final_regs, trace_length=len(trace),
+            divergence_point=len(trace) - 1,
+            divergence_type="unknown",
+            final_regs=final_regs,
+            trace_length=len(trace),
             suggestion={"type": "stochastic_perturbation", "reason": "no specific divergence pattern detected"},
-            expected=expected, inputs=inputs,
+            expected=expected,
+            inputs=inputs,
         )
 
     @staticmethod
@@ -856,7 +905,9 @@ class DirectedMutator:
         return results[:top_n]
 
     @staticmethod
-    def _get_similar_program_results(query_features: tuple, threshold: float, top_n: int) -> list[tuple[str, float, int]]:
+    def _get_similar_program_results(
+        query_features: tuple, threshold: float, top_n: int
+    ) -> list[tuple[str, float, int]]:
         """Return mutation strategies from similar programs via cosine similarity."""
         aggregated: dict[str, dict[str, float]] = {}
         for prog_hash, type_stats in DirectedMutator._program_mutation_outcomes.items():
@@ -1231,7 +1282,17 @@ class DirectedMutator:
             dec_n = make_rv32i("ADDI", rd=1, rs1=1, imm=-1)
             loop_br = make_rv32i("BNE", rs1=1, rs2=0, imm=-20)
             store_fib = make_rv32i("ADDI", rd=14, rs1=15, imm=0)
-            return [init_a, init_b, check_n, next_fib, shift_a, shift_b, dec_n, loop_br, store_fib], "l11_fibonacci_loop_x14"
+            return [
+                init_a,
+                init_b,
+                check_n,
+                next_fib,
+                shift_a,
+                shift_b,
+                dec_n,
+                loop_br,
+                store_fib,
+            ], "l11_fibonacci_loop_x14"
         return [make_rv32i("ADDI", rd=10, rs1=0, imm=0)], "l_fallback_nop"
 
     @staticmethod
@@ -1734,7 +1795,10 @@ class DirectedMutator:
 
 
 def _propose_perturbation_capped(
-    program: list[int], rng: random.Random, task_level: int | None, strategy_archive: Any,
+    program: list[int],
+    rng: random.Random,
+    task_level: int | None,
+    strategy_archive: Any,
 ) -> tuple[list[int], str, TraceAnalysis]:
     """Handle PERTURBATION_CAPPED strategy: capped random instruction replacement."""
     champion_prog = program
@@ -1756,15 +1820,21 @@ def _propose_perturbation_capped(
         if mutated_prog[-1] != EBREAK:
             mutated_prog.append(EBREAK)
         analysis = TraceAnalysis(
-            divergence_point=None, divergence_type="perturbation_capped",
-            final_regs=[], trace_length=0, suggestion={},
+            divergence_point=None,
+            divergence_type="perturbation_capped",
+            final_regs=[],
+            trace_length=0,
+            suggestion={},
         )
         return mutated_prog[:MAX_PROGRAM_LEN], desc, analysis
     else:
         mutated_prog, desc2 = DirectedMutator._fallback_mutation(program, rng)
         analysis = TraceAnalysis(
-            divergence_point=None, divergence_type="perturbation_capped",
-            final_regs=[], trace_length=0, suggestion={},
+            divergence_point=None,
+            divergence_type="perturbation_capped",
+            final_regs=[],
+            trace_length=0,
+            suggestion={},
         )
         return mutated_prog, f"crossover_fallback_{desc2}", analysis
 
@@ -1778,7 +1848,9 @@ def _propose_random(program: list[int], rng: random.Random) -> tuple[list[int], 
     return mutated_prog, f"random_{desc}", analysis
 
 
-def _propose_task_aware(program: list[int], rng: random.Random, task_level: int | None) -> tuple[list[int], str, TraceAnalysis]:
+def _propose_task_aware(
+    program: list[int], rng: random.Random, task_level: int | None
+) -> tuple[list[int], str, TraceAnalysis]:
     """Handle TASK_AWARE strategy: task-level injection."""
     if task_level is not None:
         mutated_prog, desc = DirectedMutator._task_aware_mutation(program, rng, task_level)
@@ -1790,14 +1862,27 @@ def _propose_task_aware(program: list[int], rng: random.Random, task_level: int 
     return mutated_prog, f"task_aware_{desc}", analysis
 
 
-def _propose_with_trace(program: list[int], trace: list[dict[str, Any]], expected: dict[str, Any],
-                        inputs: dict[str, Any], error: str | None, budget: int | None,
-                        rng: random.Random, task_level: int | None,
-                        strat_val: str, stochastic_prob: float) -> tuple[list[int], str, TraceAnalysis]:
+def _propose_with_trace(
+    program: list[int],
+    trace: list[dict[str, Any]],
+    expected: dict[str, Any],
+    inputs: dict[str, Any],
+    error: str | None,
+    budget: int | None,
+    rng: random.Random,
+    task_level: int | None,
+    strat_val: str,
+    stochastic_prob: float,
+) -> tuple[list[int], str, TraceAnalysis]:
     """Handle strategies that need trace analysis: DIRECTED and HYBRID."""
     analysis = TraceAnalyzer.analyze(
-        trace=trace, expected=expected, inputs=inputs,
-        program=program, error=error, budget=budget, task_level=task_level,
+        trace=trace,
+        expected=expected,
+        inputs=inputs,
+        program=program,
+        error=error,
+        budget=budget,
+        task_level=task_level,
     )
     if strat_val == "DIRECTED":
         mutated_prog, desc = DirectedMutator.mutate(program, trace, analysis, rng, task_level=task_level)
@@ -1809,11 +1894,20 @@ def _propose_with_trace(program: list[int], trace: list[dict[str, Any]], expecte
     return mutated_prog, desc, analysis
 
 
-def propose_mutation(program: list[int], trace: list[dict[str, Any]], expected: dict[str, Any],
-                     inputs: dict[str, Any], *, error: str | None = None, budget: int | None = None,
-                     rng: random.Random | None = None, stochastic_prob: float = 0.10,
-                     task_level: int | None = None, strategy: Any = None,
-                     strategy_archive: Any = None) -> tuple[list[int], str, TraceAnalysis]:
+def propose_mutation(
+    program: list[int],
+    trace: list[dict[str, Any]],
+    expected: dict[str, Any],
+    inputs: dict[str, Any],
+    *,
+    error: str | None = None,
+    budget: int | None = None,
+    rng: random.Random | None = None,
+    stochastic_prob: float = 0.10,
+    task_level: int | None = None,
+    strategy: Any = None,
+    strategy_archive: Any = None,
+) -> tuple[list[int], str, TraceAnalysis]:
     """High-level entry point: analyse trace and propose a mutation."""
     if rng is None:
         rng = random.Random()
@@ -1824,7 +1918,9 @@ def propose_mutation(program: list[int], trace: list[dict[str, Any]], expected: 
         return _propose_task_aware(program, rng, task_level)
     if strat_val == "PERTURBATION_CAPPED":
         return _propose_perturbation_capped(program, rng, task_level, strategy_archive)
-    return _propose_with_trace(program, trace, expected, inputs, error, budget, rng, task_level, strat_val, stochastic_prob)
+    return _propose_with_trace(
+        program, trace, expected, inputs, error, budget, rng, task_level, strat_val, stochastic_prob
+    )
 
 
 def _crossover_mutation(
@@ -1970,7 +2066,15 @@ def _demo_test_swap(rng):
     """Test 3: Swap ADD→SUB. Test 4: Swap BEQ→BNE."""
     print("\n--- Test 3: Swap ADD → SUB ---")
     prog_add = [make_rv32i("ADD", rd=10, rs1=1, rs2=2), EBREAK]
-    analysis = TraceAnalysis(divergence_point=0, divergence_type="wrong_reg_value", final_regs=[0] * 32, trace_length=1, suggestion={"type": "swap_op"}, expected={"registers": {10: 42}}, inputs={})
+    analysis = TraceAnalysis(
+        divergence_point=0,
+        divergence_type="wrong_reg_value",
+        final_regs=[0] * 32,
+        trace_length=1,
+        suggestion={"type": "swap_op"},
+        expected={"registers": {10: 42}},
+        inputs={},
+    )
     mutated, desc = DirectedMutator.mutate(prog_add, [], analysis, rng)
     valid, _ = validate_mutation(mutated)
     print(f"  Mutation: {desc}")
@@ -1980,7 +2084,15 @@ def _demo_test_swap(rng):
     print(f"  Valid encoded: {valid}")
     print("\n--- Test 4: Swap BEQ → BNE ---")
     prog_beq = [make_rv32i("ADDI", rd=10, rs1=0, imm=5), make_rv32i("BEQ", rs1=10, rs2=11, imm=8), EBREAK]
-    analysis = TraceAnalysis(divergence_point=1, divergence_type="wrong_reg_value", final_regs=[0] * 32, trace_length=2, suggestion={"type": "swap_op"}, expected={"registers": {10: 5}}, inputs={})
+    analysis = TraceAnalysis(
+        divergence_point=1,
+        divergence_type="wrong_reg_value",
+        final_regs=[0] * 32,
+        trace_length=2,
+        suggestion={"type": "swap_op"},
+        expected={"registers": {10: 5}},
+        inputs={},
+    )
     mutated, desc = DirectedMutator.mutate(prog_beq, [], analysis, rng)
     valid, _err = validate_mutation(mutated)
     print(f"  Mutation: {desc}")
@@ -2008,7 +2120,13 @@ def _demo_test_stochastic(rng):
 def _demo_test_reorder(rng):
     """Test 6: Reorder block."""
     print("\n--- Test 6: Reorder block ---")
-    prog_reorder = [make_rv32i("ADDI", rd=5, rs1=0, imm=10), make_rv32i("ADDI", rd=6, rs1=0, imm=20), make_rv32i("ADD", rd=7, rs1=5, rs2=6), make_rv32i("ADDI", rd=8, rs1=0, imm=30), EBREAK]
+    prog_reorder = [
+        make_rv32i("ADDI", rd=5, rs1=0, imm=10),
+        make_rv32i("ADDI", rd=6, rs1=0, imm=20),
+        make_rv32i("ADD", rd=7, rs1=5, rs2=6),
+        make_rv32i("ADDI", rd=8, rs1=0, imm=30),
+        EBREAK,
+    ]
     print("  Before:")
     for i, w in enumerate(prog_reorder):
         d = rv32i_decode(w, validate=False)

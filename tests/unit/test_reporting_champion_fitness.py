@@ -1,4 +1,5 @@
 """Tests for end-of-cycle reporting fitness."""
+
 import os
 
 import pytest
@@ -23,12 +24,9 @@ def l30_verified_champion():
 
 def test_reporting_fitness_for_verified_champion(l30_verified_champion):
     from evolution.fitness_helpers import reporting_champion_fitness
-    from evolution_engine import EvolutionEngine, EvolutionConfig
+    from evolution_engine import EvolutionConfig, EvolutionEngine
 
-    prog = [
-        int(x, 16) if isinstance(x, str) else int(x)
-        for x in l30_verified_champion["champion_program"]
-    ]
+    prog = [int(x, 16) if isinstance(x, str) else int(x) for x in l30_verified_champion["champion_program"]]
     level = int(l30_verified_champion["final_level"])
     eng = EvolutionEngine(EvolutionConfig(curriculum_level=level))
     eng.champion_level = level

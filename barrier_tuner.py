@@ -257,8 +257,12 @@ class BarrierTuner:
         barrier = BarrierType.NORMAL
         consecutive = 0
         severity = 0.0
-        for detector in (self._detect_level_stall, self._detect_fitness_plateau,
-                         self._detect_diversity_collapse, self._detect_val_loss_regression):
+        for detector in (
+            self._detect_level_stall,
+            self._detect_fitness_plateau,
+            self._detect_diversity_collapse,
+            self._detect_val_loss_regression,
+        ):
             b, c, s = detector(metrics)
             if b != BarrierType.NORMAL:
                 if barrier == BarrierType.NORMAL:
@@ -268,15 +272,18 @@ class BarrierTuner:
         if barrier != BarrierType.NORMAL:
             self.barriers_detected.append(barrier)
         recommendations = self._generate_recommendations(barrier, metrics)
-        barrier_info = BarrierInfo(barrier=barrier, consecutive_count=consecutive,
-                                   severity=severity, recommendations=recommendations)
+        barrier_info = BarrierInfo(
+            barrier=barrier, consecutive_count=consecutive, severity=severity, recommendations=recommendations
+        )
         self._last_barrier_info = barrier_info
-        self.tuning_history.append({
-            "cycle": metrics.cycle,
-            "barrier": barrier.value,
-            "severity": severity,
-            "recommendations": recommendations,
-        })
+        self.tuning_history.append(
+            {
+                "cycle": metrics.cycle,
+                "barrier": barrier.value,
+                "severity": severity,
+                "recommendations": recommendations,
+            }
+        )
         return barrier_info
 
     def _generate_recommendations(self, barrier: BarrierType, metrics: CycleMetrics) -> dict:

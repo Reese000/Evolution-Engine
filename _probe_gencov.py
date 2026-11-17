@@ -1,4 +1,5 @@
 """Summarize cycles present in generation_phase_timing.jsonl (read-only)."""
+
 from __future__ import annotations
 
 import collections

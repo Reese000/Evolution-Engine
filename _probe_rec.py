@@ -1,4 +1,5 @@
 """Dump selected cycle records from multi_cycle_results.jsonl (read-only)."""
+
 from __future__ import annotations
 
 import json

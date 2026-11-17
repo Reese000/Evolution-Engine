@@ -1,4 +1,5 @@
 """Enumerate processes whose command line mentions Evolution Engine."""
+
 from __future__ import annotations
 
 import ctypes
@@ -33,9 +34,7 @@ def cmdline(pid: int) -> str:
         n = wt.DWORD(0)
         buf = ctypes.create_unicode_buffer(32768)
         sz = wt.DWORD(32768)
-        ok = ctypes.windll.kernel32.QueryFullProcessImageNameW(
-            h, 0, buf, ctypes.byref(sz)
-        )
+        ok = ctypes.windll.kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(sz))
         img = buf.value if ok else ""
     finally:
         k32.CloseHandle(h)
@@ -67,12 +66,7 @@ def main() -> None:
         if not img:
             continue
         low = img.lower()
-        if (
-            "evolution" in low
-            or "multi_cycle" in low
-            or "meta_controller" in low
-            or "run_multi" in low
-        ):
+        if "evolution" in low or "multi_cycle" in low or "meta_controller" in low or "run_multi" in low:
             print(f"PID {pid}: {img}")
     print(f"--- total processes scanned: {len(rows)}")
 

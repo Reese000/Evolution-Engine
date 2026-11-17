@@ -10,6 +10,7 @@ import random as _random
 import struct
 import time  # tests stub write-retry backoff sleeps via ts.time (ts.time must stay importable)
 import zlib
+from typing import Any
 
 from evolution import progress_state_io
 
@@ -60,12 +61,7 @@ def peephole_compress(program: list[int]) -> list[int]:
                     b = rv32i_decode(body[i + 1], validate=False)
                 except (KeyError, TypeError, ValueError):
                     b = None
-                if (
-                    b
-                    and b.get("name") == "ADDI"
-                    and a.get("rd") == b.get("rd")
-                    and b.get("rs1") == a.get("rd")
-                ):
+                if b and b.get("name") == "ADDI" and a.get("rd") == b.get("rd") and b.get("rs1") == a.get("rd"):
                     imm = int(a.get("imm") or 0) + int(b.get("imm") or 0)
                     if -2048 <= imm <= 2047:
                         try:
@@ -352,9 +348,7 @@ def li_ori_fold_compress(program: list[int]) -> list[int]:
             rs2 = int(b.get("rs2") or 0)
             rd = int(b.get("rd") or 0)
             name = b.get("name") or ""
-            uses_t = (rs1 == t and opcode not in (0x37, 0x17, 0x6F)) or (
-                rs2 == t and opcode in (0x33, 0x23, 0x63)
-            )
+            uses_t = (rs1 == t and opcode not in (0x37, 0x17, 0x6F)) or (rs2 == t and opcode in (0x33, 0x23, 0x63))
             if not uses_t:
                 continue
             if name in logic and opcode == 0x33 and rd and (rs1 == t or rs2 == t):
@@ -395,9 +389,7 @@ def semantic_compress(program: list[int]) -> list[int]:
     cur = list(program)
     for _ in range(8):
         nxt = overwrite_dead_compress(
-            li_mem_fold_compress(
-                li_ori_fold_compress(zero_identity_compress(peephole_compress(cur)))
-            )
+            li_mem_fold_compress(li_ori_fold_compress(zero_identity_compress(peephole_compress(cur))))
         )
         if nxt == cur:
             return nxt
@@ -451,9 +443,7 @@ def traces_observably_equal(a: dict | None, b: dict | None) -> bool:
     return ma == mb
 
 
-def saturated_shorter_swap_ok(
-    champ_words: int, cand_words: int, champ_verify: float, cand_verify: float
-) -> bool:
+def saturated_shorter_swap_ok(champ_words: int, cand_words: int, champ_verify: float, cand_verify: float) -> bool:
     """Same-or-better verify at saturation: shorter challenger may replace."""
     return (
         float(champ_verify) >= 0.99 - 1e-6
@@ -499,15 +489,19 @@ def terminal_efficiency_variants(program, rng, *, max_evals=16, max_drop_span: i
         return []
     raw = []
     seen = {tuple(program)}
+
     def _add(words):
-        if not words: return
+        if not words:
+            return
         if words[-1] != _EBREAK:
             words = list(words)
             words.append(_EBREAK)
         key = tuple(words)
-        if key in seen: return
+        if key in seen:
+            return
         seen.add(key)
         raw.append(list(words))
+
     collapsed = []
     for word in program:
         if word == _NOP and collapsed and collapsed[-1] == _NOP:
@@ -517,6 +511,7 @@ def terminal_efficiency_variants(program, rng, *, max_evals=16, max_drop_span: i
     _add([w for w in program if w != _NOP])
     try:
         from mutation_proposer import trim_dead_code
+
         _add(trim_dead_code(list(program)))
     except ImportError:
         pass
@@ -605,7 +600,6 @@ def _sort_probe_candidates(candidates, rng, *, score_fn=None, fitness_fn=None, m
         rng.shuffle(candidates)
 
 
-
 def _filter_probe_candidates(
     raw: list[list[int]],
     *,
@@ -650,9 +644,10 @@ def terminal_branch_flip_variants(
         sys.path.insert(0, milestone)
     if root not in sys.path:
         sys.path.insert(0, root)
-    from mutation_proposer import ALU_SWAP_PAIRS, BRANCH_SWAP_PAIRS, EBREAK
     from rv32i_mask import decode as rv32i_decode
     from rv32i_mask import encode as rv32i_encode
+
+    from mutation_proposer import ALU_SWAP_PAIRS, BRANCH_SWAP_PAIRS, EBREAK
 
     if not program:
         return []
@@ -967,9 +962,7 @@ def _vm_score_disk_cap(section: str) -> int:
     return 2048
 
 
-def _vm_score_disk_put(
-    section: str, key: str, value: float, max_entries: int | None = None
-) -> None:
+def _vm_score_disk_put(section: str, key: str, value: float, max_entries: int | None = None) -> None:
     # NOTE: mutate the live bucket in place.  The historical copy-per-put
     # (`bucket = dict(payload.get(section, {}))`) cost O(window) per score and
     # would have turned a larger window into a per-score O(n^2) scan.
@@ -1010,9 +1003,11 @@ def _warn_progress_state_unreadable(state_path: str, mtime: float, err: BaseExce
         "progress-controller state unreadable at %s: %s; %s",
         state_path,
         err,
-        "keeping last known-good values"
-        if _progress_state_cache is not None
-        else "no cached values, using {} (terminal-efficiency floors re-arm)",
+        (
+            "keeping last known-good values"
+            if _progress_state_cache is not None
+            else "no cached values, using {} (terminal-efficiency floors re-arm)"
+        ),
     )
 
 
@@ -1091,11 +1086,7 @@ def terminal_certified_plateau(level: int, verify: float, fitness: float) -> boo
     depth = terminal_depth()
     min_fitness = float(os.environ.get("EE_TERMINAL_PLATEAU_MIN_FITNESS", "250"))
     min_verify = float(os.environ.get("EE_TERMINAL_PLATEAU_MIN_VERIFY", "0.99"))
-    return (
-        int(level) >= depth
-        and float(verify) >= min_verify - 1e-6
-        and float(fitness) >= min_fitness
-    )
+    return int(level) >= depth and float(verify) >= min_verify - 1e-6 and float(fitness) >= min_fitness
 
 
 def terminal_retrain_interval(cycles_at_level: int | None = None) -> int:
@@ -1166,8 +1157,7 @@ def _patch_progress_state(updates: dict) -> None:
     written, err = progress_state_io.update_state(state_path, updates)
     if err is not None:
         logging.getLogger(progress_state_io.LOGGER_NAME).warning(
-            "progress-controller state unreadable at %s during merge: %s "
-            "(pre-existing keys were not preserved)",
+            "progress-controller state unreadable at %s during merge: %s " "(pre-existing keys were not preserved)",
             state_path,
             err,
         )
@@ -1275,12 +1265,7 @@ def compact_l30_certified_champion_words(
     verify = float(metrics.get("champion_verify_score", 0.0))
     words = int(metrics.get("champion_words", 0))
     prom_raw = float(metrics.get("promotion_raw_fitness", 0.0) or 0.0)
-    if (
-        level >= 30
-        and verify >= 0.99 - 1e-6
-        and 12 <= words <= L30_COMPACT_MAX_WORDS
-        and prom_raw > 300.0
-    ):
+    if level >= 30 and verify >= 0.99 - 1e-6 and 12 <= words <= L30_COMPACT_MAX_WORDS and prom_raw > 300.0:
         return words
     if project_root is None:
         from evolution.mutation_helpers import _evolution_project_root
@@ -1290,9 +1275,7 @@ def compact_l30_certified_champion_words(
         from evolution.champion_rollback import find_best_certified_champion
 
         results = os.path.join(project_root, "multi_cycle_results.jsonl")
-        row = find_best_certified_champion(
-            results, 30, min_verify=0.99, min_fitness=100.0
-        )
+        row = find_best_certified_champion(results, 30, min_verify=0.99, min_fitness=100.0)
         if row:
             row_words = int(row.get("champion_words", 0))
             if 12 <= row_words <= L30_COMPACT_MAX_WORDS:
@@ -1481,9 +1464,7 @@ def should_rescan_terminal_efficiency_compression(
     return idle >= interval or idle % interval == 0
 
 
-def terminal_efficiency_promote_quiescent(
-    cycle_no: int, champ_words: int, champ_verify: float
-) -> bool:
+def terminal_efficiency_promote_quiescent(cycle_no: int, champ_words: int, champ_verify: float) -> bool:
     """Skip routine scans when length is stable at saturated verify (periodic rescan kept)."""
     if float(champ_verify) < 0.99 - 1e-6:
         return False
@@ -1499,9 +1480,7 @@ def terminal_efficiency_promote_quiescent(
     return idle % interval != 0
 
 
-def terminal_efficiency_promote_skip_quiescent(
-    cycle_no: int, champ_words: int, champ_verify: float
-) -> bool:
+def terminal_efficiency_promote_skip_quiescent(cycle_no: int, champ_words: int, champ_verify: float) -> bool:
     """Whether post-cycle efficiency promote may skip due to quiescent (not when prom_raw stalled)."""
     if not terminal_efficiency_promote_quiescent(cycle_no, champ_words, champ_verify):
         return False
@@ -1600,9 +1579,7 @@ class ScanFloorGateBaseline:
     def __init__(self, champion: list[int]) -> None:
         self._champion = tuple(int(x) for x in champion)
         self._heldout = float(heldout_l30_verify_mean(champion, 32))
-        self._side = tuple(
-            float(curriculum_verify_mean(champion, level)) for level in _COMPACT_SIDE_LEVELS
-        )
+        self._side = tuple(float(curriculum_verify_mean(champion, level)) for level in _COMPACT_SIDE_LEVELS)
         self._qualify_cache: dict[tuple[int, ...], bool] = {}
 
     def qualifies(self, variant: list[int]) -> bool:
@@ -1879,7 +1856,8 @@ def terminal_dual_imm_probe_variants(
     gate: ScanFloorGateBaseline | None = None,
 ) -> list[list[int]]:
     """Two-slot wide-imm perturbations for stalled equal-length capability search."""
-    from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+    from milestone1.rv32i_mask import decode as rv32i_decode
+    from milestone1.rv32i_mask import encode as rv32i_encode
 
     if not program or len(program) < 4:
         return []
@@ -1947,7 +1925,8 @@ def terminal_tail_wide_imm_probe_variants(
     gate: ScanFloorGateBaseline | None = None,
 ) -> list[list[int]]:
     """Wide-imm sweep restricted to tail slots (compact scan-floor capability hunt)."""
-    from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+    from milestone1.rv32i_mask import decode as rv32i_decode
+    from milestone1.rv32i_mask import encode as rv32i_encode
 
     if not program:
         return []
@@ -1956,11 +1935,7 @@ def terminal_tail_wide_imm_probe_variants(
     gate = gate or get_scan_floor_gate(program)
     branch_candidates, other_candidates = _wide_imm_probe_indices(program)
     min_pos = max(0, int(min_position))
-    candidates = [
-        idx
-        for idx in branch_candidates + other_candidates
-        if int(idx) >= min_pos
-    ]
+    candidates = [idx for idx in branch_candidates + other_candidates if int(idx) >= min_pos]
     if not candidates:
         return []
     deltas = _SCAN_FLOOR_WIDE_IMM_DELTAS
@@ -2009,7 +1984,8 @@ def terminal_wide_imm_sweep_probe_variants(
     gate: ScanFloorGateBaseline | None = None,
 ) -> list[list[int]]:
     """Deterministic (slot, delta) sweep so every branch displacement is tried over time."""
-    from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+    from milestone1.rv32i_mask import decode as rv32i_decode
+    from milestone1.rv32i_mask import encode as rv32i_encode
 
     if not program:
         return []
@@ -2077,7 +2053,8 @@ def terminal_growth_material_locus_probe_variants(
 ) -> list[list[int]]:
     """Grafts and imm sweeps at growth-material diff loci (pre-tail index 26, etc.)."""
     from evolution.champion_rollback import _load_growth_material_entries
-    from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+    from milestone1.rv32i_mask import decode as rv32i_decode
+    from milestone1.rv32i_mask import encode as rv32i_encode
 
     if not program:
         return []
@@ -2096,11 +2073,7 @@ def terminal_growth_material_locus_probe_variants(
     if not entries:
         return []
     champ = list(program)
-    material_progs = [
-        list(entry.get("program"))
-        for entry in entries
-        if isinstance(entry.get("program"), list)
-    ]
+    material_progs = [list(entry.get("program")) for entry in entries if isinstance(entry.get("program"), list)]
     try:
         from evolution.mutation_helpers import _expand_growth_material_for_grafts
 
@@ -2251,7 +2224,8 @@ def terminal_wide_imm_perturb_probe_variants(
     champions often need larger branch displacements to improve raw fitness
     while held-out and side curriculum stay at 1.0.
     """
-    from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+    from milestone1.rv32i_mask import decode as rv32i_decode
+    from milestone1.rv32i_mask import encode as rv32i_encode
 
     if not program:
         return []
@@ -2604,11 +2578,7 @@ def terminal_archive_consensus_graft_probe_variants(
         word, agree = counts.most_common(1)[0]
         if agree < int(min_agreement):
             continue
-        parent_rank = max(
-            _scan_floor_probe_rank_key(parent)[0]
-            for parent in pool
-            if parent[pos] == word
-        )
+        parent_rank = max(_scan_floor_probe_rank_key(parent)[0] for parent in pool if parent[pos] == word)
         candidates.append((pos, int(word), parent_rank))
     if not candidates:
         return []
@@ -2872,9 +2842,7 @@ def terminal_growth_prefix_tail_splice_probe_variants(
             break
         pi, c_start, _prio = candidates[(offset + step) % len(candidates)]
         parent = long_parents[pi]
-        variant = list(program[:c_start]) + list(
-            parent[c_start : c_start + (champ_n - c_start)]
-        )
+        variant = list(program[:c_start]) + list(parent[c_start : c_start + (champ_n - c_start)])
         if len(variant) != champ_n:
             continue
         key = tuple(variant)
@@ -3191,8 +3159,10 @@ def scan_floor_compression_hot(
     rng = rng if rng is not None else random.Random(0)
     word_cap = level_word_cap(30)
     span = terminal_efficiency_drop_span(len(program), word_cap)
-    budget = int(max_evals) if max_evals is not None else max(
-        12, int(os.environ.get("EE_SCAN_FLOOR_COMPRESS_PROBE_BUDGET", "16"))
+    budget = (
+        int(max_evals)
+        if max_evals is not None
+        else max(12, int(os.environ.get("EE_SCAN_FLOOR_COMPRESS_PROBE_BUDGET", "16")))
     )
     compress_variants = terminal_efficiency_variants(
         program,
@@ -3202,8 +3172,7 @@ def scan_floor_compression_hot(
     )
     champ_n = len(program)
     return any(
-        len(variant) < champ_n
-        and scan_floor_compression_probe_qualifies(program, variant)
+        len(variant) < champ_n and scan_floor_compression_probe_qualifies(program, variant)
         for variant in compress_variants
     )
 
@@ -3283,9 +3252,7 @@ def _scan_floor_probe_stall_mode(champ_words: int | None = None) -> bool:
         from evolution.epi_momentum_governor import scan_floor_length_prom_stalled
         from evolution.mutation_helpers import _evolution_project_root
 
-        return scan_floor_length_prom_stalled(
-            _evolution_project_root(), int(champ_words)
-        )
+        return scan_floor_length_prom_stalled(_evolution_project_root(), int(champ_words))
     except ImportError:
         return False
 
@@ -3342,9 +3309,7 @@ def _rank_scan_floor_picked_probes(
         except (RuntimeError, ValueError, TypeError, OSError):
             prom = float(_scan_floor_probe_rank_key(variant)[0])
         if l10_weak:
-            scored.append(
-                (prom, float(curriculum_verify_mean(list(variant), 10)), list(variant))
-            )
+            scored.append((prom, float(curriculum_verify_mean(list(variant), 10)), list(variant)))
         else:
             scored.append((prom, list(variant)))
     if l10_weak:
@@ -3450,17 +3415,11 @@ def terminal_equal_length_refine_variants(
     gated = _l11_fib_gate_imm(program) == 13
     side_saturated = compact_curriculum_side_score(program) >= 0.99 - 1e-6
     at_floor = terminal_efficiency_at_scan_floor(len(program))
-    capability_stalled = (
-        _scan_floor_probe_stall_mode(champ_n) if at_floor else False
-    )
+    capability_stalled = _scan_floor_probe_stall_mode(champ_n) if at_floor else False
     if not gated and not side_saturated:
         raw.extend(terminal_branch_flip_variants(program, rng, max_evals=max_evals))
     if not gated and not side_saturated:
-        raw.extend(
-            terminal_overlay_keep_length_variants(
-                program, lvl, rng, max_evals=max(8, int(max_evals) // 2)
-            )
-        )
+        raw.extend(terminal_overlay_keep_length_variants(program, lvl, rng, max_evals=max(8, int(max_evals) // 2)))
     if not gated:
         for segment in ("incremental", "level_only"):
             variant = incremental_repair_variant(program, lvl, segment)
@@ -3471,24 +3430,15 @@ def terminal_equal_length_refine_variants(
         budget = max(12, int(max_evals))
         if capability_stalled:
             ref_budget = max(8, budget // 6)
-            for variant in terminal_branch_flip_variants(
-                program, rng, max_evals=ref_budget
-            ):
+            for variant in terminal_branch_flip_variants(program, rng, max_evals=ref_budget):
                 if len(variant) == champ_n and gate.qualifies(variant):
                     raw.append(variant)
-            for variant in terminal_overlay_keep_length_variants(
-                program, lvl, rng, max_evals=ref_budget
-            ):
+            for variant in terminal_overlay_keep_length_variants(program, lvl, rng, max_evals=ref_budget):
                 if gate.qualifies(variant):
                     raw.append(variant)
             for segment in ("incremental", "level_only"):
                 variant = incremental_repair_variant(program, lvl, segment)
-                if (
-                    variant
-                    and len(variant) == champ_n
-                    and variant != program
-                    and gate.qualifies(variant)
-                ):
+                if variant and len(variant) == champ_n and variant != program and gate.qualifies(variant):
                     raw.append(variant)
         eighth = max(2, budget // 8)
         imm_variants = terminal_imm_perturb_probe_variants(
@@ -3678,13 +3628,9 @@ def terminal_verify_probe_variants(
     at_floor = terminal_efficiency_at_scan_floor(len(program))
     raw: list[list[int]] = []
     if at_floor:
-        raw.extend(
-            terminal_equal_length_refine_variants(program, lvl, rng, max_evals=32)
-        )
+        raw.extend(terminal_equal_length_refine_variants(program, lvl, rng, max_evals=32))
     else:
-        raw.extend(
-            straight_line_reference_variants(program, lvl, rng, max_evals=40)
-        )
+        raw.extend(straight_line_reference_variants(program, lvl, rng, max_evals=40))
     gated = _l11_fib_gate_imm(program) == 13
     if not gated and not at_floor:
         # Inverting L9–L11 skips on a complete champion creates leftover
@@ -3756,9 +3702,7 @@ def ranked_scan_floor_compression_variants(
     champ_words = len(program)
     at_floor = terminal_efficiency_at_scan_floor(champ_words)
     if cycle_no is not None and at_floor:
-        if not should_rescan_terminal_efficiency_compression(
-            int(cycle_no), champ_words, list(program)
-        ):
+        if not should_rescan_terminal_efficiency_compression(int(cycle_no), champ_words, list(program)):
             disk = _load_scan_floor_compression_rank_disk(key)
             if disk is not None:
                 return [list(item) for item in disk]
@@ -3766,9 +3710,7 @@ def ranked_scan_floor_compression_variants(
         if _skip_empty_compression_rescan(key, champ_words):
             return []
         ranked = _ranked_scan_floor_compression_variants_cached(key)
-        _record_scan_floor_compression_rescan(
-            key, cycle=int(cycle_no), hits=len(ranked)
-        )
+        _record_scan_floor_compression_rescan(key, cycle=int(cycle_no), hits=len(ranked))
         if ranked:
             _save_scan_floor_compression_rank_disk(key, ranked)
         return [list(item) for item in ranked]
@@ -3969,7 +3911,6 @@ def _ranked_scan_floor_compression_variants_cached(
 
     from evolution.champion_bloat_guard import level_word_cap
     from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
-
     from evolution.mutation_helpers import scan_floor_plateau_armed
 
     prog = list(program)
@@ -4016,9 +3957,7 @@ def _ranked_scan_floor_compression_variants_cached(
     anchor_evals = max(64, int(os.environ.get("EE_SCAN_FLOOR_COMPRESSION_ANCHOR_EVALS", "128")))
     for anchor in (42, 7, 99, 0):
         anchor_rng = random.Random(int(anchor))
-        for variant in terminal_efficiency_variants(
-            prog, anchor_rng, max_evals=anchor_evals, max_drop_span=span
-        ):
+        for variant in terminal_efficiency_variants(prog, anchor_rng, max_evals=anchor_evals, max_drop_span=span):
             key = tuple(int(word) for word in variant)
             if key in seen_keys:
                 continue
@@ -4027,9 +3966,7 @@ def _ranked_scan_floor_compression_variants_cached(
     for sweep in range(seed_sweeps):
         sweep_seed = (base_seed + sweep * 10007) & 0x7FFFFFFF
         rng = random.Random(sweep_seed)
-        for variant in terminal_efficiency_variants(
-            prog, rng, max_evals=per_seed, max_drop_span=span
-        ):
+        for variant in terminal_efficiency_variants(prog, rng, max_evals=per_seed, max_drop_span=span):
             key = tuple(int(word) for word in variant)
             if key in seen_keys:
                 continue
@@ -4069,8 +4006,7 @@ def _ranked_scan_floor_compression_variants_cached(
         prom_beating = [
             list(item)
             for item in near_miss
-            if float(compact_l30_promotion_raw_fitness(list(item)))
-            > champ_raw + min_gain - 1e-6
+            if float(compact_l30_promotion_raw_fitness(list(item))) > champ_raw + min_gain - 1e-6
         ]
         prom_beating.sort(
             key=lambda item: float(compact_l30_promotion_raw_fitness(list(item))),
@@ -4091,9 +4027,7 @@ def _ranked_scan_floor_compression_variants_cached(
             if tuple(item) in {tuple(base) for base in repair_bases}:
                 continue
             repair_bases.append(list(item))
-    repair_base_cap = max(
-        8, int(os.environ.get("EE_SCAN_FLOOR_COMPRESSION_REPAIR_BASES", "8"))
-    )
+    repair_base_cap = max(8, int(os.environ.get("EE_SCAN_FLOOR_COMPRESSION_REPAIR_BASES", "8")))
     for base in side_match[:repair_base_cap]:
         if tuple(base) not in {tuple(item) for item in repair_bases}:
             repair_bases.append(base)
@@ -4110,11 +4044,7 @@ def _ranked_scan_floor_compression_variants_cached(
         repair_offsets = (
             (0, 32, 64, 96, 128, 160)
             if armed and champ_n <= int(floor_w) and _scan_floor_probe_stall_mode(champ_n)
-            else (
-                (0, 32, 64, 96)
-                if armed and champ_n <= int(floor_w)
-                else (0,)
-            )
+            else ((0, 32, 64, 96) if armed and champ_n <= int(floor_w) else (0,))
         )
         for repair_offset in repair_offsets:
             for repaired in terminal_compression_side_repair_variants(
@@ -4128,11 +4058,7 @@ def _ranked_scan_floor_compression_variants_cached(
                     continue
                 seen_keys.add(key)
                 variants.append(list(repaired))
-    qualified = [
-        list(variant)
-        for variant in variants
-        if scan_floor_compression_promote_qualifies(prog, variant)
-    ]
+    qualified = [list(variant) for variant in variants if scan_floor_compression_promote_qualifies(prog, variant)]
     if qualified:
         cascade_bases = sorted(
             qualified,
@@ -4161,11 +4087,7 @@ def _ranked_scan_floor_compression_variants_cached(
                     continue
                 seen_keys.add(key)
                 variants.append(list(variant))
-        qualified = [
-            list(variant)
-            for variant in variants
-            if scan_floor_compression_promote_qualifies(prog, variant)
-        ]
+        qualified = [list(variant) for variant in variants if scan_floor_compression_promote_qualifies(prog, variant)]
     if not qualified:
         return ()
     rank_budget = max(
@@ -4193,7 +4115,8 @@ def terminal_compression_side_repair_variants(
 ) -> list[list[int]]:
     """Wide-immediate repair on shorter high-raw programs that miss side-curriculum floor."""
     from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
-    from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+    from milestone1.rv32i_mask import decode as rv32i_decode
+    from milestone1.rv32i_mask import encode as rv32i_encode
 
     if not champion or not bases:
         return []
@@ -4258,11 +4181,9 @@ def terminal_growth_tail_perturb_variants(
     start_offset: int = 0,
 ) -> list[list[int]]:
     """Wide-immediate sweeps on growth near-miss tail (indices after LCP with champion)."""
-    from evolution.mutation_helpers import (
-        growth_anchor_lcp_prefix,
-        scan_floor_growth_heldout_qualifies,
-    )
-    from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+    from evolution.mutation_helpers import growth_anchor_lcp_prefix, scan_floor_growth_heldout_qualifies
+    from milestone1.rv32i_mask import decode as rv32i_decode
+    from milestone1.rv32i_mask import encode as rv32i_encode
 
     if not champion or not growth_anchor or len(growth_anchor) <= len(champion):
         return []
@@ -4437,11 +4358,7 @@ def _l30_easy_fill_variants_impl(program: list[int]) -> list[list[int]]:
     ]
     for take in (4, 3, 2, 1):
         gap_bundled = DirectedMutator.insert_seq_before_ebreak(list(base), gaps[:take])
-        if (
-            12 <= len(gap_bundled) <= L30_COMPACT_MAX_WORDS
-            and gap_bundled != list(program)
-            and gap_bundled not in out
-        ):
+        if 12 <= len(gap_bundled) <= L30_COMPACT_MAX_WORDS and gap_bundled != list(program) and gap_bundled not in out:
             out.append(gap_bundled)
             break
     x24 = [
@@ -4449,95 +4366,42 @@ def _l30_easy_fill_variants_impl(program: list[int]) -> list[list[int]]:
         make_rv32i("XOR", rd=24, rs1=24, rs2=1),
     ]
     x24_bundled = DirectedMutator.insert_seq_before_ebreak(list(base), x24)
-    if (
-        12 <= len(x24_bundled) <= L30_COMPACT_MAX_WORDS
-        and x24_bundled != list(program)
-        and x24_bundled not in out
-    ):
+    if 12 <= len(x24_bundled) <= L30_COMPACT_MAX_WORDS and x24_bundled != list(program) and x24_bundled not in out:
         out.append(x24_bundled)
     full = DirectedMutator.insert_seq_before_ebreak(list(base), gaps + x24)
-    if (
-        12 <= len(full) <= L30_COMPACT_MAX_WORDS
-        and full != list(program)
-        and full not in out
-    ):
+    if 12 <= len(full) <= L30_COMPACT_MAX_WORDS and full != list(program) and full not in out:
         out.append(full)
     ordered = l30_order_sensitive_variant(program)
-    if (
-        ordered
-        and 12 <= len(ordered) <= L30_COMPACT_MAX_WORDS
-        and ordered != list(program)
-        and ordered not in out
-    ):
+    if ordered and 12 <= len(ordered) <= L30_COMPACT_MAX_WORDS and ordered != list(program) and ordered not in out:
         out.append(ordered)
     stripped = l30_strip_dead_l30_stores(ordered or program)
-    if (
-        stripped
-        and 12 <= len(stripped) <= L30_COMPACT_MAX_WORDS
-        and stripped != list(program)
-        and stripped not in out
-    ):
+    if stripped and 12 <= len(stripped) <= L30_COMPACT_MAX_WORDS and stripped != list(program) and stripped not in out:
         out.append(stripped)
     l10 = l30_l10_prefix_load_variant(stripped or ordered or program)
-    if (
-        l10
-        and 12 <= len(l10) <= L30_COMPACT_MAX_WORDS
-        and l10 != list(program)
-        and l10 not in out
-    ):
+    if l10 and 12 <= len(l10) <= L30_COMPACT_MAX_WORDS and l10 != list(program) and l10 not in out:
         out.append(l10)
     l8 = l30_l8_mem_add_variant(l10 or stripped or ordered or program)
-    if (
-        l8
-        and 12 <= len(l8) <= L30_COMPACT_MAX_WORDS
-        and l8 != list(program)
-        and l8 not in out
-    ):
+    if l8 and 12 <= len(l8) <= L30_COMPACT_MAX_WORDS and l8 != list(program) and l8 not in out:
         out.append(l8)
     for base in (l8, l10, stripped, ordered, program):
         if not base:
             continue
         bounded = l30_l10_bounded_sum_variant(base)
-        if (
-            bounded
-            and 12 <= len(bounded) <= L30_COMPACT_MAX_WORDS
-            and bounded != list(program)
-            and bounded not in out
-        ):
+        if bounded and 12 <= len(bounded) <= L30_COMPACT_MAX_WORDS and bounded != list(program) and bounded not in out:
             out.append(bounded)
         maxed = l30_l10_max_in_sum_loop_variant(bounded or base)
-        if (
-            maxed
-            and 12 <= len(maxed) <= L30_COMPACT_MAX_WORDS
-            and maxed != list(program)
-            and maxed not in out
-        ):
+        if maxed and 12 <= len(maxed) <= L30_COMPACT_MAX_WORDS and maxed != list(program) and maxed not in out:
             out.append(maxed)
         preloop = l30_l10_sum_max_preloop_insert_variant(
             maxed or bounded or l8 or l10 or stripped or ordered or program
         )
-        if (
-            preloop
-            and 12 <= len(preloop) <= L30_COMPACT_MAX_WORDS
-            and preloop != list(program)
-            and preloop not in out
-        ):
+        if preloop and 12 <= len(preloop) <= L30_COMPACT_MAX_WORDS and preloop != list(program) and preloop not in out:
             out.append(preloop)
         fib = l30_l11_gated_fib_variant(preloop or maxed or bounded or base)
-        if (
-            fib
-            and 12 <= len(fib) <= L30_COMPACT_MAX_WORDS
-            and fib != list(program)
-            and fib not in out
-        ):
+        if fib and 12 <= len(fib) <= L30_COMPACT_MAX_WORDS and fib != list(program) and fib not in out:
             out.append(fib)
     fib_live = l30_l11_gated_fib_variant(program)
-    if (
-        fib_live
-        and 12 <= len(fib_live) <= L30_COMPACT_MAX_WORDS
-        and fib_live != list(program)
-        and fib_live not in out
-    ):
+    if fib_live and 12 <= len(fib_live) <= L30_COMPACT_MAX_WORDS and fib_live != list(program) and fib_live not in out:
         out.append(fib_live)
     tightened = l30_l11_fib_gate_tighten_variant(program)
     if (
@@ -4548,36 +4412,16 @@ def _l30_easy_fill_variants_impl(program: list[int]) -> list[list[int]]:
     ):
         out.append(tightened)
     mid = l30_l12_l16_postfix_variant(fib_live or program)
-    if (
-        mid
-        and 12 <= len(mid) <= L30_COMPACT_MAX_WORDS
-        and mid != list(program)
-        and mid not in out
-    ):
+    if mid and 12 <= len(mid) <= L30_COMPACT_MAX_WORDS and mid != list(program) and mid not in out:
         out.append(mid)
     short15 = l30_l15_short_variant(program)
-    if (
-        short15
-        and 12 <= len(short15) <= L30_COMPACT_MAX_WORDS
-        and short15 != list(program)
-        and short15 not in out
-    ):
+    if short15 and 12 <= len(short15) <= L30_COMPACT_MAX_WORDS and short15 != list(program) and short15 not in out:
         out.append(short15)
     folded = l30_l12_l14_x9_fold_variant(program)
-    if (
-        folded
-        and 12 <= len(folded) <= L30_COMPACT_MAX_WORDS
-        and folded != list(program)
-        and folded not in out
-    ):
+    if folded and 12 <= len(folded) <= L30_COMPACT_MAX_WORDS and folded != list(program) and folded not in out:
         out.append(folded)
     dropped = l30_drop_loop_zero_inits(program)
-    if (
-        dropped
-        and 12 <= len(dropped) <= L30_COMPACT_MAX_WORDS
-        and dropped != list(program)
-        and dropped not in out
-    ):
+    if dropped and 12 <= len(dropped) <= L30_COMPACT_MAX_WORDS and dropped != list(program) and dropped not in out:
         out.append(dropped)
     return out
 
@@ -4586,11 +4430,7 @@ def best_compact_l30_fill(program: list[int]) -> list[int] | None:
     """Highest CPU L30, then L8-L10 side score, among compact fills that do not drop L30."""
     if not program:
         return None
-    fills = [
-        fill
-        for fill in l30_easy_fill_variants(list(program))
-        if 12 <= len(fill) <= L30_COMPACT_MAX_WORDS
-    ]
+    fills = [fill for fill in l30_easy_fill_variants(list(program)) if 12 <= len(fill) <= L30_COMPACT_MAX_WORDS]
     if not fills:
         return None
     champ_h = heldout_l30_verify_mean(list(program))
@@ -4616,11 +4456,7 @@ def best_compact_l30_fill(program: list[int]) -> list[int] | None:
         and held + 1e-6 >= champ_h
         and side + 1e-6 >= champ_s
     )
-    if (
-        held >= champ_h + 0.01
-        or compact_curriculum_beats(program, best)
-        or fib_tighter
-    ):
+    if held >= champ_h + 0.01 or compact_curriculum_beats(program, best) or fib_tighter:
         return best
     return None
 
@@ -4651,11 +4487,7 @@ def l30_strip_dead_l30_stores(program: list[int]) -> list[int] | None:
         name = decoded.get("name")
         if name == "SW":
             continue
-        if (
-            name == "ADDI"
-            and int(decoded.get("rd", -1)) == 24
-            and int(decoded.get("rs1", -1)) == 0
-        ):
+        if name == "ADDI" and int(decoded.get("rd", -1)) == 24 and int(decoded.get("rs1", -1)) == 0:
             continue
         out.append(word)
     if not (12 <= len(out) < len(program) <= L30_COMPACT_MAX_WORDS):
@@ -5166,15 +4998,11 @@ def curriculum_verify_mean(program: list[int], level: int, n_seeds: int = 8) -> 
     """CPU verify mean for one curriculum level. Passes instance memory."""
     if not program:
         return 0.0
-    return _curriculum_verify_mean_cached(
-        tuple(int(x) for x in program), int(level), int(n_seeds)
-    )
+    return _curriculum_verify_mean_cached(tuple(int(x) for x in program), int(level), int(n_seeds))
 
 
 @functools.lru_cache(maxsize=_SCAN_FLOOR_SCORE_MEMO_MAXSIZE)
-def _curriculum_verify_mean_cached(
-    program: tuple[int, ...], level: int, n_seeds: int
-) -> float:
+def _curriculum_verify_mean_cached(program: tuple[int, ...], level: int, n_seeds: int) -> float:
     disk_key = f"{_vm_score_program_key(program)}|{int(level)}|{int(n_seeds)}"
     try:
         hit = _vm_score_disk_get("curriculum_verify", disk_key)
@@ -5223,9 +5051,7 @@ def compact_curriculum_side_score(program: list[int]) -> float:
     """Mean CPU verify on compact-reachable levels L8-L16."""
     if not program:
         return 0.0
-    return sum(curriculum_verify_mean(program, lv) for lv in _COMPACT_SIDE_LEVELS) / float(
-        len(_COMPACT_SIDE_LEVELS)
-    )
+    return sum(curriculum_verify_mean(program, lv) for lv in _COMPACT_SIDE_LEVELS) / float(len(_COMPACT_SIDE_LEVELS))
 
 
 def compact_curriculum_beats(champion: list[int], candidate: list[int]) -> bool:
@@ -5311,9 +5137,7 @@ def _heldout_l30_verify_mean_cached(program: tuple[int, ...], n_seeds: int) -> f
             10000,
         )
         regs = result.get("registers") or {}
-        scores.append(
-            float(level(seed=seed).verify({"registers": regs, "memory": {}}, inst))
-        )
+        scores.append(float(level(seed=seed).verify({"registers": regs, "memory": {}}, inst)))
     score = sum(scores) / len(scores) if scores else 0.0
     _vm_score_disk_put("heldout_l30", disk_key, score)
     return score
@@ -5404,9 +5228,7 @@ def select_terminal_probes_for_batch(
         )
         if capability_stalled:
             compression_hot = scan_floor_compression_hot(program, rng)
-            if _skip_empty_compression_rescan(
-                tuple(int(x) for x in program), champ_n_floor
-            ):
+            if _skip_empty_compression_rescan(tuple(int(x) for x in program), champ_n_floor):
                 # Recorded zero-hit compression rescan: avoid redundant exhaustive
                 # wide-imm / archive sweeps on the same champion bytes.
                 compression_hot = True
@@ -5430,11 +5252,7 @@ def select_terminal_probes_for_batch(
                     int(n_take) * 4,
                     terminal_efficiency_eval_budget() + 16,
                 )
-        variants.extend(
-            terminal_equal_length_refine_variants(
-                program, int(level), rng, max_evals=refine_budget
-            )
-        )
+        variants.extend(terminal_equal_length_refine_variants(program, int(level), rng, max_evals=refine_budget))
         if capability_stalled:
             try:
                 from evolution.mutation_helpers import load_scan_floor_eq_refine_seeds
@@ -5451,9 +5269,7 @@ def select_terminal_probes_for_batch(
                         16,
                         refine_budget // max(1, len(alt_seeds)),
                     )
-                    alt_key = _eq_refine_alt_probe_cache_key(
-                        list(program), len(alt_seeds), int(refine_budget)
-                    )
+                    alt_key = _eq_refine_alt_probe_cache_key(list(program), len(alt_seeds), int(refine_budget))
                     alt_cached = _eq_refine_alt_probe_cache.get(alt_key)
                     if alt_cached is not None:
                         variants.extend([list(v) for v in alt_cached])
@@ -5475,25 +5291,14 @@ def select_terminal_probes_for_batch(
                                 tuple(int(w) for w in prog) for prog in alt_variants
                             )
                             if len(_eq_refine_alt_probe_cache) > 32:
-                                _eq_refine_alt_probe_cache.pop(
-                                    next(iter(_eq_refine_alt_probe_cache))
-                                )
+                                _eq_refine_alt_probe_cache.pop(next(iter(_eq_refine_alt_probe_cache)))
                         variants.extend(alt_variants)
             except ImportError:
                 pass
     else:
         variants.extend(terminal_verify_probe_variants(program, int(level), rng, n_take))
-    if (
-        trace is not None
-        and task_instance is not None
-        and _l11_fib_gate_imm(program) != 13
-        and not at_floor
-    ):
-        variants.extend(
-            terminal_register_targeted_variants(
-                program, int(level), trace, task_instance, rng, n_take
-            )
-        )
+    if trace is not None and task_instance is not None and _l11_fib_gate_imm(program) != 13 and not at_floor:
+        variants.extend(terminal_register_targeted_variants(program, int(level), trace, task_instance, rng, n_take))
     champ = tuple(program)
     seen: set[tuple[int, ...]] = {champ}
     uniq: list[list[int]] = []
@@ -5568,9 +5373,7 @@ def select_terminal_probes_for_batch(
                 material_stalled = False
         if material_stalled:
             try:
-                from evolution.champion_rollback import (
-                    collect_growth_material_compress_parents,
-                )
+                from evolution.champion_rollback import collect_growth_material_compress_parents
 
                 material_parents = collect_growth_material_compress_parents(
                     list(program),
@@ -5583,11 +5386,7 @@ def select_terminal_probes_for_batch(
                     )
                     mat_budget = max(
                         mat_budget,
-                        int(
-                            os.environ.get(
-                                "EE_SCAN_FLOOR_MATERIAL_COMPRESS_BUDGET_STALLED", "10"
-                            )
-                        ),
+                        int(os.environ.get("EE_SCAN_FLOOR_MATERIAL_COMPRESS_BUDGET_STALLED", "10")),
                     )
                     material_compress = terminal_long_archive_compress_probe_variants(
                         program,
@@ -5678,9 +5477,7 @@ def select_terminal_probes_for_batch(
                     from evolution.champion_rollback import collect_jsonl_long_archive_parents
                     from evolution.mutation_helpers import _evolution_project_root
 
-                    results = os.path.join(
-                        _evolution_project_root(), "multi_cycle_results.jsonl"
-                    )
+                    results = os.path.join(_evolution_project_root(), "multi_cycle_results.jsonl")
                     long_parents = collect_jsonl_long_archive_parents(
                         results,
                         list(program),
@@ -5751,11 +5548,7 @@ def select_terminal_probes_for_batch(
                 int(os.environ.get("EE_SCAN_FLOOR_CAPABILITY_PROBE_RESERVE", "16")),
             )
             champ_t = tuple(program)
-            prom_candidates = [
-                list(variant)
-                for variant in qualified
-                if tuple(variant) != champ_t
-            ]
+            prom_candidates = [list(variant) for variant in qualified if tuple(variant) != champ_t]
             capability_first = _rank_scan_floor_picked_probes(
                 program,
                 prom_candidates,
@@ -5921,11 +5714,7 @@ def candidate_beats_champion_on_verify(
         if candidate_fitness > champion_fitness + 1e-6:
             return True
         if candidate_fitness + 1e-6 >= champion_fitness:
-            if (
-                champion_words is not None
-                and candidate_words is not None
-                and candidate_words < champion_words
-            ):
+            if champion_words is not None and candidate_words is not None and candidate_words < champion_words:
                 return True
             if (
                 champion_raw_fitness is not None
@@ -5988,12 +5777,8 @@ def update_verify_best_candidate(
         return candidate
     if candidate[1] + 1e-6 < verify_best[1]:
         return verify_best
-    cand_raw = promotion_raw_fitness(
-        engine, candidate_program, candidate_trace, verify_score=candidate[0]
-    )
-    best_raw = promotion_raw_fitness(
-        engine, verify_best[2], verify_best[3], verify_score=verify_best[0]
-    )
+    cand_raw = promotion_raw_fitness(engine, candidate_program, candidate_trace, verify_score=candidate[0])
+    best_raw = promotion_raw_fitness(engine, verify_best[2], verify_best[3], verify_score=verify_best[0])
     if cand_raw > best_raw + 1e-6:
         return candidate
     if abs(cand_raw - best_raw) <= 1e-6 and len(candidate_program) < len(verify_best[2]):
@@ -6036,13 +5821,9 @@ def scan_floor_promotion_capability_qualifies(
     champ_n = len(champion_program)
     cand_n = len(candidate_program)
     if cand_n < champ_n:
-        return scan_floor_compression_promote_qualifies(
-            list(champion_program), list(candidate_program)
-        )
+        return scan_floor_compression_promote_qualifies(list(champion_program), list(candidate_program))
     if cand_n > champ_n:
-        return scan_floor_growth_completion_qualifies(
-            list(champion_program), list(candidate_program)
-        )
+        return scan_floor_growth_completion_qualifies(list(champion_program), list(candidate_program))
     return get_scan_floor_gate(list(champion_program)).qualifies(list(candidate_program))
 
 
@@ -6066,23 +5847,15 @@ def verify_promotion_beats_champion(
     champ_trace_v = float(
         champion_verify
         if champion_verify is not None
-        else (
-            verify_fn(champion_trace)
-            if callable(verify_fn)
-            else stored_verify
-        )
+        else (verify_fn(champion_trace) if callable(verify_fn) else stored_verify)
     )
     cand_v = float(
         candidate_verify
         if candidate_verify is not None
         else (verify_fn(candidate_trace) if callable(verify_fn) else 0.0)
     )
-    champ_raw = promotion_raw_fitness(
-        engine, champion_program, champion_trace, verify_score=champ_trace_v
-    )
-    cand_raw = promotion_raw_fitness(
-        engine, candidate_program, candidate_trace, verify_score=cand_v
-    )
+    champ_raw = promotion_raw_fitness(engine, champion_program, champion_trace, verify_score=champ_trace_v)
+    cand_raw = promotion_raw_fitness(engine, candidate_program, candidate_trace, verify_score=cand_v)
     margin = effective_verify_margin()
 
     # Certified champions keep saturated _champion_verify_score while the active
@@ -6100,28 +5873,13 @@ def verify_promotion_beats_champion(
         if cand_raw + 1e-6 < champ_raw:
             return False
         if cand_raw > champ_raw + min_raw_gain - 1e-6:
-            return scan_floor_promotion_capability_qualifies(
-                list(champion_program), list(candidate_program)
-            )
-        if (
-            len(candidate_program) < len(champion_program)
-            and cand_raw + 1e-6 >= champ_raw
-        ):
-            return scan_floor_promotion_capability_qualifies(
-                list(champion_program), list(candidate_program)
-            )
-        if (
-            candidate_fitness > champion_fitness + min_raw_gain - 1e-6
-            and cand_raw + 1e-6 >= champ_raw
-        ):
-            if (
-                len(candidate_program) > len(champion_program)
-                and cand_raw <= champ_raw + min_raw_gain - 1e-6
-            ):
+            return scan_floor_promotion_capability_qualifies(list(champion_program), list(candidate_program))
+        if len(candidate_program) < len(champion_program) and cand_raw + 1e-6 >= champ_raw:
+            return scan_floor_promotion_capability_qualifies(list(champion_program), list(candidate_program))
+        if candidate_fitness > champion_fitness + min_raw_gain - 1e-6 and cand_raw + 1e-6 >= champ_raw:
+            if len(candidate_program) > len(champion_program) and cand_raw <= champ_raw + min_raw_gain - 1e-6:
                 return False
-            return scan_floor_promotion_capability_qualifies(
-                list(champion_program), list(candidate_program)
-            )
+            return scan_floor_promotion_capability_qualifies(list(champion_program), list(candidate_program))
         return False
 
     return candidate_beats_champion_on_verify(

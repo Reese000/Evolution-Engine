@@ -6,7 +6,6 @@ based on saturation detection reports.
 Includes VRAM pre-flight checks using torch.cuda.mem_get_info() when available.
 """
 
-
 from typing import ClassVar
 
 from .types import SaturationReport, ScalingDecision

@@ -198,11 +198,7 @@ def _maybe_apply_flatline_halt() -> bool:
     if os.environ.get("EE_FLATLINE_GUARD", "1") != "1":
         return False
     try:
-        from evolution.flatline_guard import (
-            apply_flatline_halt,
-            assess_flatline,
-            is_evolution_paused,
-        )
+        from evolution.flatline_guard import apply_flatline_halt, assess_flatline, is_evolution_paused
 
         report = None
         try:

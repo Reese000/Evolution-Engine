@@ -36,28 +36,21 @@ def test_growth_material_load_prunes_side_regression():
     from tests.live_results import live_result_rows
 
     row = list(live_result_rows())[-1]
-    champ = [
-        int(x, 16) if isinstance(x, str) else int(x) for x in row["champion_program"]
-    ]
+    champ = [int(x, 16) if isinstance(x, str) else int(x) for x in row["champion_program"]]
     material_path = Path(".agents/scan_floor_growth_material.json")
     if not material_path.exists():
         return
     before = json.loads(material_path.read_text())
     _anchor, entries = _load_growth_material_entries(champ)
     assert entries
-    assert all(
-        len(e.get("program") or []) <= len(champ) + 25 for e in entries
-    )
+    assert all(len(e.get("program") or []) <= len(champ) + 25 for e in entries)
     after = json.loads(material_path.read_text())
     # Prune should drop the highest-prom side-broken rows from the live bucket.
     assert sum(len(v) for v in after.values()) <= sum(len(v) for v in before.values())
 
 
 def test_growth_material_record_rejects_side_regression(monkeypatch):
-    from evolution.champion_rollback import (
-        _growth_material_capability_qualifies,
-        record_scan_floor_growth_material,
-    )
+    from evolution.champion_rollback import _growth_material_capability_qualifies, record_scan_floor_growth_material
 
     champ = [1, 2, 3, 0x00100073]
     good = champ + [4, 5]
@@ -84,10 +77,7 @@ def test_growth_material_record_rejects_side_regression(monkeypatch):
 
 
 def test_ranked_growth_fills_reject_side_regression(monkeypatch):
-    from evolution.terminal_stagnation import (
-        _ranked_scan_floor_growth_fills_cached,
-        ranked_scan_floor_growth_fills,
-    )
+    from evolution.terminal_stagnation import _ranked_scan_floor_growth_fills_cached, ranked_scan_floor_growth_fills
 
     champ = [1, 2, 3, 0x00100073]
     good = champ + [4, 5, 6]

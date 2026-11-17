@@ -2,6 +2,7 @@
 
 Usage: python _probe_slow_cycles.py [first_cycle] [last_cycle]
 """
+
 from __future__ import annotations
 
 import json
@@ -49,10 +50,7 @@ def main() -> None:
     for r in rows:
         by_cycle[r["cycle"]] = r
 
-    hdr = (
-        "cyc  elapsed  evol  retrain  gens  gphase  vm  mutprop  seldiag  diag  unattr "
-        "init  fin  batches"
-    )
+    hdr = "cyc  elapsed  evol  retrain  gens  gphase  vm  mutprop  seldiag  diag  unattr " "init  fin  batches"
     print(hdr)
     for c in sorted(by_cycle):
         r = by_cycle[c]

@@ -106,15 +106,19 @@ def _load_models_from_checkpoint(checkpoint_path):
     }
     new_config_dict = {"d_model": 512, "n_layers": 14, "n_heads": 8, "d_ff": 2048}
     old_cfg = RV32IConfig(
-        d_model=old_config_dict["d_model"], n_layers=old_config_dict["n_layers"],
-        n_heads=old_config_dict["n_heads"], d_ff=old_config_dict["d_ff"],
+        d_model=old_config_dict["d_model"],
+        n_layers=old_config_dict["n_layers"],
+        n_heads=old_config_dict["n_heads"],
+        d_ff=old_config_dict["d_ff"],
     )
     old_model = RV32IModel(old_cfg)
     old_model.load_state_dict(ckpt["model_state_dict"])
     old_model.eval()
     new_cfg = RV32IConfig(
-        d_model=new_config_dict["d_model"], n_layers=new_config_dict["n_layers"],
-        n_heads=new_config_dict["n_heads"], d_ff=new_config_dict["d_ff"],
+        d_model=new_config_dict["d_model"],
+        n_layers=new_config_dict["n_layers"],
+        n_heads=new_config_dict["n_heads"],
+        d_ff=new_config_dict["d_ff"],
     )
     new_model = RV32IModel(new_cfg)
     new_model.eval()
@@ -278,7 +282,15 @@ def _update_meta_controller(meta_controller, cycle, evo_metrics, val_loss, retra
     meta_controller.save_state(META_CONTROLLER_STATE)
 
 
-def _print_final_summary(completed_cycles, archive_size, saturation_triggered, last_checkpoint, fitness_history, level_history, val_loss_history):
+def _print_final_summary(
+    completed_cycles,
+    archive_size,
+    saturation_triggered,
+    last_checkpoint,
+    fitness_history,
+    level_history,
+    val_loss_history,
+):
     """Print final summary and save summary JSON."""
     clog(f"\n{'=' * 60}")
     clog("FINAL SUMMARY")
@@ -323,6 +335,7 @@ def _init_meta_controller():
     if not _HAS_META_CONTROLLER:
         return None
     from meta_controller import MetaController
+
     mc = MetaController(
         checkpoint_dir=M1_CHECKPOINTS,
         log_file=os.path.join(PROJECT_ROOT, "meta_controller.log"),
@@ -434,7 +447,15 @@ def main():
             traceback.print_exc()
             continue
 
-    _print_final_summary(completed_cycles, archive_size, saturation_triggered, last_checkpoint, fitness_history, level_history, val_loss_history)
+    _print_final_summary(
+        completed_cycles,
+        archive_size,
+        saturation_triggered,
+        last_checkpoint,
+        fitness_history,
+        level_history,
+        val_loss_history,
+    )
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ Phase 2: bounded project-native terminal_imm_perturb + wide imm sweep.
 Scores every candidate with compact_l30_promotion_raw_fitness only.
 Records variants with prom_raw >= 325.836 AND gate-qualified.
 """
+
 import json
 import os
 import random
@@ -26,7 +27,8 @@ from evolution.terminal_stagnation import (
     terminal_imm_perturb_probe_variants,
     terminal_wide_imm_sweep_probe_variants,
 )
-from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+from milestone1.rv32i_mask import decode as rv32i_decode
+from milestone1.rv32i_mask import encode as rv32i_encode
 
 FINE_DELTAS = (-8, -4, -2, -1, 1, 2, 4, 8)  # terminal_imm_perturb axis
 WIDE_DELTAS = tuple(_SCAN_FLOOR_WIDE_IMM_DELTAS)  # wide imm sweep axis
@@ -125,16 +127,15 @@ def evaluate(variant: list[int] | None, phase: str, base: str, locus, delta) -> 
         }
     )
     if pr >= TASK_BAR:
-        log(f"  >= task_bar HIT prom={pr:.6f} phase={phase} base={base} "
-            f"locus={locus} delta={delta}")
+        log(f"  >= task_bar HIT prom={pr:.6f} phase={phase} base={base} " f"locus={locus} delta={delta}")
     if scored % 50 == 0:
-        log(f"  ...scored {scored} variants, best so far "
-            f"{max(r['prom'] for r in results):.6f}")
+        log(f"  ...scored {scored} variants, best so far " f"{max(r['prom'] for r in results):.6f}")
 
 
 # ---- Phase 1a: champion at the union of eq-seed diff loci (prefix-locked) ---
-log(f"Phase 1a: champion x {len(union_loci_sorted)} loci x "
-    f"{len(FINE_DELTAS)} fine + {len(WIDE_DELTAS)} wide deltas")
+log(
+    f"Phase 1a: champion x {len(union_loci_sorted)} loci x " f"{len(FINE_DELTAS)} fine + {len(WIDE_DELTAS)} wide deltas"
+)
 for locus in union_loci_sorted:
     for axis, deltas in (("imm_perturb_fine", FINE_DELTAS), ("wide_imm_sweep", WIDE_DELTAS)):
         for d in deltas:
@@ -156,25 +157,20 @@ log("Phase 2: terminal_imm_perturb_probe_variants + terminal_wide_imm_sweep_prob
 rng = random.Random(RNG_SEED)
 for name, prog in [("champion", champ)] + [(f"seed{i}", s) for i, s in enumerate(seeds)]:
     try:
-        fine_vars = terminal_imm_perturb_probe_variants(
-            list(prog), rng, max_evals=24, gate=gate
-        )
+        fine_vars = terminal_imm_perturb_probe_variants(list(prog), rng, max_evals=24, gate=gate)
     except (ValueError, TypeError, KeyError, ImportError) as exc:
         log(f"  imm_perturb error on {name}: {exc}")
         fine_vars = []
     for v in fine_vars:
         evaluate(v, "terminal_imm_perturb", name, None, None)
     try:
-        wide_vars = terminal_wide_imm_sweep_probe_variants(
-            list(prog), max_evals=64, start_offset=0, gate=gate
-        )
+        wide_vars = terminal_wide_imm_sweep_probe_variants(list(prog), max_evals=64, start_offset=0, gate=gate)
     except (ValueError, TypeError, KeyError, ImportError) as exc:
         log(f"  wide_sweep error on {name}: {exc}")
         wide_vars = []
     for v in wide_vars:
         evaluate(v, "wide_imm_sweep_native", name, None, None)
-    log(f"  Phase 2 {name}: imm_perturb={len(fine_vars)} wide_sweep={len(wide_vars)} "
-        f"scored={scored}")
+    log(f"  Phase 2 {name}: imm_perturb={len(fine_vars)} wide_sweep={len(wide_vars)} " f"scored={scored}")
 
 # ------------------------------------------------------------------ analysis
 results.sort(key=lambda r: r["prom"], reverse=True)
@@ -193,14 +189,8 @@ for r in to_check:
     gate_checked[repr(gk)] = ok
     r["gate"] = ok
 
-breakthroughs = [
-    r for r in results
-    if r["prom"] >= TASK_BAR and gate_checked.get(repr(tuple(r["program"])), False)
-]
-bar_qualified = [
-    r for r in results
-    if r["prom"] > bar + 1e-6 and gate_checked.get(repr(tuple(r["program"])), False)
-]
+breakthroughs = [r for r in results if r["prom"] >= TASK_BAR and gate_checked.get(repr(tuple(r["program"])), False)]
+bar_qualified = [r for r in results if r["prom"] > bar + 1e-6 and gate_checked.get(repr(tuple(r["program"])), False)]
 
 log("=" * 70)
 log(f"BAR (real)   = {bar:.6f}")
@@ -213,13 +203,16 @@ log(f"variants >= TASK_BAR: {n_at_or_above} | > real bar: {n_above_real}")
 log(f"BREAKTHROUGHS (prom >= {TASK_BAR} AND gate qualifies): {len(breakthroughs)}")
 for r in breakthroughs:
     l10 = curriculum_verify_mean(r["program"], 10)
-    log(f"  * prom={r['prom']:.6f} L10={l10:.3f} phase={r['phase']} "
-        f"base={r['base']} locus={r['locus']} delta={r['delta']}")
+    log(
+        f"  * prom={r['prom']:.6f} L10={l10:.3f} phase={r['phase']} "
+        f"base={r['base']} locus={r['locus']} delta={r['delta']}"
+    )
 log("top 10 by prom:")
 for r in results[:10]:
     g = gate_checked.get(repr(tuple(r["program"])), None)
-    log(f"  prom={r['prom']:.6f} gate={g} phase={r['phase']} base={r['base']} "
-        f"locus={r['locus']} delta={r['delta']}")
+    log(
+        f"  prom={r['prom']:.6f} gate={g} phase={r['phase']} base={r['base']} " f"locus={r['locus']} delta={r['delta']}"
+    )
 
 # ------------------------------------------------------------------- persist
 os.makedirs(os.path.dirname(EVIDENCE_PATH), exist_ok=True)
@@ -275,9 +268,7 @@ if breakthroughs:
 
     best = breakthroughs[0]
     log("RECORDING breakthrough via record_scan_floor_eq_refine_seeds ...")
-    record_scan_floor_eq_refine_seeds(
-        champ, [list(best["program"])], cycle=int(row.get("cycle") or 0)
-    )
+    record_scan_floor_eq_refine_seeds(champ, [list(best["program"])], cycle=int(row.get("cycle") or 0))
     log("recorded.")
 else:
     log("NO breakthrough >= task bar with gate qualification - nothing recorded (exhausted).")

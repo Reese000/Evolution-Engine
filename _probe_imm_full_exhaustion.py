@@ -12,6 +12,7 @@ Scoring: compact_l30_promotion_raw_fitness only, with the persistent disk
 score cache disabled so every unique program gets one real evaluation.
 No fitness/gate modification; read-only on the daemon.
 """
+
 import itertools
 import json
 import os
@@ -30,7 +31,8 @@ from evolution.terminal_stagnation import (
     terminal_imm_perturb_probe_variants,
     terminal_wide_imm_sweep_probe_variants,
 )
-from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+from milestone1.rv32i_mask import decode as rv32i_decode
+from milestone1.rv32i_mask import encode as rv32i_encode
 from mutation_proposer import _is_ebreak
 
 TASK_BAR = 325.836
@@ -50,8 +52,11 @@ def apply_delta_one(prog, idx, delta):
         if "imm" not in d:
             return None
         w = rv32i_encode(
-            name=str(d["name"]), rd=int(d.get("rd", 0)), rs1=int(d.get("rs1", 0)),
-            rs2=int(d.get("rs2", 0)), imm=int(d.get("imm", 0)) + int(delta),
+            name=str(d["name"]),
+            rd=int(d.get("rd", 0)),
+            rs1=int(d.get("rs1", 0)),
+            rs2=int(d.get("rs2", 0)),
+            imm=int(d.get("imm", 0)) + int(delta),
             validate=True,
         )
     except (ValueError, TypeError, KeyError):
@@ -66,15 +71,14 @@ def effectual_loci(base, loci):
     for i in loci:
         if _is_ebreak(base[i]):
             continue
-        if any((nv := apply_delta_one(base, i, dl)) is not None and nv != base
-               for dl in WIDE):
+        if any((nv := apply_delta_one(base, i, dl)) is not None and nv != base for dl in WIDE):
             out.append(i)
     return out
 
 
 # ---- force one real evaluation per unique program ---------------------------
 fh._PROMOTION_RAW_CACHE.clear()
-ts._VM_SCORE_DISK_MEM = {}       # in-process only; _vm_score_disk_flush is
+ts._VM_SCORE_DISK_MEM = {}  # in-process only; _vm_score_disk_flush is
 ts._VM_SCORE_DISK_LOADED = True  # unreachable here (lives in select_terminal_probes_for_batch)
 
 rows = open("multi_cycle_results.jsonl", encoding="utf-8").readlines()
@@ -145,9 +149,15 @@ for name, base, diff_loci in bases:
                     log(f"  ** NEW BEST {pr:.6f} {best_desc}")
                 base_best = max(base_best, pr)
                 if pr >= TASK_BAR:
-                    hits.append({"prom": pr, "base": name, "loci": list(combo),
-                                 "deltas": list(deltas),
-                                 "program": [int(x) for x in key]})
+                    hits.append(
+                        {
+                            "prom": pr,
+                            "base": name,
+                            "loci": list(combo),
+                            "deltas": list(deltas),
+                            "program": [int(x) for x in key],
+                        }
+                    )
                     log(f"  !! >= task_bar {pr:.6f} {name} {list(combo)} {list(deltas)}")
 
     # project-native bounded probes, folded into the same shared dedup set
@@ -159,8 +169,7 @@ for name, base, diff_loci in bases:
         log(f"  native imm_perturb error {name}: {exc}")
         native = []
     try:
-        native += terminal_wide_imm_sweep_probe_variants(
-            list(base), max_evals=64, start_offset=0, gate=gate)
+        native += terminal_wide_imm_sweep_probe_variants(list(base), max_evals=64, start_offset=0, gate=gate)
     except (ValueError, TypeError, KeyError, ImportError) as exc:
         log(f"  native wide_sweep error {name}: {exc}")
     for v in native:
@@ -176,24 +185,32 @@ for name, base, diff_loci in bases:
             log(f"  ** NEW BEST {pr:.6f} {best_desc}")
         base_best = max(base_best, pr)
         if pr >= TASK_BAR:
-            hits.append({"prom": pr, "base": name, "loci": None, "deltas": None,
-                         "program": [int(x) for x in key]})
+            hits.append({"prom": pr, "base": name, "loci": None, "deltas": None, "program": [int(x) for x in key]})
             log(f"  !! >= task_bar {pr:.6f} {name} native")
 
     native_new += nat_new
     grand_planned += planned
     grand_new += new_here + nat_new
     sum_base_new += new_here + nat_new
-    rows_out.append({
-        "base": name, "effectual_loci": eff, "max_subset_size": len(eff),
-        "planned_combos": planned, "globally_unique_new": new_here + nat_new,
-        "native_new": nat_new, "cross_base_dups": dups,
-        "baseline_prom": base_baseline,
-        "best_prom": base_best, "runtime_s": time.time() - t_base,
-    })
-    log(f"{name}: eff={eff} planned={planned} unique_new={new_here + nat_new} "
+    rows_out.append(
+        {
+            "base": name,
+            "effectual_loci": eff,
+            "max_subset_size": len(eff),
+            "planned_combos": planned,
+            "globally_unique_new": new_here + nat_new,
+            "native_new": nat_new,
+            "cross_base_dups": dups,
+            "baseline_prom": base_baseline,
+            "best_prom": base_best,
+            "runtime_s": time.time() - t_base,
+        }
+    )
+    log(
+        f"{name}: eff={eff} planned={planned} unique_new={new_here + nat_new} "
         f"(native {nat_new}) dups={dups} best={base_best:.6f} "
-        f"in {time.time() - t_base:.1f}s")
+        f"in {time.time() - t_base:.1f}s"
+    )
 
 overlap = sum_base_new - grand_new
 log("=" * 72)
@@ -247,8 +264,7 @@ if gate_hits:
     from evolution.mutation_helpers import record_scan_floor_eq_refine_seeds
 
     log("RECORDING breakthrough ...")
-    record_scan_floor_eq_refine_seeds(champ, [list(gate_hits[0]["program"])],
-                                      cycle=int(row.get("cycle") or 0))
+    record_scan_floor_eq_refine_seeds(champ, [list(gate_hits[0]["program"])], cycle=int(row.get("cycle") or 0))
     log("recorded.")
 else:
     log("EXHAUSTED: no gate-qualified variant >= task bar anywhere in the imm space.")

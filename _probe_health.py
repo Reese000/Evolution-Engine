@@ -1,4 +1,5 @@
 """Inspect daemon log tail + health/progress snapshots (read-only)."""
+
 from __future__ import annotations
 
 import json

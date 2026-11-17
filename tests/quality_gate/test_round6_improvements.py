@@ -57,7 +57,7 @@ class TestSelectEliteDedupAlignment:
         def fake_batch_compute(programs, traces, eval_budget=None, raw_only=False):
             return [fake_fitness(p, t, eval_budget, raw_only) for p, t in zip(programs, traces)], [0.0] * len(programs)
 
-        with patch.object(engine, 'batch_compute_fitness', fake_batch_compute):
+        with patch.object(engine, "batch_compute_fitness", fake_batch_compute):
             elites, elite_fits, _idxs = engine._select_elite(programs, results)
 
         # Elites should be unique programs
@@ -92,7 +92,7 @@ class TestSelectEliteDedupAlignment:
         def fake_batch_compute(programs, traces, eval_budget=None, raw_only=False):
             return [float(sum(p)) for p in programs], [0.0] * len(programs)
 
-        with patch.object(engine, 'batch_compute_fitness', fake_batch_compute):
+        with patch.object(engine, "batch_compute_fitness", fake_batch_compute):
             elites, _elite_fits, _idxs = engine._select_elite(programs, results)
         assert len(elites) <= len(programs), f"Elite count {len(elites)} exceeds population {len(programs)}"
 
@@ -182,7 +182,6 @@ class TestSkipEvolutionFlag:
     sys.platform == "win32",
     reason="PermissionError on temp dir cleanup — PM Rule #27",
 )
-
 class TestCloseLogHandle:
     """Verify _close_log_handle properly cleans up."""
 
@@ -281,6 +280,7 @@ class TestCloseLogHandle:
 class TestRecurrentFeedbackGen0:
     """_try_recurrent_feedback should run when generations_stalled=0
     (it only requires _last_challengers to be non-empty)."""
+
     def test_feedback_runs_without_stall(self):
         from evolution_engine import EvolutionConfig, EvolutionEngine
 

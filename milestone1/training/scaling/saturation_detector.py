@@ -6,7 +6,6 @@ reached a plateau and should be scaled to a larger architecture.
 Uses least-squares linear regression for slope-based trend analysis.
 """
 
-
 import numpy as np
 
 from .types import SaturationReport, TrendSnapshot

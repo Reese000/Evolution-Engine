@@ -4,6 +4,7 @@ Same measurements as _probe_hotspot_offline.py, but with the per-program
 scoring LRU caches re-created with a much larger capacity (pure memoization:
 identical values, identical gates -- only the cache size changes).
 """
+
 from __future__ import annotations
 
 import functools
@@ -97,8 +98,8 @@ def main() -> None:
     from evolution.terminal_stagnation import get_scan_floor_gate
 
     gate = get_scan_floor_gate(list(champ))
-    from evolution.terminal_stagnation import select_terminal_probes_for_batch
     from evolution.mutation_helpers import collect_scan_floor_growth_crossover_fills
+    from evolution.terminal_stagnation import select_terminal_probes_for_batch
 
     measure(
         "select_terminal_probes_for_batch (warm caches)",

@@ -1,4 +1,5 @@
 """Report interpreter + torch availability (read-only)."""
+
 from __future__ import annotations
 
 import importlib.util

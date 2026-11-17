@@ -13,9 +13,7 @@ from tests.live_results import live_champion_row, live_result_rows
     not os.path.isfile("multi_cycle_results.jsonl"),
     reason="needs live results jsonl",
 )
-def test_terminal_efficiency_promotes_live_growth_material(
-    tmp_path, monkeypatch
-):
+def test_terminal_efficiency_promotes_live_growth_material(tmp_path, monkeypatch):
     """55w growth material at prom 324.83+ should promote over 54w @ 324.633.
 
     Recorded against live production state when the incumbent L30 champion
@@ -51,9 +49,7 @@ def test_terminal_efficiency_promotes_live_growth_material(
     assert len(champ) == 54
     record_terminal_efficiency_scan_floor(int(row["cycle"]), len(champ), 1.0)
 
-    material = json.load(
-        open(".agents/scan_floor_growth_material.json", encoding="utf-8")
-    )
+    material = json.load(open(".agents/scan_floor_growth_material.json", encoding="utf-8"))
     growth = max(
         material[next(iter(material))],
         key=lambda e: float(e.get("prom") or 0.0),
@@ -62,9 +58,7 @@ def test_terminal_efficiency_promotes_live_growth_material(
 
     from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
 
-    assert compact_l30_promotion_raw_fitness(growth) > compact_l30_promotion_raw_fitness(
-        champ
-    ) + 0.01
+    assert compact_l30_promotion_raw_fitness(growth) > compact_l30_promotion_raw_fitness(champ) + 0.01
 
     eng = EvolutionEngine(config=EvolutionConfig(max_level=30))
     eng.champion_level = 30

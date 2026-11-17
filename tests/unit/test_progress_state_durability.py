@@ -54,10 +54,7 @@ def _warnings(caplog):
 
 
 def _has_unreadable_warning(caplog) -> bool:
-    return any(
-        "progress-controller state unreadable" in r.getMessage()
-        for r in _warnings(caplog)
-    )
+    return any("progress-controller state unreadable" in r.getMessage() for r in _warnings(caplog))
 
 
 def _bump_mtime(path) -> None:
@@ -144,9 +141,7 @@ def test_progress_controller_load_logs_torn_state(tmp_path, caplog):
     assert _has_unreadable_warning(caplog)
 
 
-def test_torn_state_warning_is_reported_once_per_bad_file(
-    agents, state_path, caplog
-):
+def test_torn_state_warning_is_reported_once_per_bad_file(agents, state_path, caplog):
     state_path.write_text(json.dumps({"cycles_at_level": 3}), encoding="utf-8")
     with caplog.at_level("WARNING", logger="EvolutionEngine"):
         assert ts._read_progress_state()["cycles_at_level"] == 3
@@ -176,16 +171,12 @@ def test_write_state_tmp_file_is_writer_unique(tmp_path, monkeypatch):
     assert progress_state_io.write_state(path, {"a": 1}) is True
     # pid + thread id: concurrent writers must never share a tmp file, or one
     # writer's os.replace can move the other's half-written payload into place.
-    assert captured["src"].endswith(
-        f".{os.getpid()}.{threading.get_ident()}.tmp"
-    ), captured["src"]
+    assert captured["src"].endswith(f".{os.getpid()}.{threading.get_ident()}.tmp"), captured["src"]
     with open(path, encoding="utf-8") as f:
         assert json.loads(f.read()) == {"a": 1}
 
 
-def test_progress_controller_save_retries_transient_replace_failures(
-    tmp_path, monkeypatch, caplog
-):
+def test_progress_controller_save_retries_transient_replace_failures(tmp_path, monkeypatch, caplog):
     agents = tmp_path / ".agents"
     agents.mkdir()
     real_replace = os.replace
@@ -211,9 +202,7 @@ def test_progress_controller_save_retries_transient_replace_failures(
 
     assert state["calls"] == 3, "save() must use the same bounded 3-attempt retry"
     assert sleeps == [pytest.approx(0.05), pytest.approx(0.10)]
-    data = json.loads(
-        (agents / "progress_controller_state.json").read_text(encoding="utf-8")
-    )
+    data = json.loads((agents / "progress_controller_state.json").read_text(encoding="utf-8"))
     assert data["level"] == 21
     assert data["cycles_at_level"] == 4
     assert list(agents.glob("*.tmp")) == [], "no stray tmp file left behind"
@@ -222,9 +211,7 @@ def test_progress_controller_save_retries_transient_replace_failures(
 # --- the two writers round-tripping the same file -------------------------------
 
 
-def test_save_and_patch_round_trip_preserves_both_writers_keys(
-    tmp_path, agents, state_path
-):
+def test_save_and_patch_round_trip_preserves_both_writers_keys(tmp_path, agents, state_path):
     pc = ProgressController(str(tmp_path), stall_threshold=2)
     pc.state.level = 21
     pc.state.cycles_at_level = 5
@@ -252,9 +239,7 @@ def test_save_and_patch_round_trip_preserves_both_writers_keys(
     assert fresh.state.cycles_at_level == 6
 
 
-def test_concurrent_save_and_patch_never_tear_the_state_file(
-    tmp_path, agents, state_path
-):
+def test_concurrent_save_and_patch_never_tear_the_state_file(tmp_path, agents, state_path):
     """Both writers hammering the file concurrently: readers never see a torn
     (unparseable) document — the failure mode the truncate-write allowed."""
     pc = ProgressController(str(tmp_path), stall_threshold=2)
@@ -279,9 +264,7 @@ def test_concurrent_save_and_patch_never_tear_the_state_file(
     def write_patch():
         try:
             for i in range(iterations):
-                ts._patch_progress_state(
-                    {"terminal_efficiency_scan_floor_words": 48, "scan_patch_iter": i}
-                )
+                ts._patch_progress_state({"terminal_efficiency_scan_floor_words": 48, "scan_patch_iter": i})
         except Exception as exc:  # noqa: BLE001 - failure surfaces in the assert below
             thread_errors.append(f"patch: {exc!r}")
 
@@ -326,9 +309,7 @@ def test_concurrent_save_and_patch_never_tear_the_state_file(
     assert final["terminal_efficiency_scan_floor_words"] == 48
 
 
-def test_interleaved_save_cannot_clobber_a_concurrent_patch(
-    tmp_path, agents, state_path, monkeypatch
-):
+def test_interleaved_save_cannot_clobber_a_concurrent_patch(tmp_path, agents, state_path, monkeypatch):
     """Deterministic lost-update scenario (the reviewer's probe).
 
     Interleave: ``ProgressController.save()`` reads the file, then
@@ -386,9 +367,9 @@ def test_interleaved_save_cannot_clobber_a_concurrent_patch(
 
     final = json.loads(state_path.read_text(encoding="utf-8"))
     assert final["level"] == 21, "save()'s own keys must survive"
-    assert final["terminal_efficiency_scan_floor_words"] == 48, (
-        "save()'s stale merge clobbered the keys the patcher committed mid-flight"
-    )
+    assert (
+        final["terminal_efficiency_scan_floor_words"] == 48
+    ), "save()'s stale merge clobbered the keys the patcher committed mid-flight"
 
 
 # --- cross-process: STATE_LOCK only serialises threads of ONE process ----------
@@ -484,9 +465,7 @@ def _run_two_writer_processes(state_path: str, mode: str, workdir) -> list[dict]
     with open(script, "w", encoding="utf-8") as fh:
         fh.write(CROSS_PROCESS_CHILD)
     # tests/unit/test_*.py -> tests/unit -> tests -> repo root.
-    repo_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     # Mirror the acceptance run's `env -u PYTHONPATH`: a stray PYTHONPATH
     # pointing at a foreign site-packages must not shadow the project package.
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
@@ -518,9 +497,7 @@ def _run_two_writer_processes(state_path: str, mode: str, workdir) -> list[dict]
     try:
         for proc in procs:
             out, err = proc.communicate(timeout=120)
-            assert proc.returncode == 0, (
-                f"writer process failed (rc={proc.returncode}): {err[-4000:]}"
-            )
+            assert proc.returncode == 0, f"writer process failed (rc={proc.returncode}): {err[-4000:]}"
             reports.append(json.loads(out.strip().splitlines()[-1]))
     finally:
         for proc in procs:  # only the PIDs this test spawned
@@ -566,9 +543,7 @@ def _release_lock_file(handle) -> None:
 
 def _evolution_warnings(caplog) -> list[str]:
     return [
-        r.getMessage()
-        for r in caplog.records
-        if r.levelname == "WARNING" and r.name == progress_state_io.LOGGER_NAME
+        r.getMessage() for r in caplog.records if r.levelname == "WARNING" and r.name == progress_state_io.LOGGER_NAME
     ]
 
 
@@ -590,9 +565,7 @@ def test_two_processes_keep_both_writers_keys(tmp_path):
     assert final.get("proc_b") == "2", f"process B's key was lost: {final}"
     # The lock file is the sibling of the NORMALISED state path: two spellings
     # of one file must resolve to one lock (see lock_path).
-    assert progress_state_io.lock_path(state_path) == (
-        os.path.normcase(os.path.realpath(state_path)) + ".lock"
-    )
+    assert progress_state_io.lock_path(state_path) == (os.path.normcase(os.path.realpath(state_path)) + ".lock")
     assert os.path.isfile(progress_state_io.lock_path(state_path)), "sibling lock file"
     assert list(tmp_path.glob("*.tmp")) == [], "tmp files must not leak"
 
@@ -612,9 +585,7 @@ def test_identical_interleave_without_the_lock_loses_a_key(tmp_path):
 
     final = json.loads((tmp_path / "progress_controller_state.json").read_text(encoding="utf-8"))
     survivors = {k for k in ("proc_a", "proc_b") if k in final}
-    assert len(survivors) == 1, (
-        f"without the cross-process lock exactly one writer must win, got {final}"
-    )
+    assert len(survivors) == 1, f"without the cross-process lock exactly one writer must win, got {final}"
 
 
 def test_lock_path_is_one_file_per_state_file(tmp_path):
@@ -631,9 +602,7 @@ def test_lock_path_is_one_file_per_state_file(tmp_path):
     assert progress_state_io.lock_path(path).endswith(progress_state_io.LOCK_SUFFIX)
 
 
-def test_held_lock_times_out_to_a_warning_instead_of_hanging(
-    tmp_path, monkeypatch, caplog
-):
+def test_held_lock_times_out_to_a_warning_instead_of_hanging(tmp_path, monkeypatch, caplog):
     """A foreign process holding the lock: bounded wait, WARNING, then today's
     behaviour (write anyway) — never a hang, never an exception."""
     path = str(tmp_path / "progress_controller_state.json")
@@ -653,9 +622,7 @@ def test_held_lock_times_out_to_a_warning_instead_of_hanging(
     # … and degraded instead of raising or blocking.
     assert written is True and err is None, (written, err)
     warnings = _evolution_warnings(caplog)
-    assert any(
-        "cross-process lock" in w and "proceeding without it" in w for w in warnings
-    ), warnings
+    assert any("cross-process lock" in w and "proceeding without it" in w for w in warnings), warnings
     final = json.loads((tmp_path / "progress_controller_state.json").read_text(encoding="utf-8"))
     assert final == {"level": 7}
 
@@ -680,9 +647,7 @@ def test_unopenable_lock_file_degrades_to_a_warning(tmp_path, caplog):
 
     assert written is True and err is None, (written, err)
     warnings = _evolution_warnings(caplog)
-    assert any(
-        "cross-process lock" in w and "cannot be opened" in w for w in warnings
-    ), warnings
+    assert any("cross-process lock" in w and "cannot be opened" in w for w in warnings), warnings
     final = json.loads((tmp_path / "progress_controller_state.json").read_text(encoding="utf-8"))
     assert final == {"level": 7}
 
@@ -716,9 +681,7 @@ def test_second_thread_is_refused_while_the_lock_is_held(tmp_path):
         other.join(timeout=30)
 
     assert not other.is_alive()
-    assert outcome == {"held": False}, (
-        f"a contended attempt must degrade, not be granted: {outcome!r}"
-    )
+    assert outcome == {"held": False}, f"a contended attempt must degrade, not be granted: {outcome!r}"
 
 
 def test_nested_update_state_does_not_fight_its_own_lock(tmp_path, monkeypatch, caplog):
@@ -749,9 +712,7 @@ def test_nested_update_state_does_not_fight_its_own_lock(tmp_path, monkeypatch, 
     elapsed = time.monotonic() - started
 
     assert written is True and err is None, (written, err)
-    assert elapsed < 3.0, (
-        f"nested call must not wait out the lock timeout (took {elapsed:.3f}s)"
-    )
+    assert elapsed < 3.0, f"nested call must not wait out the lock timeout (took {elapsed:.3f}s)"
     assert not [w for w in _evolution_warnings(caplog) if "cross-process lock" in w]
     final = json.loads((tmp_path / "progress_controller_state.json").read_text(encoding="utf-8"))
     assert final == {"outer": 1}, final
@@ -809,9 +770,7 @@ def test_seed_failure_closes_the_lock_handle_and_degrades(tmp_path, monkeypatch,
     assert final == {"a": 1}
 
 
-def test_fatal_lock_error_degrades_without_burning_the_timeout(
-    tmp_path, monkeypatch, caplog
-):
+def test_fatal_lock_error_degrades_without_burning_the_timeout(tmp_path, monkeypatch, caplog):
     """An error that can never mean 'another process holds the lock' must not
     cost the full timeout on every write — that cost is paid while STATE_LOCK
     is held, so it would serialise every in-process writer behind it."""
@@ -840,9 +799,7 @@ def test_fatal_lock_error_degrades_without_burning_the_timeout(
     assert list(tmp_path.glob("*.tmp")) == [], "tmp files must not leak"
 
 
-def test_nul_bearing_path_degrades_to_false_and_warning_instead_of_raising(
-    tmp_path, caplog
-):
+def test_nul_bearing_path_degrades_to_false_and_warning_instead_of_raising(tmp_path, caplog):
     """Never-raise end to end (N1): ``cross_process_lock`` already degraded on
     a path this interpreter refuses (``ValueError: embedded null character``)
     — the reviewer watched the lock log its WARNING and then ``write_state``'s
@@ -855,12 +812,8 @@ def test_nul_bearing_path_degrades_to_false_and_warning_instead_of_raising(
 
     assert result == (False, None), result
     warnings = _evolution_warnings(caplog)
-    assert any(
-        "cross-process lock" in w and "proceeding without it" in w for w in warnings
-    ), warnings
-    assert any(
-        "write failed" in w and "null character" in w for w in warnings
-    ), warnings
+    assert any("cross-process lock" in w and "proceeding without it" in w for w in warnings), warnings
+    assert any("write failed" in w and "null character" in w for w in warnings), warnings
     # Nothing can even be *named* with a NUL, so no tmp file was created …
     assert list(tmp_path.glob("*.tmp")) == [], "tmp files must not leak"
     # … the registry is clean, …
@@ -872,9 +825,7 @@ def test_nul_bearing_path_degrades_to_false_and_warning_instead_of_raising(
     assert final == {"level": 7}
 
 
-def test_nested_lock_under_degraded_outer_yields_false_without_waiting(
-    tmp_path, monkeypatch
-):
+def test_nested_lock_under_degraded_outer_yields_false_without_waiting(tmp_path, monkeypatch):
     """A degraded outer acquire registers its context too, so a nested entry
     re-enters *that* context instead of opening a second one: it yields
     ``False`` — claiming a lock nobody holds would hide the lost-update window
@@ -894,21 +845,13 @@ def test_nested_lock_under_degraded_outer_yields_false_without_waiting(
         _release_lock_file(foreign)
 
     assert outer is False, "the foreign holder owns the lock, not us"
-    assert nested is False, (
-        "a nested entry under a degraded outer must not claim a lock nobody holds"
-    )
-    assert 0.3 <= outer_elapsed < 5.0, (
-        f"the outer call must really wait out the bound, took {outer_elapsed:.3f}s"
-    )
-    assert nested_elapsed < 0.15, (
-        f"the nested entry must not re-attempt the lock (took {nested_elapsed:.3f}s)"
-    )
+    assert nested is False, "a nested entry under a degraded outer must not claim a lock nobody holds"
+    assert 0.3 <= outer_elapsed < 5.0, f"the outer call must really wait out the bound, took {outer_elapsed:.3f}s"
+    assert nested_elapsed < 0.15, f"the nested entry must not re-attempt the lock (took {nested_elapsed:.3f}s)"
     assert progress_state_io._thread_held == {}, "the registry must be empty again"
 
 
-def test_nested_update_state_after_degraded_outer_pays_one_timeout_not_two(
-    tmp_path, monkeypatch, caplog
-):
+def test_nested_update_state_after_degraded_outer_pays_one_timeout_not_two(tmp_path, monkeypatch, caplog):
     """N3: read-hook nesting under an outer acquire that had to degrade used to
     re-enter ``_open_and_lock`` and burn a *second* full timeout while
     ``STATE_LOCK`` stayed held behind it (0.300s outer + 0.312s inner measured
@@ -945,8 +888,7 @@ def test_nested_update_state_after_degraded_outer_pays_one_timeout_not_two(
     assert entered["n"] == 1, "the nesting read hook must have fired"
     # The nested call must not wait out the bound again …
     assert nested_elapsed["s"] < 0.15, (
-        "the nested update_state must not re-attempt the lock "
-        f"(took {nested_elapsed['s']:.3f}s)"
+        "the nested update_state must not re-attempt the lock " f"(took {nested_elapsed['s']:.3f}s)"
     )
     # … so the whole thing costs one bounded wait, not two. This bound only
     # rules out an *unbounded* wait (0.6s is pre-fix's 0.300 + 0.312, so the
@@ -972,9 +914,7 @@ def test_non_pathlike_path_type_error_is_the_documented_contract(tmp_path):
     # Not path-like at all -> TypeError from os.fspath.
     with pytest.raises(TypeError, match="expected str, bytes or os.PathLike object"):
         progress_state_io.update_state(123, {"a": 1})
-    assert progress_state_io._thread_held == {}, (
-        "a type error must not leave a half-registered lock context behind"
-    )
+    assert progress_state_io._thread_held == {}, "a type error must not leave a half-registered lock context behind"
     # A path-like object is a normal path and still writes.
     real_path = tmp_path / "progress_controller_state.json"
     assert progress_state_io.update_state(real_path, {"a": 1}) == (True, None)
@@ -1002,16 +942,12 @@ def test_non_json_state_still_raises_value_error_out_of_update_state(tmp_path):
     with pytest.raises(ValueError, match="Circular reference"):
         progress_state_io.update_state(path, state)
 
-    assert progress_state_io._thread_held == {}, (
-        "the raising call must still unwind the lock registry"
-    )
+    assert progress_state_io._thread_held == {}, "the raising call must still unwind the lock registry"
     assert not os.path.exists(path), "no partial file may be left behind"
     assert list(tmp_path.glob("*.tmp")) == [], "tmp files must not leak"
 
 
-def test_nul_path_still_degrades_when_realpath_rejects_it_like_posix_does(
-    tmp_path, monkeypatch, caplog
-):
+def test_nul_path_still_degrades_when_realpath_rejects_it_like_posix_does(tmp_path, monkeypatch, caplog):
     """Round-2 F1: only ``ntpath`` tolerates a NUL path — ``posixpath.realpath``
     stats every component and lets ``ValueError`` escape (its ``except OSError``
     around ``os.lstat``), so on Linux/macOS ``_lock_identity`` used to raise
@@ -1027,21 +963,15 @@ def test_nul_path_still_degrades_when_realpath_rejects_it_like_posix_does(
     monkeypatch.setattr(os.path, "realpath", posix_like_realpath)
 
     # The fallback still has to yield a deterministic lock identity …
-    assert progress_state_io._lock_identity(path) == os.path.normcase(
-        os.path.abspath(path)
-    )
+    assert progress_state_io._lock_identity(path) == os.path.normcase(os.path.abspath(path))
     # … and update_state must degrade end to end instead of raising.
     with caplog.at_level("WARNING", logger=progress_state_io.LOGGER_NAME):
         result = progress_state_io.update_state(path, {"level": 7})
 
     assert result == (False, None), result
     warnings = _evolution_warnings(caplog)
-    assert any(
-        "cross-process lock" in w and "proceeding without it" in w for w in warnings
-    ), warnings
-    assert any(
-        "write failed" in w and "null character" in w for w in warnings
-    ), warnings
+    assert any("cross-process lock" in w and "proceeding without it" in w for w in warnings), warnings
+    assert any("write failed" in w and "null character" in w for w in warnings), warnings
     assert progress_state_io._thread_held == {}, "the registry must be empty again"
     assert list(tmp_path.glob("*.tmp")) == [], "tmp files must not leak"
 

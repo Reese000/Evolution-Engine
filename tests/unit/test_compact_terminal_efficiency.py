@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from evolution_engine import EvolutionConfig, EvolutionEngine
 from evolution.terminal_stagnation import heldout_l30_verify_mean
+from evolution_engine import EvolutionConfig, EvolutionEngine
 from tests.live_results import live_result_rows
 
 

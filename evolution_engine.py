@@ -15,7 +15,6 @@ champion when a challenger achieves higher fitness.
 """
 
 
-
 from __future__ import annotations
 
 import heapq
@@ -39,13 +38,11 @@ from typing import Any
 _EMPTY_TUPLE: tuple = ()
 
 
-
 # R36: Pre-computed EBREAK constant to avoid repeated hex literal lookups
 
 # in hot mutation/evaluation loops (~100+ comparisons per generation).
 
 _EBREAK_INST: int = 0x00100073
-
 
 
 # R36: Frozen frozenset of crash/exception statuses for O(1) membership test
@@ -57,7 +54,6 @@ _EBREAK_INST: int = 0x00100073
 _CRASH_STATUSES: frozenset[str] = frozenset(("crash", "trap", "exception"))
 
 _TIMEOUT_STATUSES: frozenset[str] = frozenset(("timeout",))
-
 
 
 # Phase 3: Training signal quality thresholds
@@ -81,7 +77,6 @@ MAX_RECURRENT_ENTRIES: int = 500
 RECURRENT_DECAY_RATE: float = 0.01
 
 
-
 # ----------------------------------------------------------------------
 
 # Path setup -- import from sibling modules and milestone0
@@ -89,18 +84,16 @@ RECURRENT_DECAY_RATE: float = 0.01
 # ----------------------------------------------------------------------
 
 
-
 from logging_config import get_logger
 
 _logger = get_logger("EvolutionEngine")
 
 
-
-from paths import MILESTONE0_DIR, MILESTONE1_DIR, ensure_project_on_path
+from paths import MILESTONE0_DIR, MILESTONE1_DIR
 from paths import PROJECT_ROOT as SCRIPT_DIR
+from paths import ensure_project_on_path
 
 ensure_project_on_path()
-
 
 
 # ----------------------------------------------------------------------
@@ -110,17 +103,14 @@ ensure_project_on_path()
 # ----------------------------------------------------------------------
 
 
-
-from vm_farm import EvalResult, _run_one_evaluation  # type: ignore
-
 # EE-W5: per-generation phase timing -- splits generation wall time into
 # VM-farm fitness evaluation vs Python orchestration so the
 # phase_evolution_seconds band can be attributed to a dominant phase.
-from evolution.phase_timing import PhaseTimer, default_log_path, timers_enabled, timed_vm_eval
+from evolution.phase_timing import PhaseTimer, default_log_path, timed_vm_eval, timers_enabled
+from vm_farm import EvalResult, _run_one_evaluation  # type: ignore
 
 
 class VMFarm:
-
     """Wrapper around the safety-kernel RV32I VM farm.
 
 
@@ -135,12 +125,8 @@ class VMFarm:
 
     """
 
-
-
     @staticmethod
-
     def _resolve_kernel_path(kernel_path: str) -> str:
-
         """Resolve the safety-kernel binary path.
 
 
@@ -164,9 +150,7 @@ class VMFarm:
         # Auto-detect relative to milestone0/
 
         candidates = [
-
             os.path.join(MILESTONE0_DIR, "safety-kernel", "target", "release", "safety-kernel"),
-
         ]
 
         for c in candidates:
@@ -180,8 +164,6 @@ class VMFarm:
         # No external kernel found -- pure-Python VM is used instead.
 
         return ""
-
-
 
     def __init__(self, num_workers: int = 1, kernel_path: str = "safety_kernel", use_gpu: bool = False, **kwargs):
 
@@ -210,8 +192,6 @@ class VMFarm:
             try:
 
                 import gpu_vm_farm as _gvm
-
-
 
                 _gvm._ensure_cupy()  # triggers lazy CuPy import
 
@@ -245,16 +225,11 @@ class VMFarm:
 
                 self.use_gpu = False
 
-
-
     def _log(self, msg: str) -> None:
 
         _logger.info(f"[VMFarm] {msg}")
 
-
-
     def _run_bit_exact_check(self, n_samples: int = 10) -> None:
-
         """Verify GPU and CPU produce identical results for random programs."""
 
         if self._gpu_farm is None:
@@ -262,8 +237,6 @@ class VMFarm:
             return
 
         import random as _rnd
-
-
 
         _rnd.seed(42)
 
@@ -278,17 +251,11 @@ class VMFarm:
             try:
 
                 cpu = _run_one_evaluation(
-
                     kernel_path=self.kernel_path,
-
                     program=prog,
-
                     budget=5000,
-
                     init_regs=inputs.get("registers", {}),
-
                     init_mem=inputs.get("memory", {}),
-
                 )
 
                 gpu_res = self._gpu_farm.evaluate_batch(prog, [inputs], budget=5000)
@@ -321,8 +288,6 @@ class VMFarm:
 
         self._log(f"GPU bit-exact: {n_samples}/{n_samples} samples match CPU")
 
-
-
     def evaluate(self, program: list[int], inputs: dict[str, Any], budget: int = 10000) -> EvalResult:
 
         init_regs = inputs.get("registers", {})
@@ -331,23 +296,14 @@ class VMFarm:
 
         with timed_vm_eval():
             return _run_one_evaluation(
-
                 kernel_path=self.kernel_path,
-
                 program=program,
-
                 budget=budget,
-
                 init_regs=init_regs,
-
                 init_mem=init_mem,
-
             )
 
-
-
     def _eval_single_worker(self, program, task, budget):
-
         """Evaluate a single program on a single worker."""
 
         try:
@@ -359,8 +315,6 @@ class VMFarm:
         except RuntimeError as e:
 
             return {"status": "error", "error": str(e), "instructions_count": 0}
-
-
 
     def evaluate_batch(self, programs, task, budget=None):
         """Evaluate a batch of programs using the VM farm.
@@ -413,34 +367,19 @@ class VMFarm:
                 futures = [executor.submit(self._eval_single_worker, p, task, budget) for p in programs]
             return [f.result() for f in futures]
 
-
-
     @staticmethod
-
     def _dict_to_eval_result(d: dict) -> EvalResult:
-
         """Convert GPU result dict to EvalResult namedtuple."""
 
         return EvalResult(
-
             success=d.get("success", False),
-
             registers=d.get("registers", {}),
-
             memory=d.get("memory", {}),
-
             trace=[],
-
             cycles=d.get("cycles", 0),
-
             error=d.get("error"),
-
             blocked_writes=d.get("blocked_writes", 0),
-
         )
-
-
-
 
 
 # Try importing from milestone2 modules
@@ -474,7 +413,6 @@ for _opcode_val, _cat_val in OPCODE_CATEGORY_MAP.items():
 del _opcode_val, _cat_val
 
 
-
 # R33: Pre-built MutationStrategy enum lookup dict for O(1) string->enum
 
 # conversion (avoids Python enum __new__ overhead on every call to
@@ -483,15 +421,9 @@ del _opcode_val, _cat_val
 
 _STRATEGY_ENUM_CACHE: dict[str, MutationStrategy] = {s.value: s for s in MutationStrategy}
 
-from evolution.curriculum_advance import (
-    curriculum_fitness_gate as _curriculum_fitness_gate_fn,
-)
-from evolution.curriculum_advance import (
-    curriculum_verify_threshold as _curriculum_verify_threshold_fn,
-)
-from evolution.curriculum_advance import (
-    forced_advance_verify_floor as _forced_advance_verify_floor_fn,
-)
+from evolution.curriculum_advance import curriculum_fitness_gate as _curriculum_fitness_gate_fn
+from evolution.curriculum_advance import curriculum_verify_threshold as _curriculum_verify_threshold_fn
+from evolution.curriculum_advance import forced_advance_verify_floor as _forced_advance_verify_floor_fn
 from evolution.diagnostics_mixin import DiagnosticsMixin
 from evolution.diversity_helpers import check_level_circuit_breaker as _check_level_circuit_breaker_fn
 from evolution.diversity_helpers import compute_population_diversity as _compute_population_diversity_fn
@@ -547,8 +479,6 @@ try:
 
     from curriculum_generator import CurriculumConfig, CurriculumGenerator  # type: ignore
 
-
-
     _HAS_CURRICULUM = True
 
 except ImportError:
@@ -556,12 +486,9 @@ except ImportError:
     _HAS_CURRICULUM = False
 
 
-
 try:
 
     from difficulty_metrics import calibrate_task_instance  # type: ignore
-
-
 
     _HAS_DIFFICULTY = True
 
@@ -570,14 +497,11 @@ except ImportError:
     _HAS_DIFFICULTY = False
 
 
-
 # Optional: StrategyArchive
 
 try:
 
     from strategy_archive import StrategyArchive  # type: ignore
-
-
 
     _HAS_STRATEGY_ARCHIVE = True
 
@@ -586,14 +510,11 @@ except ImportError:
     _HAS_STRATEGY_ARCHIVE = False
 
 
-
 # Optional: Novelty archive
 
 try:
 
     from novelty import SparseArchive  # type: ignore
-
-
 
     _HAS_NOVELTY = True
 
@@ -602,23 +523,17 @@ except ImportError:
     _HAS_NOVELTY = False
 
 
-
 # Optional: QD archive
 
 try:
 
     from qd_archive import MAPElitesArchive  # type: ignore
 
-
-
     _HAS_QD = True
 
 except ImportError:
 
     _HAS_QD = False
-
-
-
 
 
 # ----------------------------------------------------------------------
@@ -628,17 +543,10 @@ except ImportError:
 # ----------------------------------------------------------------------
 
 
-
-
-
 def compute_qd_axes(
-
     program: list[int] | None,
-
     trace: dict[str, Any] | None,
-
 ) -> list[float] | None:
-
     """Compute behavioural axes for MAP-Elites QD grid.
 
 
@@ -699,8 +607,6 @@ def compute_qd_axes(
 
         inst_div = -1.0
 
-
-
     if trace and isinstance(trace, dict) and "final_regs" in trace:
 
         regs = trace.get("final_regs", {})
@@ -719,12 +625,7 @@ def compute_qd_axes(
 
         reg_pressure = -1.0
 
-
-
     return [inst_div, reg_pressure]
-
-
-
 
 
 # ----------------------------------------------------------------------
@@ -734,11 +635,7 @@ def compute_qd_axes(
 # ----------------------------------------------------------------------
 
 
-
-
-
 class HallOfFame:
-
     """Fixed-capacity hall of fame for the best programs encountered.
 
 
@@ -771,8 +668,6 @@ class HallOfFame:
 
     """
 
-
-
     def __init__(self, capacity: int = 10):
 
         self.capacity = capacity
@@ -785,10 +680,7 @@ class HallOfFame:
 
         self._heap: list[tuple[float, int, list[int], int]] = []
 
-
-
     def add(self, program: list[int], fitness: float, level: int, generation: int = 0) -> bool:
-
         """Add a program if it qualifies for the hall of fame.
 
 
@@ -817,8 +709,6 @@ class HallOfFame:
 
         return False
 
-
-
     def programs_at_level(self, level: int) -> list[list[int]]:
         """Distinct programs stored at a curriculum level (defensive copies)."""
         out: list[list[int]] = []
@@ -834,7 +724,6 @@ class HallOfFame:
         return out
 
     def get_best(self, level: int | None = None) -> list[int] | None:
-
         """Get the highest-fitness program, optionally filtered by level.
 
 
@@ -875,10 +764,7 @@ class HallOfFame:
 
         return list(best[2])
 
-
-
     def get_random(self, rng=None, level=None):
-
         """Return a random program from the Hall of Fame, with recency bias.
 
 
@@ -898,8 +784,6 @@ class HallOfFame:
         """
 
         import random
-
-
 
         if rng is None:
 
@@ -943,18 +827,12 @@ class HallOfFame:
 
         return list(chosen[2])  # entry[2] is the program
 
-
-
     @property
-
     def size(self) -> int:
 
         return len(self._heap)
 
-
-
     @property
-
     def best_fitness(self) -> float:
 
         # For a min-heap, best fitness is the max element.
@@ -963,12 +841,8 @@ class HallOfFame:
 
         return max((e[0] for e in self._heap), default=0.0)
 
-
-
     @property
-
     def worst_fitness(self) -> float:
-
         """Return the worst (minimum) fitness in the hall of fame.
 
 
@@ -986,9 +860,6 @@ class HallOfFame:
         return float("-inf")
 
 
-
-
-
 # ----------------------------------------------------------------------
 
 # Evolution Engine
@@ -996,121 +867,65 @@ class HallOfFame:
 # ----------------------------------------------------------------------
 
 
-
 # Module-level default values for EvolutionConfig._set_config_defaults()
 
 _CONFIG_DEFAULTS: dict[str, object] = {
-
     "mutation_rate": 0.3,
-
     "crossover_rate": 0.7,
-
     "elite_ratio": 0.1,
-
     "tournament_size": 3,
-
     "population_size": 50,
-
     "max_generations": 100,
-
     "eval_budget": 500,
-
     "checkpoint_interval": 10,
-
     "curriculum_level": 0,
-
     "auto_curriculum": True,
-
     "curriculum_stall_threshold": 20,
-
     "use_gpu": False,
-
     "seed": 42,
-
     "log_dir": "logs",
-
     "champion_dir": "",
-
     "use_novelty_archive": False,
-
     "novelty_weight": 0.1,
-
     "novelty_threshold": 0.5,
-
     "use_qd_archive": False,
-
     "qd_bonus_weight": 0.1,
-
     "qd_bins": [10, 10],
-
     "max_bonus_fraction": 1.0,
-
     "bonus_log_interval": 50,
-
     "efficiency_score_weight": 1.0,
-
     "secondary_task_weight": 1.0,
-
     "use_secondary_tasks": False,
-
     "use_mutation_scheduler": False,
-
     "mutation_rate_start": 0.5,
-
     "mutation_rate_end": 0.1,
-
     "mutation_schedule_generations": 50,
-
     "use_temperature_annealing": False,
-
     "temperature_start": 2.0,
-
     "temperature_end": 0.5,
-
     "temperature_schedule_generations": 50,
-
     "model_guided_ratio": None,
-
     "model_guided_ratio_low": 0.1,
-
     "model_guided_ratio_mid": 0.2,
-
     "model_guided_ratio_high": 0.3,
-
     "use_strategy_archive": True,
-
     "strategy_archive_path": "",
-
     "recurrent_feedback_dir": "",
-
     "max_level": 30,
-
     "max_consecutive_same_strategy": 30,
-
     "perturbation_capped_probability_unsolved": 0.4,
-
     "perturbation_capped_unsolved_levels": [9, 10, 11],
-
     "champion_crossover_prob": 0.3,
-
 }
 
 
-
-
-
 @dataclass
-
 class EvolutionConfig:
-
     """Configuration for the evolution engine."""
-
-
 
     # Circuit breaker sentinel (distinct singleton for barrier tuner integration)
 
     class _CircuitBreakerSentinel:
-
         """Null-object sentinel when no circuit breaker is configured.
 
 
@@ -1127,25 +942,16 @@ class EvolutionConfig:
 
         """
 
-
-
         def is_breached(self) -> bool:
-
             """Sentinel never reports breached (open circuit)."""
 
             return False
-
-
 
         def __repr__(self) -> str:
 
             return "<CircuitBreakerSentinel: not configured, always open>"
 
-
-
     CIRCUIT_BREAKER_SENTINEL = _CircuitBreakerSentinel()
-
-
 
     population_size: int = 50
 
@@ -1181,19 +987,13 @@ class EvolutionConfig:
 
     strategy_archive_path: str = ""
 
-
-
     # Dashboard / state persistence
 
     dashboard_state_dir: str = ""
 
-
-
     # Champion loading
 
     best_champion_path: str = ""
-
-
 
     # Novelty archive
 
@@ -1205,8 +1005,6 @@ class EvolutionConfig:
 
     novelty_archive_path: str = ""
 
-
-
     # QD archive
 
     use_qd_archive: bool = True
@@ -1217,13 +1015,9 @@ class EvolutionConfig:
 
     qd_bins: int = 20
 
-
-
     # GPU acceleration
 
     use_gpu: bool = False
-
-
 
     # Retrain hyperparameters (exposed for BarrierTuner tuning)
 
@@ -1251,8 +1045,6 @@ class EvolutionConfig:
 
     retrain_min_examples: int = 5
 
-
-
     # Self-calibration / BarrierTuner params
 
     # NOTE: adaptive_hyperparams is DEPRECATED in v13 -- kept for backward
@@ -1264,8 +1056,6 @@ class EvolutionConfig:
     # model_guided_ratio_low/mid/high and adaptive_elite_low/high.
 
     adaptive_hyperparams: bool = True
-
-
 
     # MetaGenome / BarrierTuner evolution params
 
@@ -1289,8 +1079,6 @@ class EvolutionConfig:
 
     adaptive_elite_max: float = 0.20
 
-
-
     # Adaptive crossover / tournament params
 
     adaptive_cx_mid_add: float = 0.2
@@ -1300,8 +1088,6 @@ class EvolutionConfig:
     adaptive_tourney_mid_add: int = 3
 
     adaptive_tourney_high_add: int = 5
-
-
 
     # Archive system params
 
@@ -1316,8 +1102,6 @@ class EvolutionConfig:
     archive_elite_reduce_factor: float = 0.80
 
     archive_consecutive_wins_trigger: int = 3
-
-
 
     # Misc
 
@@ -1337,8 +1121,6 @@ class EvolutionConfig:
 
     circuit_breaker_stall_limit: int = 50
 
-
-
     # Level circuit breaker: auto-disable impossible levels
 
     # If a level has 0% success rate after N consecutive cycles,
@@ -1349,8 +1131,6 @@ class EvolutionConfig:
 
     level_circuit_breaker_threshold: int = 10
 
-
-
     # Multi-task fitness extension
 
     use_secondary_tasks: bool = True
@@ -1358,8 +1138,6 @@ class EvolutionConfig:
     secondary_task_weight: float = 3.0
 
     efficiency_score_weight: float = 2.0
-
-
 
     # Bonus normalization -- cap each bonus at a fraction of the base score
 
@@ -1377,8 +1155,6 @@ class EvolutionConfig:
 
     bonus_log_interval: int = 50
 
-
-
     diversity_threshold: float = 0.3
 
     diversity_inject_ratio: float = 0.1
@@ -1389,15 +1165,11 @@ class EvolutionConfig:
 
     max_consecutive_same_strategy: int = 30
 
-
-
     # Model-guided generation — boosted after torch.compile removal
 
     # (inference now 300ms per call, can afford higher MG ratios)
 
     model_guided_ratio: float | None = None
-
-
 
     # Mutation rate scheduling — decay from high to low over generations
 
@@ -1414,8 +1186,6 @@ class EvolutionConfig:
     mutation_rate_end: float = 0.1
 
     mutation_schedule_generations: int = 200
-
-
 
     # Temperature annealing for model-guided generation — smooth decay from
 
@@ -1437,8 +1207,6 @@ class EvolutionConfig:
 
     model_guided_ratio_high: float = 0.6
 
-
-
     # PERTURBATION_CAPPED configuration
 
     perturbation_capped_unsolved_levels: tuple[int, ...] = (9, 10, 11)
@@ -1447,10 +1215,7 @@ class EvolutionConfig:
 
     use_strategy_archive: bool = True
 
-
-
     def _set_config_defaults(self):
-
         """Set default values for configuration fields."""
 
         for key, val in _CONFIG_DEFAULTS.items():
@@ -1459,10 +1224,7 @@ class EvolutionConfig:
 
                 setattr(self, key, val)
 
-
-
     def __post_init__(self):
-
         """Apply defaults and validate configuration.
 
 
@@ -1481,10 +1243,7 @@ class EvolutionConfig:
 
         self._clamp_config()
 
-
-
     def _validate_config(self):
-
         """Raise ValueError for invalid config values."""
 
         self._validate_general()
@@ -1493,10 +1252,7 @@ class EvolutionConfig:
 
         self._validate_diversity()
 
-
-
     def _validate_general(self):
-
         """Validate general config parameters."""
 
         if self.population_size < 2:
@@ -1526,9 +1282,7 @@ class EvolutionConfig:
         if self.tournament_size > self.population_size:
 
             raise ValueError(
-
                 f"tournament_size ({self.tournament_size}) must be <= population_size ({self.population_size})"
-
             )
 
         if self.instruction_budget < 100:
@@ -1571,10 +1325,7 @@ class EvolutionConfig:
 
             raise ValueError(f"meta_weight_improvement must be >= 0, got {self.meta_weight_improvement}")
 
-
-
     def _validate_retrain(self):
-
         """Validate retrain hyperparameter config."""
 
         if self.retrain_lr <= 0:
@@ -1609,10 +1360,7 @@ class EvolutionConfig:
 
             raise ValueError(f"retrain_val_split must be in [0,1], got {self.retrain_val_split}")
 
-
-
     def _validate_diversity(self):
-
         """Validate diversity and crossover range checks."""
 
         if not 0.0 <= self.diversity_threshold <= 1.0:
@@ -1627,10 +1375,7 @@ class EvolutionConfig:
 
             raise ValueError(f"champion_crossover_prob must be in [0,1], got {self.champion_crossover_prob}")
 
-
-
     def _clamp_config(self):
-
         """Soft-clamp config to acceptable ranges."""
 
         self.curriculum_level = max(self.curriculum_level, 0)
@@ -1640,11 +1385,7 @@ class EvolutionConfig:
             self.curriculum_level = self.max_level
 
 
-
-
-
 class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, DiagnosticsMixin):
-
     """Main evolutionary loop for RV32I program synthesis.
 
 
@@ -1657,15 +1398,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
     """
 
-
-
     def _init_archives(self) -> None:
-
         """Initialize strategy archive, QD archive, novelty archive, and champion archive."""
 
         from strategy_archive import StrategyArchive
-
-
 
         self.strategy_archive = StrategyArchive(
             max_records=int(
@@ -1688,8 +1424,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
                 from novelty import SparseArchive
 
-
-
                 self.novelty_archive = SparseArchive(novelty_threshold=self.config.novelty_threshold)
 
             except ImportError:
@@ -1704,8 +1438,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
                 from qd_archive import MAPElitesArchive
 
-
-
                 self.qd_archive = MAPElitesArchive(bins=self.config.qd_bins)
 
             except ImportError:
@@ -1714,16 +1446,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         from champion_archive import ChampionArchive
 
-
-
         archive_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "champions", "archive.jsonl")
 
         self.champion_archive = ChampionArchive(path=archive_path, max_size=500)
 
-
-
     def _init_state(self) -> None:
-
         """Initialize evolution state variables."""
 
         self.champion = None
@@ -1808,8 +1535,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         self._champion_replacement_history = []
 
-
-
         # Level circuit breaker state
 
         self._level_circuit_stats: dict[int, dict] = {}  # {level: {"cycles": N, "successes": M}}
@@ -1867,8 +1592,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             "L17_plus": 0.70,
         }
 
-
-
     def __init__(self, config=None, rng=None, vm_farm=None, champion_anchor=None):
 
         self.config = config or EvolutionConfig()
@@ -1886,11 +1609,8 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         if _HAS_CURRICULUM and self.config.auto_curriculum:
 
             self.curriculum = CurriculumGenerator(
-
                 CurriculumConfig(max_levels=len(LEVELS), stall_generations=self.config.curriculum_stall_threshold),
-
                 seed=self.config.seed,
-
             )
 
         else:
@@ -1931,8 +1651,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
                 from novelty import extract_behavioral_descriptor
 
-
-
                 self._extract_behavioral_descriptor = extract_behavioral_descriptor
 
             except ImportError:
@@ -1961,10 +1679,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             os.makedirs(self.config.log_dir, exist_ok=True)
 
-
-
     def apply_external_params(self, params: dict[str, Any]) -> None:
-
         """Apply externally-tuned evolution params (from BarrierTuner/MetaController).
 
         Call BEFORE run() to inject per-cycle tuning.
@@ -1987,15 +1702,12 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         self._novelty_weight_cache = self.config.novelty_weight
 
-
-
     def load_archive_state(
         self,
         qd_data: dict | None = None,
         novelty_data: dict | None = None,
         strategy_data: dict | None = None,
     ) -> None:
-
         """Load archive state from a previous cycle.
 
 
@@ -2010,15 +1722,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             from qd_archive import MAPElitesArchive
 
-
-
             self.qd_archive = MAPElitesArchive.deserialize(qd_data)
 
         if novelty_data is not None:
 
             from novelty import SparseArchive
-
-
 
             self.novelty_archive = SparseArchive.deserialize(novelty_data)
 
@@ -2026,14 +1734,9 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             from strategy_archive import StrategyArchive
 
-
-
             self.strategy_archive = StrategyArchive.deserialize(strategy_data)
 
-
-
     def save_archive_state(self) -> dict[str, Any]:
-
         """Extract serializable archive state for cross-cycle persistence.
 
 
@@ -2045,16 +1748,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         """
 
         return {
-
             "qd": self.qd_archive.serialize() if self.qd_archive is not None else None,
-
             "novelty": self.novelty_archive.serialize() if self.novelty_archive is not None else None,
-
             "strategy": self.strategy_archive.serialize() if self.strategy_archive is not None else None,
-
         }
-
-
 
     # ------------------------------------------------------------------
 
@@ -2062,10 +1759,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
     # ------------------------------------------------------------------
 
-
-
     def _velocity_based_mutation_rate(self, base: float, vel: float) -> float:
-
         """Blend velocity-responsive adaptive rate 50/50 with config base."""
 
         if vel > 5.0:
@@ -2090,10 +1784,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return 0.5 * adaptive + 0.5 * base
 
-
-
     def _stall_mutation_boost_factor(self, stall: int) -> float | None:
-
         """Return stall boost multiplier when stall >= 10, else None."""
 
         if stall < 10:
@@ -2114,10 +1805,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return 1.1
 
-
-
     def _apply_stall_mutation_boost(self, blended: float, stall: int) -> float:
-
         """Apply R40 stall-based mutation boost blended at 30% weight."""
 
         stall_boost = self._stall_mutation_boost_factor(stall)
@@ -2130,10 +1818,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return 0.7 * blended + 0.3 * stall_adjusted
 
-
-
     def _compute_adaptive_mutation_rate(self) -> float:
-
         """Compute a mutation rate that responds to fitness landscape conditions.
 
 
@@ -2220,10 +1905,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return max(self._adaptive_mutation_floor, min(self._adaptive_mutation_ceil, blended))
 
-
-
     def _update_fitness_velocity(self, delta_fitness: float) -> None:
-
         """Update the exponential moving average of fitness improvement rate.
 
 
@@ -2240,33 +1922,19 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         self._fitness_velocity = alpha * delta_fitness + (1.0 - alpha) * self._fitness_velocity
 
-
-
     def get_generation_stats(self) -> dict:
-
         """Return per-generation statistics for the current run."""
 
         return {
-
             "current_generation": self.current_generation,
-
             "generations_stalled": self.generations_stalled,
-
             "champion_fitness": self.champion_fitness,
-
             "champion_level": self.champion_level,
-
             "mutation_rate": self.config.mutation_rate,
-
             "population_size": self.config.population_size,
-
             "novelty_weight": self.config.novelty_weight,
-
             "fitness_velocity": getattr(self, "_fitness_velocity", 0.0),
-
         }
-
-
 
     # ------------------------------------------------------------------
 
@@ -2274,10 +1942,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
     # ------------------------------------------------------------------
 
-
-
     def _get_bonus_config(self, lvl: int, champion_raw: float) -> dict:
-
         """Compute bonus configuration diagnostics."""
 
         mbf = getattr(self.config, "max_bonus_fraction", 1.0)
@@ -2289,49 +1954,28 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         sim_cap = mbf * _sim_base
 
         max_possible = {
-
             "loop": 5.0,
-
             "mem": 3.0,
-
             "div": 2.0,
-
             "level": 25.0 * lvl,
-
             "efficiency": 30.0,
-
             "multi_task": 15.0,
-
             "time_credit": 20.0,
-
             "smc": 25.0,
-
             "graduated": 50.0,
-
         }
 
         return {
-
             "normalization_active": norm_active,
-
             "max_bonus_fraction": mbf,
-
             "cap_at_simulated_base": sim_cap,
-
             "simulated_base": _sim_base,
-
             "bonus_log_interval": getattr(self.config, "bonus_log_interval", 50),
-
             "max_possible_contributions": max_possible,
-
             "total_max_bonus": sum(max_possible.values()),
-
         }
 
-
-
     def _get_bonus_thresholds(self, lvl: int, n_levels: int) -> dict:
-
         """Compute bonus threshold diagnostics."""
 
         cached = self._bonus_threshold_cache
@@ -2347,25 +1991,15 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         graduated_headroom = max(0.0, 1.0 - current_threshold)
 
         return {
-
             "current_level": lvl,
-
             "graduated_bonus_threshold": current_threshold,
-
             "graduated_headroom": graduated_headroom,
-
             "max_graduated_bonus": 50.0 * graduated_headroom,
-
             "level_advancement_bonus": lvl * 25.0,
-
             "max_level_bonus": (n_levels - 1) * 25.0,
-
         }
 
-
-
     def _get_structural_scaling(self, lvl: int) -> dict:
-
         """Compute structural scaling diagnostics."""
 
         try:
@@ -2377,37 +2011,21 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             _scales = {"scale_factor": 1.0, "loop_pressure": 0.33, "mem_pressure": 0.33, "div_pressure": 0.34}
 
         return {
-
             "scale_factor": _scales.get("scale_factor", 1.0),
-
             "loop_pressure": _scales.get("loop_pressure", 0.33),
-
             "mem_pressure": _scales.get("mem_pressure", 0.33),
-
             "div_pressure": _scales.get("div_pressure", 0.34),
-
             "applies_to": ["loop", "mem", "div"] if lvl >= 5 else [],
-
             "level_gating": {
-
                 "loop_bonus": "L5+",
-
                 "mem_bonus": "L7+",
-
                 "div_bonus": "L5+",
-
                 "smc_bonus": "L12+",
-
                 "efficiency_high_diversity": "L8+",
-
             },
-
         }
 
-
-
     def _get_fitness_history_stats(self) -> dict:
-
         """Compute fitness history trend statistics."""
 
         hist = self.best_fitness_history
@@ -2459,39 +2077,22 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             recent_var = 0.0
 
         return {
-
             "total_generations_with_data": hist_len,
-
             "overall_min": round(overall_min, 4),
-
             "overall_max": round(overall_max, 4),
-
             "overall_mean": round(overall_mean, 4),
-
             "overall_range": round(overall_max - overall_min, 4),
-
             "recent_window": min(hist_len, 20),
-
             "recent_min": round(recent_min, 4),
-
             "recent_max": round(recent_max, 4),
-
             "recent_mean": round(recent_mean, 4),
-
             "recent_trend_per_gen": round(recent_trend, 4),
-
             "improvement_count": improvements,
-
             "improvement_rate": round(improvement_rate, 4),
-
             "recent_variance": round(recent_var, 4),
-
         }
 
-
-
     def _get_population_dynamics(self) -> dict:
-
         """Compute population dynamics diagnostics."""
 
         vel = getattr(self, "_fitness_velocity", 0.0)
@@ -2513,71 +2114,38 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         hysteresis_active = osc_count >= osc_threshold
 
         return {
-
             "fitness_velocity": round(vel, 4),
-
             "fitness_velocity_regime": (
-
                 "fast_improvement"
-
                 if vel > 5.0
-
                 else (
-
                     "moderate_improvement"
-
                     if vel > 1.0
-
                     else "plateau" if vel > -1.0 else "mild_regression" if vel > -5.0 else "strong_regression"
-
                 )
-
             ),
-
             "generations_stalled": stall,
-
             "stall_depth_category": (
-
                 "none"
-
                 if stall < 5
-
                 else "shallow" if stall < 15 else "moderate" if stall < 30 else "deep" if stall < 50 else "critical"
-
             ),
-
             "diversity": round(div, 4),
-
             "diversity_category": (
-
                 "critical" if div < 0.1 else "low" if div < 0.2 else "moderate" if div < 0.4 else "high"
-
             ),
-
             "qd_niche_coverage": round(qd_cov, 4),
-
             "qd_coverage_category": (
-
                 "sparse" if qd_cov < 0.1 else "low" if qd_cov < 0.3 else "moderate" if qd_cov < 0.6 else "well_covered"
-
             ),
-
             "champion_replacements_total": rep_count,
-
             "oscillation_window": [round(d, 4) for d in osc_window],
-
             "oscillation_positive_count": osc_count,
-
             "oscillation_threshold": osc_threshold,
-
             "hysteresis_active": hysteresis_active,
-
         }
 
-
-
     def _get_hof_stats(self) -> dict:
-
         """Compute Hall of Fame diagnostics."""
 
         hof = self._hall_of_fame
@@ -2599,69 +2167,37 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             hof_best = hof_worst = hof_mean = 0.0
 
         return {
-
             "capacity": hof.capacity,
-
             "size": hof_size,
-
             "best_fitness": round(hof_best, 4),
-
             "worst_fitness": round(hof_worst, 4),
-
             "mean_fitness": round(hof_mean, 4),
-
             "fitness_spread": round(hof_best - hof_worst, 4),
-
         }
 
-
-
     def _get_recommendations(
-
         self,
-
         lvl: int,
-
         mbf: float,
-
         norm_active: bool,
-
         stall: int,
-
         div: float,
-
         vel: float,
-
         qd_cov: float,
-
         qd_w: float,
-
         champion_raw: float,
-
         hist_len: int,
-
         recent_trend: float,
-
         improvement_rate: float,
-
         graduated_headroom: float,
-
         current_threshold: float,
-
         hof_size: int,
-
         hof_spread: float,
-
         hysteresis_active: bool,
-
         osc_count: int,
-
         population_dynamics: dict,
-
         fitness_history: dict,
-
     ) -> list[str]:
-
         """Generate actionable recommendations from diagnostic data."""
 
         recs: list[str] = []
@@ -2690,54 +2226,37 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return recs
 
-
-
     def _recommend_stall(self, recs: list[str], stall: int, mbf: float) -> None:
-
         """Add stall-related recommendations."""
 
         if stall >= 50:
 
             recs.append(
-
                 f"CRITICAL STALL ({stall} gens): Consider enabling bonus normalization (max_bonus_fraction=0.30) or increasing novelty_weight to break out."
-
             )
 
         elif stall >= 20:
 
             recs.append(
-
                 f"Deep stall ({stall} gens): Bonus normalization could help redistribute selection pressure. Current max_bonus_fraction={mbf:.2f}."
-
             )
 
-
-
     def _recommend_diversity(self, recs: list[str], div: float) -> None:
-
         """Add diversity-related recommendations."""
 
         if div < 0.1:
 
             recs.append(
-
                 "CRITICAL LOW DIVERSITY (<0.1): Population nearly converged. Boost novelty_weight, increase mutation rate, or inject Hall of Fame entries."
-
             )
 
         elif div < 0.2:
 
             recs.append(
-
                 f"Low diversity ({div:.3f}): Novelty weight will be adaptively boosted. Consider diversity_inject_ratio > {self.config.diversity_inject_ratio}."
-
             )
 
-
-
     def _recommend_norm(self, recs: list[str], lvl: int, norm_active: bool, champion_raw: float) -> None:
-
         """Add normalization-related recommendations."""
 
         if not norm_active:
@@ -2747,57 +2266,37 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             if champion_raw > 0 and lvl_bon > champion_raw * 0.5:
 
                 recs.append(
-
                     f"Level bonus ({lvl_bon:.0f}) dominates base score ({champion_raw:.0f}). Enable max_bonus_fraction to prevent level_bonus from overshadowing task-solving fitness at L{lvl}."
-
                 )
 
-
-
     def _recommend_graduated(self, recs: list[str], graduated_headroom: float, current_threshold: float) -> None:
-
         """Add graduated bonus threshold recommendations."""
 
         if graduated_headroom < 0.10:
 
             recs.append(
-
                 f"Graduated bonus threshold ({current_threshold:.3f}) leaves only {graduated_headroom:.3f} headroom. Near-perfect register match is required for any graduated bonus."
-
             )
 
-
-
     def _recommend_qd(self, recs: list[str], qd_cov: float, qd_w: float) -> None:
-
         """Add QD coverage recommendations."""
 
         if qd_cov < 0.1 and qd_w > 0:
 
             recs.append(
-
                 f"QD niche coverage is sparse ({qd_cov:.3f}). The stall-scaled QD boost should help, but verify novelty_archive is populated."
-
             )
 
-
-
     def _recommend_oscillation(self, recs: list[str], hysteresis_active: bool, osc_count: int) -> None:
-
         """Add oscillation/hysteresis recommendations."""
 
         if hysteresis_active:
 
             recs.append(
-
                 f"Oscillation detected: {osc_count} replacements in last {self._oscillation_window_size} gens (threshold={getattr(self, '_oscillation_threshold', 3)})."
-
             )
 
-
-
     def _recommend_velocity(self, recs: list[str], vel: float, stall: int, population_dynamics: dict) -> None:
-
         """Add velocity and fitness regression recommendations."""
 
         vel_regime = population_dynamics.get("fitness_velocity_regime", "")
@@ -2805,23 +2304,16 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         if vel_regime == "strong_regression":
 
             recs.append(
-
                 f"Strong fitness regression (velocity={vel:.2f}). Mutation rate will be maximized automatically."
-
             )
 
         elif vel_regime == "fast_improvement" and stall > 5:
 
             recs.append(f"Positive velocity ({vel:.2f}) but still stalled ({stall} gens).")
 
-
-
     def _recommend_improvement(
-
         self, recs: list[str], hist_len: int, improvement_rate: float, hof_size: int, hof_spread: float
-
     ) -> None:
-
         """Add improvement rate and HoF spread recommendations."""
 
         if hist_len > 10 and improvement_rate < 0.05:
@@ -2832,28 +2324,18 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             recs.append(f"Hall of Fame fitness spread is narrow ({hof_spread:.2f}).")
 
-
-
     def _recommend_normalization_off(
-
         self, recs: list[str], norm_active: bool, hist_len: int, recent_trend: float
-
     ) -> None:
-
         """Add normalization-off recommendations when fitness is flat."""
 
         if not norm_active and hist_len > 20 and recent_trend <= 0:
 
             recs.append(
-
                 "Normalization is off and fitness is flat/declining. Enable bonus normalization (max_bonus_fraction=0.30)."
-
             )
 
-
-
     def get_fitness_diagnostic_summary(self) -> dict[str, Any]:
-
         """Return a comprehensive diagnostic of the current fitness landscape."""
 
         lvl = self.champion_level
@@ -2881,111 +2363,61 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         div = getattr(self, "_current_diversity", 0.5)
 
         recommendations = self._get_recommendations(
-
             lvl,
-
             bonus_config["max_bonus_fraction"],
-
             bonus_config["normalization_active"],
-
             self.generations_stalled,
-
             div,
-
             getattr(self, "_fitness_velocity", 0.0),
-
             getattr(self, "_qd_coverage", 0.0),
-
             qd_w,
-
             champion_raw,
-
             len(self.best_fitness_history),
-
             fitness_history.get("recent_trend_per_gen", 0.0),
-
             fitness_history.get("improvement_rate", 0.0),
-
             bonus_thresholds["graduated_headroom"],
-
             bonus_thresholds["graduated_bonus_threshold"],
-
             hall_of_fame["size"],
-
             hall_of_fame["fitness_spread"],
-
             population_dynamics["hysteresis_active"],
-
             population_dynamics["oscillation_positive_count"],
-
             population_dynamics,
-
             fitness_history,
-
         )
 
         return {
-
             "generation": self.current_generation,
-
             "champion": {
-
                 "fitness": round(self.champion_fitness, 4),
-
                 "level": lvl,
-
                 "raw_task_score": round(champion_raw, 4),
-
             },
-
             "bonus_config": bonus_config,
-
             "bonus_thresholds": bonus_thresholds,
-
             "structural_scaling": structural_scaling,
-
             "fitness_history": fitness_history,
-
             "population_dynamics": population_dynamics,
-
             "hall_of_fame": hall_of_fame,
-
             "novelty_qd": self._build_novelty_qd(div, qd_w),
-
             "recommendations": recommendations,
-
         }
 
-
-
     def _build_novelty_qd(self, div: float, qd_w: float) -> dict[str, Any]:
-
         """Build the novelty_qd sub-dict for diagnostic summary."""
 
         nw = getattr(self, "_novelty_weight_cache", self.config.novelty_weight)
 
         return {
-
             "novelty_weight": nw,
-
             "novelty_weight_effective": round(
-
                 min(nw * (1.0 + (1.0 - div / 0.2)), 0.8) if div < 0.2 and nw > 0 else nw, 4
-
             ),
-
             "qd_bonus_weight": qd_w,
-
             "novelty_archive_size": len(self.novelty_archive) if self.novelty_archive is not None else 0,
-
             "qd_archive_occupied": getattr(self.qd_archive, "_occupied_count", 0) if self.qd_archive is not None else 0,
-
         }
 
-
-
     def _record_oscillation_delta(self, delta: float) -> None:
-
         """Append delta to oscillation window and maintain positive-count tracker."""
 
         window = self._champion_oscillation_window
@@ -3006,16 +2438,9 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             self._oscillation_positive_count += 1
 
-            self._oscillation_positive_count = min(
-
-                self._oscillation_positive_count, self._oscillation_window_size
-
-            )
-
-
+            self._oscillation_positive_count = min(self._oscillation_positive_count, self._oscillation_window_size)
 
     def _oscillation_hysteresis_blocks_replacement(self, delta: float) -> bool:
-
         """Return True when stall-adaptive hysteresis rejects a small fitness gain."""
 
         if self._oscillation_positive_count < self._oscillation_threshold:
@@ -3036,10 +2461,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return delta < effective_delta
 
-
-
     def _should_replace_champion(self, candidate_fitness: float) -> bool:
-
         """Decide whether a candidate should replace the champion.
 
 
@@ -3107,10 +2529,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         self._record_oscillation_delta(delta)
 
         if champ_verify >= 0.99 - 1e-6:
-            from evolution.terminal_stagnation import (
-                terminal_certified_plateau,
-                terminal_verify_promote_active,
-            )
+            from evolution.terminal_stagnation import terminal_certified_plateau, terminal_verify_promote_active
 
             if terminal_verify_promote_active() and terminal_certified_plateau(
                 int(self.champion_level),
@@ -3121,18 +2540,12 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return not self._oscillation_hysteresis_blocks_replacement(delta)
 
-
-
     def _champion_is_timeout_penalized(self) -> bool:
-
         """Champion hit instruction-budget / timeout fitness floor (-25)."""
 
         return self.champion_fitness <= -25.0
 
-
-
     def _record_champion_replacement(self, delta_fitness: float) -> None:
-
         """Record that a champion replacement occurred (for oscillation tracking).
 
 
@@ -3161,10 +2574,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         # Oscillation window is already maintained by _should_replace_champion
 
-
-
     def get_champion_history(self) -> list[dict]:
-
         """Return history of champion fitness improvements.
 
 
@@ -3181,10 +2591,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return [{"fitness": f, "cycle": c} for f, c in history]
 
-
-
     def enable_bonus_normalization(self, fraction: float = 0.30) -> None:
-
         """Enable bonus normalization with adaptive fitness landscape control.
 
 
@@ -3241,18 +2648,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         self._log(f"[BonusNorm] enabled fraction={fraction:.2f} " f"(was {old:.2f})")
 
-
-
     # ------------------------------------------------------------------
 
     # Core loop
 
     # ------------------------------------------------------------------
 
-
-
     def _initialize_run(self, ng: int) -> dict:
-
         """Initialize champion and return initial summary dict."""
 
         self._refresh_task_instance()
@@ -3322,24 +2724,14 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         self._max_challenger_words_cycle = len(self.champion) if self.champion else 0
 
         return {
-
             "generations_completed": 0,
-
             "final_fitness": self.champion_fitness,
-
             "final_level": self.champion_level,
-
             "champion_words": len(self.champion) if self.champion else 0,
-
             "elapsed_seconds": 0.0,
-
             "generations_stalled": self.generations_stalled,
-
             "total_champion_improvements": 0,
-
         }
-
-
 
     def _sync_champion_after_reseed(
         self,
@@ -3396,10 +2788,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         if verify < 0.99 - 1e-6:
             return
         try:
-            from evolution.fitness_helpers import (
-                end_of_cycle_champion_fitness,
-                terminal_certified_fitness_context,
-            )
+            from evolution.fitness_helpers import end_of_cycle_champion_fitness, terminal_certified_fitness_context
 
             with terminal_certified_fitness_context(self):
                 reconciled = float(
@@ -3436,22 +2825,14 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         from evolution.terminal_stagnation import L30_COMPACT_MAX_WORDS
 
         results = os.path.join(project_root, "multi_cycle_results.jsonl")
-        clean = find_best_certified_champion(
-            results, int(level), min_verify=0.99, min_fitness=100.0
-        )
+        clean = find_best_certified_champion(results, int(level), min_verify=0.99, min_fitness=100.0)
         if clean:
-            prog = [
-                int(x, 16) if isinstance(x, str) else int(x)
-                for x in clean["champion_program"]
-            ]
+            prog = [int(x, 16) if isinstance(x, str) else int(x) for x in clean["champion_program"]]
             if 12 <= len(prog) <= L30_COMPACT_MAX_WORDS:
                 self._sync_champion_after_reseed(
                     prog,
                     f"certified_cycle_{clean['cycle']}",
-                    (
-                        f"Restore certified after curriculum verify regression "
-                        f"{verify:.3f}"
-                    ),
+                    (f"Restore certified after curriculum verify regression " f"{verify:.3f}"),
                     trusted_verify=float(clean.get("champion_verify_score", 1.0)),
                     trusted_fitness=float(clean.get("final_fitness", 0.0)),
                 )
@@ -3493,15 +2874,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         from evolution.champion_rollback import find_best_certified_champion
 
         results = os.path.join(project_root, "multi_cycle_results.jsonl")
-        clean = find_best_certified_champion(
-            results, int(self.champion_level), min_verify=0.99, min_fitness=100.0
-        )
+        clean = find_best_certified_champion(results, int(self.champion_level), min_verify=0.99, min_fitness=100.0)
         if not clean:
             return False
-        words = [
-            int(x, 16) if isinstance(x, str) else int(x)
-            for x in clean["champion_program"]
-        ]
+        words = [int(x, 16) if isinstance(x, str) else int(x) for x in clean["champion_program"]]
         if len(words) < 8:
             return False
         logged_verify = float(clean.get("champion_verify_score", 0.0))
@@ -3521,10 +2897,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             return
         try:
             from evolution.champion_rollback import record_scan_floor_growth_material
-            from evolution.mutation_helpers import (
-                collect_scan_floor_growth_crossover_fills,
-                scan_floor_plateau_armed,
-            )
+            from evolution.mutation_helpers import collect_scan_floor_growth_crossover_fills, scan_floor_plateau_armed
 
             armed, _floor = scan_floor_plateau_armed()
             if not armed:
@@ -3547,10 +2920,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         if verify < 0.99 - 1e-6:
             return False
         from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
-        from evolution.mutation_helpers import (
-            scan_floor_anchor_program,
-            scan_floor_plateau_armed,
-        )
+        from evolution.mutation_helpers import scan_floor_anchor_program, scan_floor_plateau_armed
 
         armed, floor_w = scan_floor_plateau_armed()
         if not armed or len(self.champion) >= int(floor_w):
@@ -3587,8 +2957,8 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         from evolution.terminal_stagnation import L30_COMPACT_MAX_WORDS
 
         if 12 <= champ_words <= L30_COMPACT_MAX_WORDS:
-            from evolution.terminal_stagnation import heldout_l30_verify_mean
             from evolution.champion_carry_forward import load_carry_forward_champion
+            from evolution.terminal_stagnation import heldout_l30_verify_mean
 
             live_h = heldout_l30_verify_mean(list(self.champion)) if self.champion else 0.0
             project_root = os.path.dirname(os.path.abspath(__file__))
@@ -3599,16 +2969,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                     carry_h = heldout_l30_verify_mean(words)
                     from evolution.terminal_stagnation import compact_curriculum_beats, compact_curriculum_side_score
 
-                    live_side = (
-                        compact_curriculum_side_score(list(self.champion))
-                        if self.champion
-                        else 0.0
-                    )
+                    live_side = compact_curriculum_side_score(list(self.champion)) if self.champion else 0.0
                     carry_side = compact_curriculum_side_score(words)
                     better_l30 = live_h + 0.05 < carry_h
-                    better_side = carry_h + 1e-6 >= live_h and compact_curriculum_beats(
-                        list(self.champion), words
-                    )
+                    better_side = carry_h + 1e-6 >= live_h and compact_curriculum_beats(list(self.champion), words)
                     if better_l30 or better_side:
                         self._sync_champion_after_reseed(
                             words,
@@ -3640,10 +3004,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 results = os.path.join(project_root, "multi_cycle_results.jsonl")
                 honest = find_best_honest_compact_l30(results, level)
                 if honest:
-                    prog = [
-                        int(x, 16) if isinstance(x, str) else int(x)
-                        for x in honest["champion_program"]
-                    ]
+                    prog = [int(x, 16) if isinstance(x, str) else int(x) for x in honest["champion_program"]]
                     honest_h = heldout_l30_verify_mean(prog)
                     if live_h + 0.05 < honest_h:
                         self._sync_champion_after_reseed(
@@ -3666,9 +3027,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
     def _apply_champion_rollback_from_tick(self) -> bool:
         """Restore champion from last clean cycle after same-level collapse."""
-        tick_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), ".agents", "tick_state.json"
-        )
+        tick_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".agents", "tick_state.json")
         try:
             if not os.path.isfile(tick_path):
                 return False
@@ -3708,9 +3067,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
     def _apply_forced_reseed_from_tick_state(self) -> None:
         """Force reference reseed when EPI governor or level clamp requested it."""
-        tick_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), ".agents", "tick_state.json"
-        )
+        tick_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".agents", "tick_state.json")
         try:
             if not os.path.isfile(tick_path):
                 return
@@ -3781,8 +3138,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         if not words:
             return
         self._log(
-            f"[Champion] Word-cap rollback L{self.champion_level}: "
-            f"{len(self.champion)}w -> {len(words)}w ({desc})"
+            f"[Champion] Word-cap rollback L{self.champion_level}: " f"{len(self.champion)}w -> {len(words)}w ({desc})"
         )
         self._sync_champion_after_reseed(words, desc, "Word-cap rollback")
 
@@ -3817,9 +3173,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                     continue
                 prog = row.get("champion_program")
                 if isinstance(prog, list) and len(prog) == 13:
-                    skeleton = [
-                        int(x, 16) if isinstance(x, str) else int(x) for x in prog
-                    ]
+                    skeleton = [int(x, 16) if isinstance(x, str) else int(x) for x in prog]
         if not skeleton:
             return False
         prev_n = len(self.champion)
@@ -3872,16 +3226,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 f"applied {prev_n}->{len(fill)} verify={verify:.3f}\n",
                 encoding="utf-8",
             )
-            self._log(
-                f"[Champion] L30 easy-fill {prev_n}w -> {len(fill)}w verify={verify:.3f}"
-            )
+            self._log(f"[Champion] L30 easy-fill {prev_n}w -> {len(fill)}w verify={verify:.3f}")
             return True
         except Exception as exc:  # noqa: BLE001
             marker.write_text(f"error {exc}\n{traceback.format_exc()}", encoding="utf-8")
             return False
 
     def _maybe_reseed_stuck_champion(self) -> None:
-
         """Replace stuck L17+ champion with reference solution when verify/fitness plateau."""
 
         from evolution.register_repair import reference_champion_program, should_reseed_champion
@@ -3910,15 +3261,9 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             self.champion_fitness = prev_fitness
             self._champion_verify_score = prev_verify
             self._champion_partial_verify = prev_verify
-            self._log(
-                f"[RegisterRepair] Reseed rolled back verify {prev_verify:.3f} -> "
-                f"{new_verify:.3f}"
-            )
-
-
+            self._log(f"[RegisterRepair] Reseed rolled back verify {prev_verify:.3f} -> " f"{new_verify:.3f}")
 
     def _run_generation_init(self, gen: int, n_levels: int) -> None:
-
         """Initialize generation state."""
 
         self.current_generation = gen
@@ -3936,11 +3281,8 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             sched_progress = min(1.0, gen / max(1, self.config.mutation_schedule_generations))
 
             scheduled_base = (
-
                 self.config.mutation_rate_start
-
                 + (self.config.mutation_rate_end - self.config.mutation_rate_start) * sched_progress
-
             )
 
             self._original_mutation_rate = scheduled_base
@@ -3955,7 +3297,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             self._maybe_reseed_stuck_champion()
 
     def _run_generation_evaluate(self) -> tuple:
-
         """Generate challengers, evaluate, select elite."""
 
         with self._pt("mutation_propagation"), self._sub("generate_challengers"):
@@ -4003,9 +3344,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             if challengers:
                 gen_max = max(len(p) for p in challengers)
-                self._max_challenger_words_cycle = max(
-                    int(getattr(self, "_max_challenger_words_cycle", 0)), gen_max
-                )
+                self._max_challenger_words_cycle = max(int(getattr(self, "_max_challenger_words_cycle", 0)), gen_max)
 
         with self._pt("diagnostics_logging"):
             self._current_diversity = self._compute_population_diversity(challengers)
@@ -4031,20 +3370,14 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
                 if self.champion is not None:
                     gen_idx = int(getattr(self, "current_generation", 0))
-                    growth_inject_gen = getattr(
-                        self, "_scan_floor_growth_inject_generation", None
-                    )
+                    growth_inject_gen = getattr(self, "_scan_floor_growth_inject_generation", None)
                     mg_inject_gen = getattr(self, "_scan_floor_inject_generation", None)
                     late_inject = scan_floor_late_inject_generation(
                         gen_idx,
                         growth_inject_generation=growth_inject_gen,
                         mg_inject_generation=mg_inject_gen,
                     )
-                    sample_discovery = (
-                        gen_idx == 0
-                        or late_inject
-                        or gen_idx % 10 == 0
-                    )
+                    sample_discovery = gen_idx == 0 or late_inject or gen_idx % 10 == 0
                     if sample_discovery:
                         state = getattr(self, "_l10_lift_discovery_state", None)
                         if not isinstance(state, dict):
@@ -4060,9 +3393,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 pass
 
         with self._pt("selection_archives"):
-            self._fill_empty_qd_cells_from_evaluated(
-                challengers, results, self._last_challenger_strategies
-            )
+            self._fill_empty_qd_cells_from_evaluated(challengers, results, self._last_challenger_strategies)
 
             elite, elite_fitnesses, _ = self._select_elite(challengers, results)
 
@@ -4071,28 +3402,16 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return challengers, results, elite, elite_fitnesses, detailed_results
 
-
-
     def _run_generation_update(
-
         self,
-
         gen: int,
-
         elite,
-
         detailed_results,
-
         elite_fitnesses,
-
         improved_before: bool,
-
         checkpoint_interval: int,
-
         auto_curriculum: bool,
-
     ) -> bool:
-
         """Update champion, archives, and curriculum. Returns improved flag."""
 
         prev_fitness = self.champion_fitness
@@ -4134,8 +3453,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             from mutation_proposer import DirectedMutator as _DM
 
-
-
             for _res in self._last_results:
 
                 _desc = _res.get("description", "") if isinstance(_res, dict) else ""
@@ -4143,9 +3460,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 if _desc:
 
                     _DM.record_mutation_outcome(
-
                         _desc, _res.get("fitness_delta", 0.0) if isinstance(_res, dict) else 0.0
-
                     )
 
         except Exception:  # noqa: BLE001, S110
@@ -4154,28 +3469,16 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return improved
 
-
-
     def _run_generation_maintenance(
-
         self,
-
         gen: int,
-
         improved: bool,
-
         task_refresh_interval: int,
-
         cuda_cleanup_interval: int,
-
         _cuda_cleanup,
-
         checkpoint_interval: int,
-
         auto_curriculum: bool,
-
     ) -> None:
-
         """Run post-generation maintenance tasks."""
 
         if gen > 0 and gen % task_refresh_interval == 0:
@@ -4246,10 +3549,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         self._update_novelty_archive()
 
-
-
     def _run_progress_controller_generation(self) -> None:
-
         """Unified per-generation progress decisions."""
 
         pc = getattr(self, "progress_controller", None)
@@ -4273,17 +3573,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         self._champion_verify_score = verify_score
 
         plan = pc.on_generation_end(
-
             self.generations_stalled,
-
             self.champion_level,
-
             verify_score,
-
             self._champion_raw_task_score,
-
             self.champion_fitness,
-
         )
 
         for line in plan.log_lines:
@@ -4301,10 +3595,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             self._try_qd_champion_reset()
 
-
-
     def _run_generation_meta_monitoring(self, gen: int) -> None:
-
         """Run meta-controller monitoring and diagnostics."""
 
         if gen > 0 and gen % 25 == 0 and hasattr(self, "meta_controller") and self.meta_controller is not None:
@@ -4338,9 +3629,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             except Exception:  # noqa: BLE001, S110
 
                 pass
-
-
-
 
     def _pt(self, name: str):
         """Return the phase-timing context for ``name`` (no-op when idle)."""
@@ -4383,25 +3671,15 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             pass
 
     def _run_one_generation(
-
         self,
-
         gen: int,
-
         checkpoint_interval: int,
-
         auto_curriculum: bool,
-
         task_refresh_interval: int,
-
         cuda_cleanup_interval: int,
-
         _cuda_cleanup,
-
         n_levels: int,
-
     ) -> None:
-
         """Execute a single generation of the evolution loop."""
 
         gen_start = time.time()
@@ -4423,9 +3701,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         with self._pt("selection_archives"):
             improved = self._run_generation_update(
-
                 gen, elite, detailed_results, elite_fitnesses, False, checkpoint_interval, auto_curriculum
-
             )
 
         with self._pt("diagnostics_logging"):
@@ -4433,21 +3709,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         with self._pt("selection_archives"):
             self._run_generation_maintenance(
-
                 gen,
-
                 improved,
-
                 task_refresh_interval,
-
                 cuda_cleanup_interval,
-
                 _cuda_cleanup,
-
                 checkpoint_interval,
-
                 auto_curriculum,
-
             )
         if timer is not None:
             _gen_record = timer.end_generation(
@@ -4458,10 +3726,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             )
             self._log_subphase_marker(_gen_record)
 
-
-
     def _resolve_cuda_cleanup_callback(self) -> Callable[[], None] | None:
-
         """Return a CUDA cache cleanup callback when GPU mode is active."""
 
         use_gpu = self.use_gpu if hasattr(self, "use_gpu") else self.config.use_gpu
@@ -4476,19 +3741,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             import torch as _torch
 
-
-
             if _torch.cuda.is_available():
-
-
 
                 def _cuda_cleanup():
 
                     _gc.collect()
 
                     _torch.cuda.empty_cache()
-
-
 
                 return _cuda_cleanup
 
@@ -4498,28 +3757,16 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return None
 
-
-
     def _execute_generation_loop(
-
         self,
-
         ng: int,
-
         checkpoint_interval: int,
-
         auto_curriculum: bool,
-
         task_refresh_interval: int,
-
         cuda_cleanup_interval: int,
-
         cuda_cleanup: Callable[[], None] | None,
-
         n_levels: int,
-
     ) -> None:
-
         """Run all generations for the current evolution session."""
 
         if hasattr(self, "_raw_task_score"):
@@ -4533,27 +3780,16 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         for gen in range(ng):
 
             self._run_one_generation(
-
                 gen,
-
                 checkpoint_interval,
-
                 auto_curriculum,
-
                 task_refresh_interval,
-
                 cuda_cleanup_interval,
-
                 cuda_cleanup,
-
                 n_levels,
-
             )
 
-
-
     def _finalize_run_summary(self, summary: dict[str, Any], ng: int, start_time: float) -> dict[str, Any]:
-
         """Checkpoint, populate summary fields, and return the run summary."""
 
         try:
@@ -4684,10 +3920,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         summary["verified_fitness"] = self.champion_fitness if verified else 0.0
         if self.champion is not None and self.champion_trace is not None:
             try:
-                from evolution.fitness_helpers import (
-                    end_of_cycle_champion_fitness,
-                    terminal_certified_fitness_context,
-                )
+                from evolution.fitness_helpers import end_of_cycle_champion_fitness, terminal_certified_fitness_context
 
                 with terminal_certified_fitness_context(self):
                     recomputed = end_of_cycle_champion_fitness(
@@ -4739,10 +3972,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return summary
 
-
-
     def run(self, num_generations: int | None = None) -> dict[str, Any]:
-
         """Run the evolution loop for num_generations (default: config)."""
 
         ng = num_generations if num_generations is not None else self.config.max_generations
@@ -4792,21 +4022,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         try:
 
             self._execute_generation_loop(
-
                 ng,
-
                 checkpoint_interval,
-
                 auto_curriculum,
-
                 task_refresh_interval,
-
                 cuda_cleanup_interval,
-
                 cuda_cleanup,
-
                 n_levels,
-
             )
 
         except Exception as exc:  # noqa: BLE001
@@ -4834,10 +4056,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             summary[_key] = _value
         return summary
 
-
-
     def _refresh_task_instance(self) -> None:
-
         """Generate a new task instance for the current curriculum level."""
 
         level_cls = get_task_level(self.champion_level)
@@ -4846,12 +4065,8 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         self.task_instance = level_cls(seed=seed).generate_instance()
 
-
-
     @staticmethod
-
     def validate_program(program: list[int]) -> tuple[bool, str]:
-
         """Cheap pre-check: is this program worth evaluating?
 
 
@@ -4895,8 +4110,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             return False, "overflow"
 
-
-
         # Remove trailing EBREAKs for length check
 
         live = coerced
@@ -4904,8 +4117,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         while live and live[-1] == 0x0010_0073:  # EBREAK
 
             live = live[:-1]
-
-
 
         if len(live) == 0:
 
@@ -4915,14 +4126,9 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             return False, f"too_short_{len(live)}"
 
-
-
         return True, "ok"
 
-
-
     def _evaluate(self, program: list[int]) -> dict[str, Any]:
-
         """Run a single evaluation and return a trace dict."""
 
         if self.task_instance is None:
@@ -4937,10 +4143,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return self._eval_result_to_trace(result)
 
-
-
     def _evaluate_batch(self, programs: list[list[int]]) -> list[dict[str, Any]]:
-
         """Evaluate multiple programs (stage 1, lighter). Uses GPU batch when available.
 
 
@@ -4959,8 +4162,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         budget = self._cached_eval_budget // 2
 
-
-
         # R45: Pre-validate programs — skip invalid ones
 
         valid_indices = []
@@ -4978,34 +4179,21 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             else:
 
                 invalid_results[i] = {
-
                     "status": "invalid",
-
                     "trap_cause": reason,
-
                     "instructions_count": len(prog),
-
                     "final_regs": {},
-
                     "final_memory": {},
-
                     "pc_history": [],
-
                     "reg_history": [],
-
                     "memory_accesses": [],
-
                 }
-
-
 
         if not valid_indices:
 
             # All programs invalid — return all invalid results
 
             return [invalid_results.get(i, {"status": "invalid"}) for i in range(len(programs))]
-
-
 
         # Evaluate only valid programs
 
@@ -5016,8 +4204,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         results = self.vm_farm.evaluate_batch(valid_programs, inputs_list, budget=budget)
 
         traces = [self._eval_result_to_trace(r) for r in results]
-
-
 
         # Merge valid and invalid results back in original order
 
@@ -5031,14 +4217,9 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             final[i] = result
 
-
-
         return final
 
-
-
     def _evaluate_batch_detailed(self, programs: list[list[int]]) -> list[dict[str, Any]]:
-
         """Evaluate programs with full budget (stage 2). Uses GPU batch when available."""
 
         if self.task_instance is None:
@@ -5055,84 +4236,46 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return [self._eval_result_to_trace(r) for r in results]
 
-
-
     @staticmethod
-
     def _null_eval_crash_trace() -> dict[str, Any]:
-
         """Trace dict for a missing/null EvalResult (R35)."""
 
         return {
-
             "status": "crash",
-
             "final_pc": 0,
-
             "final_regs": {},
-
             "final_memory": {},
-
             "instructions_count": 0,
-
             "pc_history": _EMPTY_TUPLE,
-
             "reg_history": _EMPTY_TUPLE,
-
             "memory_accesses": _EMPTY_TUPLE,
-
             "trap_cause": "null_eval_result",
-
         }
 
-
-
     @staticmethod
-
     def _build_eval_trace_dict(
-
         success: bool,
-
         registers: Any,
-
         memory: Any,
-
         cycles: int,
-
         error: str | None,
-
     ) -> dict[str, Any]:
-
         """Build standardized trace dict from evaluation outcome fields."""
 
         return {
-
             "status": "ok" if success else "crash",
-
             "final_pc": 0,
-
             "final_regs": registers,
-
             "final_memory": memory,
-
             "instructions_count": cycles,
-
             "pc_history": _EMPTY_TUPLE,
-
             "reg_history": _EMPTY_TUPLE,
-
             "memory_accesses": _EMPTY_TUPLE,
-
             "trap_cause": error or "",
-
         }
 
-
-
     @staticmethod
-
     def _eval_result_to_trace(result: Any) -> dict[str, Any]:
-
         """Convert an EvalResult to a trace dict.
 
 
@@ -5168,36 +4311,22 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         try:
 
             return EvolutionEngine._build_eval_trace_dict(
-
                 result.success,
-
                 result.registers,
-
                 result.memory,
-
                 result.cycles,
-
                 result.error,
-
             )
 
         except AttributeError:
 
             return EvolutionEngine._build_eval_trace_dict(
-
                 getattr(result, "success", True),
-
                 getattr(result, "registers", {}),
-
                 getattr(result, "memory", {}),
-
                 getattr(result, "cycles", 0),
-
                 getattr(result, "error", None),
-
             )
-
-
 
     # ------------------------------------------------------------------
 
@@ -5205,10 +4334,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
     # ------------------------------------------------------------------
 
-
-
     def _generate_secondary_tasks(self) -> list[dict]:
-
         """Generate secondary task instances for multi-task evaluation.
 
 
@@ -5223,8 +4349,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         from tasks_rv32i import SECONDARY_TASKS
 
-
-
         rng = self.rng
 
         tasks = []
@@ -5237,19 +4361,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return tasks
 
-
-
     def _evaluate_secondary_tasks(self, program: list[int]) -> list[tuple[dict, dict]]:
 
         packed = self._evaluate_secondary_tasks_many([program])
 
         return packed[0] if packed else []
 
-
-
-    def _evaluate_secondary_tasks_many(
-        self, programs: list[list[int]]
-    ) -> list[list[tuple[dict, dict]]]:
+    def _evaluate_secondary_tasks_many(self, programs: list[list[int]]) -> list[list[tuple[dict, dict]]]:
         """Evaluate each program on freshly generated secondary instances.
 
         One VM batch for all (program, task) pairs. RNG order matches calling
@@ -5298,18 +4416,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             out.append(chunk)
         return out
 
-
-
     # ------------------------------------------------------------------
 
     # Fitness
 
     # ------------------------------------------------------------------
 
-
-
     def _get_structural_bonus_scale(self) -> dict[str, Any]:
-
         """Return cached structural bonus scaling data for the current generation.
 
 
@@ -5348,8 +4461,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             return cached
 
-
-
         try:
 
             if hasattr(self, "progression_tracker") and self.progression_tracker is not None:
@@ -5357,15 +4468,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 patterns = self.progression_tracker.analyze_population_patterns()
 
                 result = {
-
                     "scale_factor": float(patterns.get("scale_factor", 1.0)),
-
                     "loop_pressure": float(patterns.get("loop_pressure", 0.33)),
-
                     "mem_pressure": float(patterns.get("mem_pressure", 0.33)),
-
                     "div_pressure": float(patterns.get("div_pressure", 0.34)),
-
                 }
 
                 # Clamp scale_factor to [0.5, 3.0] for safety
@@ -5377,32 +4483,20 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             else:
 
                 result = {
-
                     "scale_factor": 1.0,
-
                     "loop_pressure": 0.33,
-
                     "mem_pressure": 0.33,
-
                     "div_pressure": 0.34,
-
                 }
 
         except RuntimeError:
 
             result = {
-
                 "scale_factor": 1.0,
-
                 "loop_pressure": 0.33,
-
                 "mem_pressure": 0.33,
-
                 "div_pressure": 0.34,
-
             }
-
-
 
         self._structural_patterns_cache = result
 
@@ -5410,40 +4504,26 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return result
 
-
-
     def _score_register_match(self, expected_regs: dict, expected_total: int, final_regs: dict) -> float:
-
         """Score per-register match with distance-weighted partial credit."""
 
         return _score_register_match_fn(expected_regs, expected_total, final_regs)
 
-
-
     def _compute_structural_bonuses(
-
         self, status: str, instr_count: int, program: list[int], bonus_scale: float
-
     ) -> tuple[float, float, float]:
-
         """Compute loop, memory, and instruction diversity bonuses."""
 
         return _compute_structural_bonuses_fn(self, status, instr_count, program, bonus_scale, _OPCODE_CAT_ARRAY)
 
-
-
     def _compute_efficiency_score(self, program: list[int], instr_count: int, status: str) -> float:
-
         """Compute efficiency scoring (+15 points max)."""
 
         eff_weight = getattr(self.config, "efficiency_score_weight", 1.0)
 
         return _compute_efficiency_score_fn(program, instr_count, status, self.champion_level, eff_weight)
 
-
-
     def _compute_multi_task_score(self) -> float:
-
         """Compute multi-task scoring (+15 points max)."""
 
         mt_weight = getattr(self.config, "secondary_task_weight", 1.0)
@@ -5452,46 +4532,29 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return _compute_multi_task_score_fn(secondary_results, mt_weight)
 
-
-
     def _compute_time_credit(self, status: str, reg_match: float, instr_count: int) -> float:
-
         """Compute time-to-solution credit (+20 points max)."""
 
         return _compute_time_credit_fn(status, reg_match, instr_count)
 
-
-
     def _compute_smc_bonus(self, status: str, program: list[int], instr_count: int) -> float:
-
         """Compute SMC pattern bonus (+25 points max) for L12+."""
 
         return _compute_smc_bonus_fn(status, program, instr_count, self.champion_level)
 
-
-
     def _log_bonus_diagnostics(self, base_score: float, bonuses: dict, max_single: float, norm_active: bool) -> None:
-
         """Log per-dimension bonus breakdown periodically."""
 
         _log_bonus_diagnostics_fn(self, base_score, bonuses, max_single, norm_active)
 
-
-
     def _apply_novelty_qd_blending(self, fitness, program, trace, base_score, _qd_fn, _prog_qd_desc):
-
         """Apply novelty-weighted fitness and QD archive bonus/penalty."""
 
         return _apply_novelty_qd_blending_fn(self, fitness, program, trace, base_score, _qd_fn, _prog_qd_desc)
 
-
-
     def _compute_fitness(
-
         self, program: list[int], trace: dict[str, Any], eval_budget: int | None = None, raw_only: bool = False
-
     ) -> float:
-
         """Compute crash-penalized fitness."""
 
         return _compute_fitness_fn(self, program, trace, eval_budget, raw_only)
@@ -5502,166 +4565,100 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         self._cached_eval_budget = scaled_eval_budget(self.config.eval_budget, self.champion_level)
 
-
-
     def _extract_trace_info(self, trace: dict) -> tuple:
-
         """Extract and cache trace information for fitness computation."""
 
         return _extract_trace_info_fn(self, trace)
 
-
-
     def _compute_base_score(self, reg_match: float, instr_count: int, status: str, budget: int) -> float:
-
         """Compute base fitness score from register match and execution metrics."""
 
         return _compute_base_score_fn(reg_match, instr_count, status, budget)
 
-
-
     def _compute_all_bonuses(
-
         self, status: str, instr_count: int, program: list[int], reg_match: float, base_score: float
-
     ) -> dict:
-
         """Compute all bonus components."""
 
         return _compute_all_bonuses_fn(self, status, instr_count, program, reg_match, base_score, _OPCODE_CAT_ARRAY)
 
-
-
     def _apply_bonuses_and_normalize(self, base_score: float, bonuses: dict) -> float:
-
         """Apply bonuses with normalization and store raw score."""
 
         return _apply_bonuses_and_normalize_fn(self, base_score, bonuses)
 
-
-
     def _finalize_with_blending(self, base_score: float, program: list[int], trace: dict) -> float:
-
         """Apply novelty/QD blending and partial verify scaling."""
 
         return _finalize_with_blending_fn(self, base_score, program, trace)
 
-
-
     def _batch_classify_programs(self, traces: list, n: int, budget: int):
-
         """Classify programs by status (crash/timeout/ok) for batch fitness."""
 
         return _batch_classify_programs_fn(traces, n, budget)
 
-
-
     def _batch_score_registers(self, ok_traces: list, expected_keys: list, expected_vals, n_ok: int):
-
         """Vectorized register scoring for batch fitness."""
 
         return _batch_score_registers_fn(ok_traces, expected_keys, expected_vals, n_ok)
 
-
-
     def _batch_compute_efficiency(self, ok_programs: list, n_ok: int, ok_instr, max_prog_len: int):
-
         """Vectorized efficiency scoring for batch fitness."""
 
         return _batch_compute_efficiency_fn(self, ok_programs, n_ok, ok_instr, max_prog_len)
 
-
-
     def _batch_compute_structural_bonuses(
-
         self, ok_programs: list, ok_indices, traces: list, n_ok: int, ok_instr, _bonus_scale: float, _max_single
-
     ):
-
         """Vectorized structural bonuses (loop, mem, div, smc, graduated, level)."""
 
         return _batch_compute_structural_bonuses_fn(
-
             self, ok_programs, ok_indices, traces, n_ok, ok_instr, _bonus_scale, _max_single, _OPCODE_CAT_ARRAY
-
         )
 
-
-
     def _batch_blend_novelty_qd(self, fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw):
-
         """Apply novelty/QD blending to batch fitness values."""
 
         _batch_blend_novelty_qd_fn(self, fitnesses, programs, traces, ok_indices, n_ok, expected_regs, base, nw)
 
-
-
     def batch_compute_fitness(
-
         self,
-
         programs: list[list[int]],
-
         traces: list[dict[str, Any]],
-
         eval_budget: int | None = None,
-
         raw_only: bool = False,
-
     ) -> tuple[list[float], list[float]]:
-
         """Vectorized batch fitness computation using numpy arrays."""
 
         return batch_compute_fitness_fn(self, programs, traces, eval_budget, raw_only)
 
-
-
     def _batch_get_expected(self):
-
         """Extract expected output arrays for batch computation."""
 
         return _batch_get_expected_fn(self)
 
-
-
     def _batch_apply_crash_penalties(self, n, crash_mask, illegal_mask, timeout_mask):
-
         """Apply crash/timeout penalties to fitness array."""
 
         return _batch_apply_crash_penalties_fn(n, crash_mask, illegal_mask, timeout_mask)
 
-
-
     def _batch_compute_base(
-
         self, programs, traces, ok_indices, ok_instr, n_ok, expected_keys, expected_vals, budget, expected_regs
-
     ):
-
         """Compute base fitness scores for batch."""
 
         return _batch_compute_base_fn(
-
             self, programs, traces, ok_indices, ok_instr, n_ok, expected_keys, expected_vals, budget, expected_regs
-
         )
 
-
-
     def _batch_apply_bonuses(self, base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr):
-
         """Apply efficiency, structural, and graduated bonuses."""
 
         return _batch_apply_bonuses_fn(
-
             self, base, programs, traces, ok_indices, n_ok, expected_regs, ok_instr, _OPCODE_CAT_ARRAY
-
         )
 
-
-
     def _generate_initial_champion(self) -> list[int]:
-
         """Generate or load the initial champion."""
 
         if os.environ.get("EE_FORCE_REFERENCE_CHAMPION", "0") == "1":
@@ -5676,8 +4673,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                     if encoded[-1] != _EBREAK_INST:
                         encoded.append(0x0010_0073)
                     self._log(
-                        f"[Champion] Forced reference champion for L{self.champion_level} "
-                        f"({len(encoded)} words)"
+                        f"[Champion] Forced reference champion for L{self.champion_level} " f"({len(encoded)} words)"
                     )
                     return encoded
             except (ValueError, ImportError):
@@ -5698,8 +4694,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             except (IntegrityError, FileNotFoundError, OSError):
 
                 pass
-
-
 
         # Try loading the reference solution
 
@@ -5733,8 +4727,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             pass
 
-
-
         # Fall back to seed program
 
         prog = generate_seed_program(rng=self.rng)
@@ -5747,25 +4739,17 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return prog
 
-
-
     def _trim_program(self, program: list[int]) -> list[int]:
-
         """Trim dead code from a program (instructions after last EBREAK)."""
 
         return trim_dead_code(program)
-
-
 
     def _effective_diversity_threshold(self) -> float:
         """Opcode-category floor; higher at held-out scan floor when probes are gated."""
         base = float(self.config.diversity_threshold)
         if self.champion is None or int(self.champion_level) < int(self.config.max_level):
             return base
-        from evolution.terminal_stagnation import (
-            scan_floor_diversity_threshold,
-            terminal_efficiency_at_scan_floor,
-        )
+        from evolution.terminal_stagnation import scan_floor_diversity_threshold, terminal_efficiency_at_scan_floor
 
         if terminal_efficiency_at_scan_floor(len(self.champion)):
             return max(base, scan_floor_diversity_threshold())
@@ -5776,10 +4760,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         if not challengers or self.champion is None:
             return
         from evolution.diversity_helpers import population_category_bits
-        from evolution.terminal_stagnation import (
-            scan_floor_diversity_threshold,
-            terminal_efficiency_at_scan_floor,
-        )
+        from evolution.terminal_stagnation import scan_floor_diversity_threshold, terminal_efficiency_at_scan_floor
 
         if not terminal_efficiency_at_scan_floor(len(self.champion)):
             return
@@ -5815,19 +4796,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 if not late_inject:
                     return
                 break
-            self._inject_diversity(
-                challengers, n_inject, preserve_indices=preserve_slots
-            )
+            self._inject_diversity(challengers, n_inject, preserve_indices=preserve_slots)
         from evolution.diversity_helpers import generate_category_seed
 
         bits = population_category_bits(challengers, _OPCODE_CAT_ARRAY)
         missing = [cat for cat in range(NUM_OPCODE_CATEGORIES) if not (bits & (1 << cat))]
         if missing:
-            slots = [
-                slot
-                for slot in range(len(challengers))
-                if slot not in preserve_slots
-            ]
+            slots = [slot for slot in range(len(challengers)) if slot not in preserve_slots]
             self.rng.shuffle(slots)
             for cat, slot in zip(missing, slots, strict=False):
                 challengers[slot] = generate_category_seed(cat, self.rng)
@@ -5847,7 +4822,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             )
 
     def _generate_diversity_injection(self, challengers, pop_size):
-
         """Inject diversity when opcode-category diversity falls below threshold."""
 
         if len(challengers) < pop_size:
@@ -5863,8 +4837,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         n_inject = max(1, int(pop_size * self.config.diversity_inject_ratio))
 
         self._inject_diversity(challengers, n_inject)
-
-
 
     def _terminal_archive_parents(self) -> list[list[int]]:
         """Gate-neutral archive parents for scan-floor crossover (HoF + QD cells)."""
@@ -5908,9 +4880,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             max_parents = 12
             rank_by_cap = False
 
-            if terminal_efficiency_at_scan_floor(champ_n) and _scan_floor_probe_stall_mode(
-                champ_n
-            ):
+            if terminal_efficiency_at_scan_floor(champ_n) and _scan_floor_probe_stall_mode(champ_n):
                 from evolution.terminal_stagnation import _skip_empty_compression_rescan
 
                 compression_exhausted = scan_floor_compression_hot(list(self.champion))
@@ -5954,17 +4924,12 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         from evolution.terminal_stagnation import select_terminal_probes_for_batch
 
         cycle_no = int(getattr(self, "_cycle_number", 0))
-        champ_pr = round(
-            float(compact_l30_promotion_raw_fitness(list(self.champion))), 4
-        )
+        champ_pr = round(float(compact_l30_promotion_raw_fitness(list(self.champion))), 4)
         champ_key = (champ_pr, len(self.champion))
         cache = getattr(self, "_terminal_probe_pool_cache", None)
         if cache and cache[0] == cycle_no and cache[1] == champ_key:
             return list(cache[2])
-        from evolution.terminal_stagnation import (
-            terminal_efficiency_at_scan_floor,
-            terminal_probe_escalation_ratio,
-        )
+        from evolution.terminal_stagnation import terminal_efficiency_at_scan_floor, terminal_probe_escalation_ratio
 
         ratio = terminal_probe_escalation_ratio()
         n_probe = max(2, int(pop_size * ratio))
@@ -5999,20 +4964,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         at_floor = terminal_efficiency_at_scan_floor(len(self.champion))
         warm_steady = False
-        if (
-            at_floor
-            and os.environ.get("EE_SCAN_FLOOR_WARM_STEADY_LIGHT", "1") == "1"
-        ):
+        if at_floor and os.environ.get("EE_SCAN_FLOOR_WARM_STEADY_LIGHT", "1") == "1":
             try:
-                from evolution.mutation_helpers import (
-                    should_skip_mg_stall_collect_for_warm_eq_refine,
-                )
+                from evolution.mutation_helpers import should_skip_mg_stall_collect_for_warm_eq_refine
 
-                warm_steady = bool(
-                    should_skip_mg_stall_collect_for_warm_eq_refine(
-                        list(self.champion or [])
-                    )
-                )
+                warm_steady = bool(should_skip_mg_stall_collect_for_warm_eq_refine(list(self.champion or [])))
             except ImportError:
                 warm_steady = False
 
@@ -6026,9 +4982,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             return
         ratio = terminal_probe_escalation_ratio()
         if warm_steady:
-            probe_cap = float(
-                os.environ.get("EE_SCAN_FLOOR_WARM_STEADY_PROBE_CAP", "0.12")
-            )
+            probe_cap = float(os.environ.get("EE_SCAN_FLOOR_WARM_STEADY_PROBE_CAP", "0.12"))
             ratio = min(ratio, max(0.02, probe_cap))
         n_probe = max(2, int(pop_size * ratio))
         pool = self._terminal_probe_pool(pop_size)
@@ -6043,9 +4997,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 else:
                     gen = int(getattr(self, "current_generation", 0))
                     offset = (gen * n_probe) % len(variants)
-                    variants = [
-                        variants[(offset + i) % len(variants)] for i in range(n_probe)
-                    ]
+                    variants = [variants[(offset + i) % len(variants)] for i in range(n_probe)]
             elif not at_floor or warm_steady:
                 self.rng.shuffle(variants)
                 variants = variants[:n_probe]
@@ -6060,20 +5012,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         elif at_floor and not warm_steady:
             n_inject = max(2, int(pop_size * max(self.config.diversity_inject_ratio, 0.2)))
             self._inject_diversity(challengers, n_inject)
-        from evolution.terminal_stagnation import (
-            _l11_fib_gate_imm,
-            l30_easy_fill_variants,
-            semantic_compress,
-        )
+        from evolution.terminal_stagnation import _l11_fib_gate_imm, l30_easy_fill_variants, semantic_compress
 
         if not at_floor or warm_steady:
             compact = semantic_compress(list(self.champion))
-            if (
-                compact
-                and tuple(compact) != tuple(self.champion)
-                and challengers
-                and len(self.champion) > 24
-            ):
+            if compact and tuple(compact) != tuple(self.champion) and challengers and len(self.champion) > 24:
                 challengers[0] = compact
                 if self._last_challenger_strategies:
                     self._last_challenger_strategies[0] = "SEMANTIC_COMPRESS"
@@ -6086,9 +5029,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         from evolution.mutation_helpers import (
             scan_floor_anchor_program,
             scan_floor_capability_growth_allowed,
-        )
-
-        from evolution.mutation_helpers import (
             scan_floor_compression_injection_generation,
             scan_floor_growth_injection_generation,
             scan_floor_late_inject_generation,
@@ -6123,42 +5063,30 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         )
         if growth_inject_ok and stall_growth_inject and growth_gen == 0:
             try:
-                from evolution.mutation_helpers import (
-                    should_skip_scan_floor_gen0_growth_inject,
-                )
+                from evolution.mutation_helpers import should_skip_scan_floor_gen0_growth_inject
 
                 if should_skip_scan_floor_gen0_growth_inject(list(self.champion or [])):
                     growth_inject_ok = False
             except ImportError:
                 pass
-        if (
-            warm_steady
-            and os.environ.get("EE_SCAN_FLOOR_WARM_STEADY_SKIP_GROWTH_INJECT", "1")
-            == "1"
-        ):
+        if warm_steady and os.environ.get("EE_SCAN_FLOOR_WARM_STEADY_SKIP_GROWTH_INJECT", "1") == "1":
             growth_inject_ok = False
         if scan_floor_capability_growth_allowed(len(self.champion)) and growth_inject_ok:
             anchor = scan_floor_anchor_program(list(self.champion))
             if challengers:
-                from evolution.terminal_stagnation import terminal_growth_tail_perturb_variants
-
                 from evolution.epi_momentum_governor import (
                     promotion_raw_capability_stalled,
                     scan_floor_length_prom_stalled,
                 )
+                from evolution.terminal_stagnation import terminal_growth_tail_perturb_variants
 
                 root = os.path.dirname(os.path.abspath(__file__))
                 champ_n_slots = len(self.champion or [])
                 growth_stalled = bool(stall_growth_inject)
                 default_slots = (
                     "8"
-                    if growth_stalled
-                    and scan_floor_capability_growth_allowed(champ_n_slots)
-                    else (
-                        "2"
-                        if scan_floor_capability_growth_allowed(champ_n_slots)
-                        else "1"
-                    )
+                    if growth_stalled and scan_floor_capability_growth_allowed(champ_n_slots)
+                    else ("2" if scan_floor_capability_growth_allowed(champ_n_slots) else "1")
                 )
                 cycle_no = int(getattr(self, "_cycle_number", 0))
                 from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
@@ -6179,16 +5107,12 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                     len(anchor),
                 )
                 cached_pool = getattr(self, "_scan_floor_growth_pool_cache", None)
-                pool_cache_hit = (
-                    cached_pool is not None and cached_pool[0] == pool_cache_key
-                )
+                pool_cache_hit = cached_pool is not None and cached_pool[0] == pool_cache_key
                 if pool_cache_hit:
                     pool = [list(p) for p in cached_pool[1]]
                     cross_keys = {tuple(k) for k in cached_pool[2]}
                 elif growth_stalled:
-                    from evolution.mutation_helpers import (
-                        load_scan_floor_growth_pool_cache,
-                    )
+                    from evolution.mutation_helpers import load_scan_floor_growth_pool_cache
 
                     disk_pool = load_scan_floor_growth_pool_cache(list(anchor))
                     if disk_pool is not None and disk_pool[0] == pool_cache_key:
@@ -6197,9 +5121,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         pool_cache_hit = True
                         self._scan_floor_growth_pool_cache = disk_pool
                 if not pool_cache_hit:
-                    from evolution.mutation_helpers import (
-                        collect_scan_floor_growth_crossover_fills,
-                    )
+                    from evolution.mutation_helpers import collect_scan_floor_growth_crossover_fills
 
                     growth = collect_scan_floor_growth_crossover_fills(anchor)
                     if not growth:
@@ -6218,9 +5140,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                     if growth_stalled and growth_gen == 0:
                         gen0_slots = max(
                             1,
-                            int(
-                                os.environ.get("EE_SCAN_FLOOR_GROWTH_SLOTS_GEN0", "2")
-                            ),
+                            int(os.environ.get("EE_SCAN_FLOOR_GROWTH_SLOTS_GEN0", "2")),
                         )
                         from evolution.mutation_helpers import _curriculum_l10_cached
 
@@ -6237,17 +5157,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         n_slots = min(n_slots, gen0_slots)
                 if pool and not pool_cache_hit:
                     if os.environ.get("EE_SCAN_FLOOR_GROWTH_CROSSOVER", "1") != "0":
-                        from evolution.mutation_helpers import (
-                            build_scan_floor_growth_crossover_pool,
-                        )
+                        from evolution.mutation_helpers import build_scan_floor_growth_crossover_pool
 
                         cross_attempts = max(
                             3,
-                            int(
-                                os.environ.get(
-                                    "EE_SCAN_FLOOR_GROWTH_CROSSOVER_ATTEMPTS", "6"
-                                )
-                            ),
+                            int(os.environ.get("EE_SCAN_FLOOR_GROWTH_CROSSOVER_ATTEMPTS", "6")),
                         )
                         if growth_stalled:
                             cross_attempts = max(
@@ -6283,9 +5197,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         growth,
                         key=lambda f: (abs(len(f) - len(anchor)), len(f)),
                     )
-                    anchor_fill = (
-                        near_fills[0] if near_fills else growth[cycle_no % len(growth)]
-                    )
+                    anchor_fill = near_fills[0] if near_fills else growth[cycle_no % len(growth)]
                     tail_budget = max(
                         4,
                         int(os.environ.get("EE_SCAN_FLOOR_GROWTH_TAIL_PERTURB", "8")),
@@ -6318,27 +5230,22 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
                             compress_cap = max(
                                 4,
-                                int(
-                                    os.environ.get("EE_SCAN_FLOOR_GROWTH_COMPRESS_CAP", "6")
-                                ),
+                                int(os.environ.get("EE_SCAN_FLOOR_GROWTH_COMPRESS_CAP", "6")),
                             )
                             champ_n = len(self.champion or [])
                             long_pool = [list(p) for p in pool if len(p) > champ_n]
                             short_pool = [list(p) for p in pool if len(p) <= champ_n]
                             root = os.path.dirname(os.path.abspath(__file__))
-                            stalled = (
-                                promotion_raw_capability_stalled(root)
-                                or scan_floor_length_prom_stalled(root, champ_n)
+                            stalled = promotion_raw_capability_stalled(root) or scan_floor_length_prom_stalled(
+                                root, champ_n
                             )
                             if stalled:
-                                fresh_compress = (
-                                    collect_scan_floor_fresh_compression_variants(
-                                        list(self.champion),
-                                        long_sources=long_pool,
-                                        cycle_no=cycle_no,
-                                        gen_idx=growth_gen,
-                                        stall_seed_offset=1,
-                                    )
+                                fresh_compress = collect_scan_floor_fresh_compression_variants(
+                                    list(self.champion),
+                                    long_sources=long_pool,
+                                    cycle_no=cycle_no,
+                                    gen_idx=growth_gen,
+                                    stall_seed_offset=1,
                                 )
                                 if fresh_compress:
                                     seen_long = {tuple(p) for p in long_pool}
@@ -6362,30 +5269,19 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                                     cycle_no=cycle_no,
                                 )
                                 compressed_keys = {tuple(p) for p in compressed}
-                                remainder = [
-                                    p
-                                    for p in long_pool
-                                    if tuple(p) not in compressed_keys
-                                ]
+                                remainder = [p for p in long_pool if tuple(p) not in compressed_keys]
                                 pool = compressed + short_pool + remainder
                             else:
                                 pool = short_pool + long_pool
                         from evolution.mutation_helpers import scan_floor_growth_inject_rank
-                        from evolution.terminal_stagnation import (
-                            get_scan_floor_gate,
-                            scan_floor_min_raw_gain,
-                        )
+                        from evolution.terminal_stagnation import get_scan_floor_gate, scan_floor_min_raw_gain
 
                         champ_n = len(self.champion or [])
                         inject_gate = get_scan_floor_gate(list(self.champion))
-                        champ_pr = float(
-                            compact_l30_promotion_raw_fitness(list(self.champion))
-                        )
+                        champ_pr = float(compact_l30_promotion_raw_fitness(list(self.champion)))
                         min_gain = float(scan_floor_min_raw_gain(champ_n))
                         if growth_stalled:
-                            from evolution.champion_rollback import (
-                                collect_growth_material_compress_parents,
-                            )
+                            from evolution.champion_rollback import collect_growth_material_compress_parents
                             from evolution.mutation_helpers import (
                                 growth_material_diff_graft_variants,
                                 load_scan_floor_eq_refine_seeds,
@@ -6423,14 +5319,9 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                                 if key in {tuple(p) for p in pool}:
                                     continue
                                 pool.insert(0, list(graft))
-                                if (
-                                    len(graft) == len(anchor)
-                                    and inject_gate.qualifies(list(graft))
-                                ):
+                                if len(graft) == len(anchor) and inject_gate.qualifies(list(graft)):
                                     graft_eq_seeds.append(list(graft))
-                            eq_pre = load_scan_floor_eq_refine_seeds(
-                                anchor, max_seeds=8, probe_material=False
-                            )
+                            eq_pre = load_scan_floor_eq_refine_seeds(anchor, max_seeds=8, probe_material=False)
                             if eq_pre:
                                 seen_pre = {tuple(p) for p in pool}
                                 for seed_prog in eq_pre:
@@ -6475,9 +5366,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                                     seen_eq.add(key)
                                     eq_record.append(list(graft_prog))
                             if eq_record:
-                                record_scan_floor_eq_refine_seeds(
-                                    anchor, eq_record, cycle=cycle_no
-                                )
+                                record_scan_floor_eq_refine_seeds(anchor, eq_record, cycle=cycle_no)
                     cache_entry = (
                         pool_cache_key,
                         tuple(tuple(int(w) for w in p) for p in pool),
@@ -6485,9 +5374,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                     )
                     self._scan_floor_growth_pool_cache = cache_entry
                     if growth_stalled and pool:
-                        from evolution.mutation_helpers import (
-                            save_scan_floor_growth_pool_cache,
-                        )
+                        from evolution.mutation_helpers import save_scan_floor_growth_pool_cache
 
                         save_scan_floor_growth_pool_cache(
                             list(anchor),
@@ -6502,15 +5389,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         scan_floor_stalled_challenger_max_words,
                         select_growth_inject_slot_variants,
                     )
-                    from evolution.terminal_stagnation import (
-                        L30_COMPACT_MAX_WORDS,
-                        get_scan_floor_gate,
-                    )
+                    from evolution.terminal_stagnation import L30_COMPACT_MAX_WORDS, get_scan_floor_gate
 
                     inject_gen = int(
-                        mg_inject_gen
-                        if mg_inject_gen is not None
-                        else max(0, int(self.config.max_generations) - 1)
+                        mg_inject_gen if mg_inject_gen is not None else max(0, int(self.config.max_generations) - 1)
                     )
                     long_word_cap = scan_floor_stalled_challenger_max_words(
                         len(self.champion or anchor),
@@ -6528,29 +5410,16 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         champ_live = list(self.champion or anchor)
                         enrich_skip_eq = max(
                             6,
-                            int(
-                                os.environ.get(
-                                    "EE_SCAN_FLOOR_ENRICH_SKIP_EQ_POOL", "8"
-                                )
-                            ),
+                            int(os.environ.get("EE_SCAN_FLOOR_ENRICH_SKIP_EQ_POOL", "8")),
                         )
-                        eq_in_pool = sum(
-                            1
-                            for p in pool
-                            if len(p) == len(champ_live)
-                            and slot_gate.qualifies(list(p))
-                        )
+                        eq_in_pool = sum(1 for p in pool if len(p) == len(champ_live) and slot_gate.qualifies(list(p)))
                         skip_enrich_warm = False
                         try:
-                            from evolution.mutation_helpers import (
-                                should_skip_scan_floor_enrich_equal_length_pool,
-                            )
+                            from evolution.mutation_helpers import should_skip_scan_floor_enrich_equal_length_pool
 
-                            skip_enrich_warm = (
-                                should_skip_scan_floor_enrich_equal_length_pool(
-                                    champ_live,
-                                    seed_cap=enrich_skip_eq,
-                                )
+                            skip_enrich_warm = should_skip_scan_floor_enrich_equal_length_pool(
+                                champ_live,
+                                seed_cap=enrich_skip_eq,
                             )
                         except ImportError:
                             pass
@@ -6559,10 +5428,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                             and not skip_enrich_warm
                             and (
                                 eq_in_pool < enrich_skip_eq
-                                or os.environ.get(
-                                    "EE_SCAN_FLOOR_SKIP_ENRICH_RICH_EQ", "0"
-                                )
-                                != "0"
+                                or os.environ.get("EE_SCAN_FLOOR_SKIP_ENRICH_RICH_EQ", "0") != "0"
                             )
                         ):
                             pool = enrich_growth_inject_equal_length_pool(
@@ -6579,44 +5445,27 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         stalled=True,
                         max_long_words=long_word_cap,
                     )
-                    slots = self.rng.sample(
-                        range(len(challengers)), min(n_slots, len(challengers))
-                    )
+                    slots = self.rng.sample(range(len(challengers)), min(n_slots, len(challengers)))
                     for slot, variant in zip(slots, rotated, strict=False):
                         challengers[slot] = variant
                         if slot < len(self._last_challenger_strategies):
-                            label = (
-                                "GROWTH_CROSSOVER"
-                                if tuple(variant) in cross_keys
-                                else "L30_EASY_FILL"
-                            )
+                            label = "GROWTH_CROSSOVER" if tuple(variant) in cross_keys else "L30_EASY_FILL"
                             self._last_challenger_strategies[slot] = label
                 elif pool:
                     rotated = [pool[(cycle_no + i) % len(pool)] for i in range(n_slots)]
-                    slots = self.rng.sample(
-                        range(len(challengers)), min(n_slots, len(challengers))
-                    )
+                    slots = self.rng.sample(range(len(challengers)), min(n_slots, len(challengers)))
                     for slot, variant in zip(slots, rotated, strict=False):
                         challengers[slot] = variant
                         if slot < len(self._last_challenger_strategies):
-                            label = (
-                                "GROWTH_CROSSOVER"
-                                if tuple(variant) in cross_keys
-                                else "L30_EASY_FILL"
-                            )
+                            label = "GROWTH_CROSSOVER" if tuple(variant) in cross_keys else "L30_EASY_FILL"
                             self._last_challenger_strategies[slot] = label
-        compression_once_per_cycle = (
-            os.environ.get("EE_SCAN_FLOOR_COMPRESSION_ONCE_PER_CYCLE", "1") != "0"
-        )
-        compression_inject_gen = getattr(
-            self, "_scan_floor_compression_inject_generation", None
-        )
+        compression_once_per_cycle = os.environ.get("EE_SCAN_FLOOR_COMPRESSION_ONCE_PER_CYCLE", "1") != "0"
+        compression_inject_gen = getattr(self, "_scan_floor_compression_inject_generation", None)
         from evolution.terminal_stagnation import _scan_floor_probe_stall_mode
 
         stall_compress_inject = _scan_floor_probe_stall_mode(len(self.champion or []))
         from evolution.mutation_helpers import (
             collect_scan_floor_fresh_compression_variants,
-            scan_floor_compression_injection_generation,
             scan_floor_stalled_compression_injection_generation,
         )
 
@@ -6636,15 +5485,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             )
         )
         if scan_floor_capability_growth_allowed(len(self.champion)) and compression_inject_ok:
-            from evolution.terminal_stagnation import (
-                ranked_scan_floor_compression_variants,
-            )
+            from evolution.terminal_stagnation import ranked_scan_floor_compression_variants
 
             if stall_compress_inject:
                 cycle_no = int(getattr(self, "_cycle_number", 0))
-                compress = ranked_scan_floor_compression_variants(
-                    list(self.champion), cycle_no=cycle_no
-                )
+                compress = ranked_scan_floor_compression_variants(list(self.champion), cycle_no=cycle_no)
                 compression_heavy_ok = late_inject_probe and not growth_inject_ok
                 skip_compress_heavy = False
                 if compression_heavy_ok:
@@ -6654,16 +5499,12 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                             should_skip_scan_floor_enrich_equal_length_pool,
                         )
 
-                        warm_skip = os.environ.get(
-                            "EE_SCAN_FLOOR_WARM_SKIP_COMPRESS_HEAVY", "1"
-                        ) == "1"
+                        warm_skip = os.environ.get("EE_SCAN_FLOOR_WARM_SKIP_COMPRESS_HEAVY", "1") == "1"
                         skip_compress_heavy = warm_skip and (
                             should_skip_scan_floor_enrich_equal_length_pool(
                                 list(self.champion),
                             )
-                            or should_skip_mg_stall_collect_for_warm_eq_refine(
-                                list(self.champion)
-                            )
+                            or should_skip_mg_stall_collect_for_warm_eq_refine(list(self.champion))
                         )
                     except ImportError:
                         pass
@@ -6673,14 +5514,8 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         collect_scan_floor_growth_crossover_fills,
                     )
 
-                    growth_fills = collect_scan_floor_growth_crossover_fills(
-                        list(self.champion)
-                    )
-                    long_for_fresh = [
-                        list(f)
-                        for f in growth_fills
-                        if len(f) > len(self.champion or [])
-                    ]
+                    growth_fills = collect_scan_floor_growth_crossover_fills(list(self.champion))
+                    long_for_fresh = [list(f) for f in growth_fills if len(f) > len(self.champion or [])]
                     fresh_compress = collect_scan_floor_fresh_compression_variants(
                         list(self.champion),
                         long_sources=long_for_fresh,
@@ -6713,9 +5548,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                     parents = [
                         list(p)
                         for p in self._terminal_archive_parents()
-                        if p
-                        and len(p) == champ_n
-                        and gate.qualifies(list(p))
+                        if p and len(p) == champ_n and gate.qualifies(list(p))
                     ]
                     if len(parents) >= 2:
                         cross_budget = max(
@@ -6743,11 +5576,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                                 seen_c.add(key)
                                 compress.insert(0, list(variant))
                 if compress and challengers:
-                    default_compress_slots = (
-                        "4"
-                        if _scan_floor_probe_stall_mode(len(self.champion or []))
-                        else "2"
-                    )
+                    default_compress_slots = "4" if _scan_floor_probe_stall_mode(len(self.champion or [])) else "2"
                     n_slots = max(
                         1,
                         min(
@@ -6760,20 +5589,14 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                             ),
                         ),
                     )
-                    rotated = [
-                        compress[(cycle_no + i) % len(compress)] for i in range(n_slots)
-                    ]
-                    slots = self.rng.sample(
-                        range(len(challengers)), min(n_slots, len(challengers))
-                    )
+                    rotated = [compress[(cycle_no + i) % len(compress)] for i in range(n_slots)]
+                    slots = self.rng.sample(range(len(challengers)), min(n_slots, len(challengers)))
                     for slot, variant in zip(slots, rotated, strict=False):
                         challengers[slot] = variant
                         if slot < len(self._last_challenger_strategies):
                             self._last_challenger_strategies[slot] = "SEMANTIC_COMPRESS"
         if stall_compress_inject and challengers:
-            from evolution.mutation_helpers import (
-                inject_scan_floor_eq_refine_seed_challengers,
-            )
+            from evolution.mutation_helpers import inject_scan_floor_eq_refine_seed_challengers
 
             inject_scan_floor_eq_refine_seed_challengers(
                 list(self.champion),
@@ -6786,19 +5609,14 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 strategies=getattr(self, "_last_challenger_strategies", None),
             )
 
-
     def _apply_model_guided_slots(self, challengers):
-
         """Reserve slots for model-guided generation."""
 
         if self.champion_level < 2:
 
             return
 
-        from evolution.mutation_helpers import (
-            scan_floor_model_guided_slot_allowed,
-            skip_model_guided_at_terminal,
-        )
+        from evolution.mutation_helpers import scan_floor_model_guided_slot_allowed, skip_model_guided_at_terminal
         from evolution.terminal_stagnation import terminal_cycles_at_level
 
         verify = float(getattr(self, "_champion_verify_score", 0.0))
@@ -6820,18 +5638,12 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 if stalled:
                     n_slots = max(
                         1,
-                        int(
-                            os.environ.get(
-                                "EE_SCAN_FLOOR_MODEL_GUIDED_SLOTS_STALLED", "2"
-                            )
-                        ),
+                        int(os.environ.get("EE_SCAN_FLOOR_MODEL_GUIDED_SLOTS_STALLED", "2")),
                     )
                 slot_ratio = min(1.0, n_slots / max(1, len(challengers)))
                 replaced: list[int] = []
                 if stalled and n_slots >= 2:
-                    inject_gen = int(
-                        getattr(self, "_scan_floor_inject_generation", -1)
-                    )
+                    inject_gen = int(getattr(self, "_scan_floor_inject_generation", -1))
                     gen_now = int(getattr(self, "current_generation", 0))
                     replaced.extend(
                         self._replace_with_model_guided(
@@ -6850,11 +5662,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                             exclude_indices=set(replaced),
                         )
                     )
-                    if (
-                        gen_now == inject_gen
-                        and os.environ.get("EE_GROWTH_MG_DUAL_ANCHOR_INJECT", "1")
-                        != "0"
-                    ):
+                    if gen_now == inject_gen and os.environ.get("EE_GROWTH_MG_DUAL_ANCHOR_INJECT", "1") != "0":
                         replaced.extend(
                             self._replace_with_model_guided(
                                 challengers,
@@ -6865,11 +5673,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                                 growth_anchor_rank_offset=1,
                             )
                         )
-                    if (
-                        gen_now == inject_gen
-                        and os.environ.get("EE_GROWTH_MG_TRIPLE_ANCHOR_INJECT", "1")
-                        != "0"
-                    ):
+                    if gen_now == inject_gen and os.environ.get("EE_GROWTH_MG_TRIPLE_ANCHOR_INJECT", "1") != "0":
                         replaced.extend(
                             self._replace_with_model_guided(
                                 challengers,
@@ -6897,9 +5701,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                     )
                 for idx in replaced:
                     if idx < len(self._last_challenger_strategies):
-                        self._last_challenger_strategies[idx] = (
-                            MutationStrategy.MODEL_GUIDED.value
-                        )
+                        self._last_challenger_strategies[idx] = MutationStrategy.MODEL_GUIDED.value
             return
 
         if self.config.model_guided_ratio is None:
@@ -6916,10 +5718,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
                 self._last_challenger_strategies[idx] = MutationStrategy.MODEL_GUIDED.value
 
-
-
     def _apply_mutation(self, strategy, parent=None, parent_traces=None) -> list[int]:
-
         """Apply a mutation strategy to a parent program (champion by default)."""
 
         program = parent if parent is not None else self.champion
@@ -6938,23 +5737,14 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         sa = self.strategy_archive if self.config.use_strategy_archive else None
 
         mutated, _desc, _analysis = propose_mutation(
-
             program=program,
-
             trace=trace_input,
-
             expected=expected,
-
             inputs=inputs,
-
             rng=self.rng,
-
             task_level=self.champion_level,
-
             strategy=strategy,
-
             strategy_archive=sa,
-
         )
 
         if (
@@ -6965,28 +5755,19 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             from evolution.champion_bloat_guard import level_word_cap
             from evolution.terminal_stagnation import (
                 maybe_drop_interior_instruction,
-                terminal_length_drop_params,
                 semantic_compress,
+                terminal_length_drop_params,
             )
 
             cap = level_word_cap(int(self.champion_level))
             p, n_drop = terminal_length_drop_params(len(mutated), cap)
-            mutated = maybe_drop_interior_instruction(
-                mutated, self.rng, p=p, n_drop=n_drop
-            )
+            mutated = maybe_drop_interior_instruction(mutated, self.rng, p=p, n_drop=n_drop)
             mutated = semantic_compress(mutated)
 
-        if (
-            parent is not None
-            and self.champion is not None
-            and mutated
-            and len(parent) > len(self.champion)
-        ):
+        if parent is not None and self.champion is not None and mutated and len(parent) > len(self.champion):
             try:
                 from evolution.mutation_helpers import maybe_l10_lift_post_mutation_compress
-                from evolution.terminal_stagnation import (
-                    terminal_efficiency_at_scan_floor,
-                )
+                from evolution.terminal_stagnation import terminal_efficiency_at_scan_floor
 
                 if terminal_efficiency_at_scan_floor(len(self.champion)):
                     mutated = maybe_l10_lift_post_mutation_compress(
@@ -6999,10 +5780,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return mutated
 
-
-
     def _generate_challengers(self) -> list[list[int]]:
-
         """Generate a population of challenger programs."""
 
         pop_size = self.config.population_size
@@ -7054,17 +5832,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return challengers
 
-
-
     @staticmethod
-
     def _compute_population_diversity(challengers: list[list[int]]) -> float:
-
         """Compute opcode diversity of the challenger population."""
 
         return _compute_population_diversity_fn(challengers, _OPCODE_CAT_ARRAY, NUM_OPCODE_CATEGORIES)
-
-
 
     def _inject_diversity(
         self,
@@ -7073,57 +5845,35 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         *,
         preserve_indices: set[int] | None = None,
     ) -> None:
-
         """Replace the least-diverse challengers with fresh random programs."""
 
         _inject_diversity_fn(
-
             challengers,
-
             n_inject,
-
             self.rng,
-
             self._last_challenger_strategies,
-
             _OPCODE_CAT_ARRAY,
-
             NUM_OPCODE_CATEGORIES,
-
             generate_seed_program,
-
             preserve_indices=preserve_indices,
-
         )
 
-
-
     def _check_variance_override(self):
-
         """Check variance-aware strategy override (priority 1)."""
 
         return _check_variance_override_fn(self)
 
-
-
     def _check_priority_overrides(self, current_priority: int) -> tuple[int, MutationStrategy | None, str]:
-
         """Check cross-cycle, mutation stats, and plateau overrides (priorities 2-4)."""
 
         return _check_priority_overrides_fn(self, current_priority)
 
-
-
     def _apply_cycle_phase_bias(self, chosen: MutationStrategy, override_priority: int) -> MutationStrategy:
-
         """Apply cycle-phase exploration-exploitation balance."""
 
         return _apply_cycle_phase_bias_fn(self, chosen, override_priority)
 
-
-
     def _resolve_strategy_consecutive_cap(self) -> int:
-
         """Cap consecutive same-strategy runs; tighter at high curriculum levels."""
 
         if self.champion_level >= 5:
@@ -7132,18 +5882,12 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return self.config.max_consecutive_same_strategy
 
-
-
     def _resolve_skip_strategy_after_cap(self, effective_cap: int) -> str | None:
-
         """Reset consecutive counter and return strategy to skip when cap is hit."""
 
         if self._consecutive_same_strategy >= effective_cap and self._last_strategy_used not in (
-
             "GROW",
-
             "MODEL_GUIDED",
-
         ):
 
             self._consecutive_same_strategy = 0
@@ -7152,20 +5896,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return None
 
-
-
     def _recommend_strategy_from_archive(self, skip_strat: str | None) -> tuple[MutationStrategy, Any]:
-
         """Return archive-recommended strategy and record (or HYBRID when archive is sparse)."""
 
         if (
-
             self.config.use_strategy_archive
-
             and self.strategy_archive is not None
-
             and self.strategy_archive.total_records() > 10
-
         ):
 
             rec = self.strategy_archive.recommend_strategy(self.champion_level, skip_strategy=skip_strat)
@@ -7174,10 +5911,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return MutationStrategy.HYBRID, None
 
-
-
     def _maybe_apply_exploration_bonus(self, chosen: MutationStrategy, rec: Any) -> MutationStrategy:
-
         """Occasionally swap to an alternate strategy when exploration bonus is high."""
 
         if rec is None or not (self.config.use_strategy_archive and self.strategy_archive is not None):
@@ -7190,11 +5924,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             if _bonus > 0.15 and self.rng.random() < _bonus:
 
-                _alt = [
-
-                    s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)
-
-                ]
+                _alt = [s for s in MutationStrategy if s not in (MutationStrategy.GROW, MutationStrategy.MODEL_GUIDED)]
 
                 if _alt:
 
@@ -7206,10 +5936,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return chosen
 
-
-
     def _apply_strategy_override_pipeline(self, chosen: MutationStrategy) -> MutationStrategy:
-
         """Apply variance, priority, and cycle-phase strategy overrides."""
 
         op, os, ol = self._check_variance_override()
@@ -7224,10 +5951,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return self._apply_cycle_phase_bias(chosen, op)
 
-
-
     def _track_consecutive_strategy(self, chosen: MutationStrategy) -> None:
-
         """Update consecutive-same-strategy counters after a choice."""
 
         sv = chosen.value
@@ -7242,10 +5966,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             self._consecutive_same_strategy = 1
 
-
-
     def _choose_mutation_strategy(self, idx: int) -> MutationStrategy:
-
         """Choose a mutation strategy for challenger idx."""
 
         effective_cap = self._resolve_strategy_consecutive_cap()
@@ -7261,13 +5982,9 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         chosen = self._apply_strategy_override_pipeline(chosen)
 
         if (
-
             self.champion_level in self._unsolved_levels_set
-
             and self.generations_stalled > 2
-
             and self.rng.random() < self.config.perturbation_capped_probability_unsolved
-
         ):
 
             chosen = MutationStrategy.PERTURBATION_CAPPED
@@ -7278,23 +5995,15 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return chosen
 
-
-
     def _apply_affinity_bias(self, chosen):
-
         """Apply per-program mutation affinity bias."""
 
         return _apply_affinity_bias_fn(self, chosen)
 
-
-
     def _apply_level_aware_strategy_bias(self, chosen: MutationStrategy) -> MutationStrategy:
-
         """Apply level-aware strategy weighting to bias selection by task difficulty."""
 
         return _apply_level_aware_strategy_bias_fn(self, chosen)
-
-
 
     # --------------------------------------------------------------
 
@@ -7302,35 +6011,22 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
     # --------------------------------------------------------------
 
-
-
     def _get_model_guided_ratio(self) -> float:
-
         """Determine model-guided replacement ratio based on level and stall."""
 
         return _get_model_guided_ratio_fn(self.config, self.champion_level)
 
-
-
     def _get_model_guided_prefix(
-
         self, champion_hex: list[str], ref_prefix_hex: list[str] | None
-
     ) -> tuple[list[str], str]:
-
         """Select prefix source using Adaptive Prefix Scheduler (APS)."""
 
         return _get_model_guided_prefix_fn(champion_hex, ref_prefix_hex, self.champion_level, self.generations_stalled)
 
-
-
     def _compute_model_temperature(self) -> float:
-
         """Compute model temperature with optional annealing."""
 
         return _compute_model_temperature_fn(self.config, getattr(self, "current_generation", 0))
-
-
 
     def _run_model_inference(
         self,
@@ -7346,7 +6042,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         growth_prefix_count: int | None = None,
         exclude_indices: set[int] | None = None,
     ):
-
         """Run model inference loop and return replaced indices."""
 
         ri, reps = [], 0
@@ -7372,16 +6067,12 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             try:
                 from evolution.terminal_stagnation import _scan_floor_probe_stall_mode
 
-                collect_stalled_gate = bool(
-                    _scan_floor_probe_stall_mode(len(champ))
-                )
+                collect_stalled_gate = bool(_scan_floor_probe_stall_mode(len(champ)))
             except ImportError:
                 collect_stalled_gate = False
         if collect_stalled_gate:
             try:
-                from evolution.mutation_helpers import (
-                    should_skip_mg_stall_collect_for_warm_eq_refine,
-                )
+                from evolution.mutation_helpers import should_skip_mg_stall_collect_for_warm_eq_refine
 
                 if should_skip_mg_stall_collect_for_warm_eq_refine(champ):
                     collect_stalled_gate = False
@@ -7392,9 +6083,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             "_scan_floor_inject_generation",
             max(0, int(self.config.max_generations) - 1),
         )
-        if collect_stalled_gate and int(getattr(self, "current_generation", 0)) != int(
-            inject_gen
-        ):
+        if collect_stalled_gate and int(getattr(self, "current_generation", 0)) != int(inject_gen):
             # Gen-0 dual-MG is lightweight slot fill only; bulk stall collect
             # runs on the last generation to avoid 5+ minute cycle spikes.
             collect_stalled_gate = False
@@ -7406,8 +6095,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         try:
 
             import torch
-
-
 
             if torch.cuda.is_available():
 
@@ -7437,16 +6124,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         if growth_mode:
                             sample_n = max(
                                 2,
-                                int(
-                                    os.environ.get(
-                                        "EE_SCAN_FLOOR_GROWTH_MODEL_SAMPLES", "6"
-                                    )
-                                ),
+                                int(os.environ.get("EE_SCAN_FLOOR_GROWTH_MODEL_SAMPLES", "6")),
                             )
                             try:
-                                from evolution.terminal_stagnation import (
-                                    _scan_floor_probe_stall_mode,
-                                )
+                                from evolution.terminal_stagnation import _scan_floor_probe_stall_mode
 
                                 if _scan_floor_probe_stall_mode(len(champ)):
                                     sample_n = max(
@@ -7463,9 +6144,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         elif gate is not None:
                             sample_n = min(4, max(2, num_replace * 2))
                             try:
-                                from evolution.terminal_stagnation import (
-                                    _scan_floor_probe_stall_mode,
-                                )
+                                from evolution.terminal_stagnation import _scan_floor_probe_stall_mode
 
                                 if _scan_floor_probe_stall_mode(len(champ)):
                                     sample_n = max(
@@ -7480,25 +6159,15 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                             except ImportError:
                                 pass
                         else:
-                            sample_n = min(
-                                3, max(1, num_replace // len(prefix_counts))
-                            )
+                            sample_n = min(3, max(1, num_replace // len(prefix_counts)))
                         comp = self._prefix_generator.complete(
-
                             prefix_source,
-
                             prefix_count=pc,
-
                             num_samples=sample_n,
-
                             temperature=model_temp,
-
                             top_k=40,
-
                             top_p=0.9,
-
                             repetition_penalty=1.1,
-
                         )
 
                         break
@@ -7508,8 +6177,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         try:
 
                             import torch
-
-
 
                             if torch.cuda.is_available():
 
@@ -7554,9 +6221,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                                 continue
                             grown = list(pi)
                             cycle_key = int(getattr(self, "_cycle_number", 0))
-                            if getattr(
-                                self, "_mg_material_buffer_cycle", -1
-                            ) != cycle_key:
+                            if getattr(self, "_mg_material_buffer_cycle", -1) != cycle_key:
                                 self._mg_material_buffer_cycle = cycle_key
                                 self._mg_material_buffer = []
                             buffer = getattr(self, "_mg_material_buffer", None)
@@ -7566,9 +6231,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                             from evolution.terminal_stagnation import get_scan_floor_gate
 
                             growth_gate = gate or get_scan_floor_gate(champ)
-                            allow_projection = (
-                                growth_projection_used < growth_projection_cap
-                            )
+                            allow_projection = growth_projection_used < growth_projection_cap
                             resolved, projection_attempted = resolve_growth_mg_completion(
                                 champ,
                                 grown,
@@ -7581,19 +6244,12 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                             if resolved is None:
                                 continue
                             pi = resolved
-                            if (
-                                len(pi) > len(champ)
-                                and not collect_stalled_gate
-                            ):
+                            if len(pi) > len(champ) and not collect_stalled_gate:
                                 try:
-                                    from evolution.terminal_stagnation import (
-                                        _scan_floor_probe_stall_mode,
-                                    )
+                                    from evolution.terminal_stagnation import _scan_floor_probe_stall_mode
 
                                     if _scan_floor_probe_stall_mode(len(champ)):
-                                        gen_now = int(
-                                            getattr(self, "current_generation", 0)
-                                        )
+                                        gen_now = int(getattr(self, "current_generation", 0))
                                         if gen_now != int(
                                             getattr(
                                                 self,
@@ -7617,9 +6273,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                                         continue
                                     repair_evals = 12
                                     try:
-                                        from evolution.terminal_stagnation import (
-                                            _scan_floor_probe_stall_mode,
-                                        )
+                                        from evolution.terminal_stagnation import _scan_floor_probe_stall_mode
 
                                         if _scan_floor_probe_stall_mode(len(champ)):
                                             repair_evals = max(
@@ -7709,21 +6363,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             buffer = getattr(self, "_mg_material_buffer", None)
             if buffer:
                 try:
-                    from evolution.mutation_helpers import (
-                        flush_growth_mg_material_candidates,
-                    )
+                    from evolution.mutation_helpers import flush_growth_mg_material_candidates
 
                     record_cap = max(
                         1,
-                        int(
-                            os.environ.get(
-                                "EE_GROWTH_MG_MATERIAL_RECORD_CAP", "4"
-                            )
-                        ),
+                        int(os.environ.get("EE_GROWTH_MG_MATERIAL_RECORD_CAP", "4")),
                     )
-                    inject_gen_now = int(
-                        getattr(self, "_scan_floor_inject_generation", -1)
-                    )
+                    inject_gen_now = int(getattr(self, "_scan_floor_inject_generation", -1))
                     if int(getattr(self, "current_generation", 0)) == inject_gen_now:
                         record_cap = max(
                             record_cap,
@@ -7746,8 +6392,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return ri
 
-
-
     def _replace_with_model_guided(
         self,
         challengers: list[list[int]],
@@ -7758,7 +6402,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         exclude_indices: set[int] | None = None,
         growth_anchor_rank_offset: int = 0,
     ) -> list[int]:
-
         """Replace a fraction of challengers with model-guided completions."""
 
         replaced_indices = []
@@ -7798,8 +6441,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             try:
 
                 from prefix_generator import PrefixGenerator
-
-
 
                 ckpt = self._seed_model_path or ""
 
@@ -7879,10 +6520,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         filter_scan_floor_growth_programs_by_max_words,
                         scan_floor_stalled_challenger_max_words,
                     )
-                    from evolution.terminal_stagnation import (
-                        L30_COMPACT_MAX_WORDS,
-                        _scan_floor_probe_stall_mode,
-                    )
+                    from evolution.terminal_stagnation import L30_COMPACT_MAX_WORDS, _scan_floor_probe_stall_mode
 
                     cycle_no = int(getattr(self, "_cycle_number", 0))
                     gen_idx = int(getattr(self, "current_generation", 0))
@@ -7962,9 +6600,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                         stalled=True,
                     )
             if growth_mode and prefix_counts and growth_anchor_hex:
-                from evolution.mutation_helpers import (
-                    expand_growth_anchor_prefix_counts_stalled,
-                )
+                from evolution.mutation_helpers import expand_growth_anchor_prefix_counts_stalled
                 from evolution.terminal_stagnation import _scan_floor_probe_stall_mode
 
                 if _scan_floor_probe_stall_mode(len(self.champion or [])):
@@ -7972,11 +6608,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                     anchor_words = [int(h, 16) for h in growth_anchor_hex]
                     cycle_no = int(getattr(self, "_cycle_number", 0))
                     gen_idx = int(getattr(self, "current_generation", 0))
-                    prefix_max = int(
-                        os.environ.get(
-                            "EE_SCAN_FLOOR_GROWTH_PREFIX_COUNTS_STALLED", "3"
-                        )
-                    )
+                    prefix_max = int(os.environ.get("EE_SCAN_FLOOR_GROWTH_PREFIX_COUNTS_STALLED", "3"))
                     if gen_idx == inject_gen:
                         prefix_max = max(
                             prefix_max,
@@ -7999,9 +6631,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
                 growth_prefix_count = int(prefix_counts[0])
             model_temp = min(float(model_temp), 0.85)
         else:
-            prefix_source, source_name = self._get_model_guided_prefix(
-                champion_hex, ref_prefix_hex
-            )
+            prefix_source, source_name = self._get_model_guided_prefix(champion_hex, ref_prefix_hex)
             if champion_level >= 8:
                 prefix_counts = [12] if stalled >= 50 else [8] if stalled >= 20 else [6]
             else:
@@ -8030,17 +6660,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             )
         elif scan_floor_slot:
             mode = "growth" if growth_mode else "gate"
-            self._log(
-                f"[ModelGuided] scan-floor {mode} slot: 0/{num_replace} qualified "
-                f"(prefix: {source_name})"
-            )
+            self._log(f"[ModelGuided] scan-floor {mode} slot: 0/{num_replace} qualified " f"(prefix: {source_name})")
 
         return replaced_indices
 
-
-
     def _analyze_trace(self) -> TraceAnalysis | None:
-
         """Analyze the current champion trace against expected output."""
 
         if self.champion_trace is None or self.task_instance is None:
@@ -8053,18 +6677,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return TraceAnalyzer.analyze([self.champion_trace], expected, inputs, budget=self.config.eval_budget)
 
-
-
     # ------------------------------------------------------------------
 
     # Curriculum
 
     # ------------------------------------------------------------------
 
-
-
     def _curriculum_verify_threshold(self) -> float:
-
         """Minimum partial-verify score to advance curriculum at champion_level."""
 
         return _curriculum_verify_threshold_fn(
@@ -8072,8 +6691,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             self.generations_stalled,
             self.config.curriculum_stall_threshold,
         )
-
-
 
     def _curriculum_fitness_gate_passes(self) -> bool:
 
@@ -8084,16 +6701,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             self.config.curriculum_stall_threshold,
         )
 
-
-
     def _curriculum_verify_passes(self, verify_score: float) -> bool:
 
         return verify_score >= self._curriculum_verify_threshold()
 
-
-
     def _curriculum_advance_preconditions_met(self) -> bool:
-
         """Return True when stall threshold and level caps allow curriculum check."""
 
         if not self.config.auto_curriculum:
@@ -8116,10 +6728,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return self.generations_stalled >= self.config.curriculum_stall_threshold
 
-
-
     def _try_curriculum_advance(self) -> bool:
-
         """Check curriculum advancement conditions.
 
 
@@ -8151,15 +6760,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         if not self._curriculum_verify_passes(verify_score):
 
             self._log(
-
                 f"[Curriculum] BLOCKED (R50): stalled={self.generations_stalled} "
-
                 f">= {self.config.curriculum_stall_threshold}, "
-
                 f"raw_score={self._champion_raw_task_score:.1f}, "
-
                 f"verify={verify_score:.2f} < {threshold:.3f}"
-
             )
 
             return False
@@ -8167,15 +6771,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
         if self._curriculum_fitness_gate_passes():
 
             self._log(
-
                 f"[Curriculum] Advancing: stalled={self.generations_stalled}, "
-
                 f"raw_score={self._champion_raw_task_score:.1f}, "
-
                 f"verify={verify_score:.2f}, "
-
                 f"level={self.champion_level}->{self.champion_level + 1}"
-
             )
 
             self._advance_curriculum()
@@ -8183,21 +6782,14 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             return True
 
         self._log(
-
             f"[Curriculum] BLOCKED: stalled={self.generations_stalled} "
-
             f">= {self.config.curriculum_stall_threshold}, but "
-
             f"raw_score={self._champion_raw_task_score:.1f} below fitness gate"
-
         )
 
         return False
 
-
-
     def _try_forced_curriculum_escape(self) -> bool:
-
         """Deep-stall escape: advance when verify meets progressive floor."""
 
         if not self._curriculum_advance_preconditions_met():
@@ -8231,23 +6823,16 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             return False
 
         self._log(
-
             f"[AntiPlateau] Forced curriculum escape at stall={stall}: "
-
             f"verify={verify_score:.2f} >= floor={floor:.3f}, "
-
             f"L{self.champion_level}->L{self.champion_level + 1}"
-
         )
 
         self._advance_curriculum()
 
         return True
 
-
-
     def _anti_plateau_escalation(self) -> None:
-
         """Progressive responses so fitness/curriculum cannot flatline indefinitely."""
 
         stall = self.generations_stalled
@@ -8270,10 +6855,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             self._log(f"[AntiPlateau] QD champion reset at stall={stall}")
 
-
-
     def _verify_champion(self) -> tuple[bool, float]:
-
         """R50: Run verify() on the current champion against the current level.
 
         Re-evaluates the champion on the current task instance so the trace
@@ -8310,11 +6892,8 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             level_cls = get_task_level(self.champion_level)
 
             output = {
-
                 "registers": fresh_trace.get("final_regs", {}),
-
                 "memory": fresh_trace.get("final_memory", {}),
-
             }
 
             score = level_cls(seed=self.champion_level).verify(output, self.task_instance)
@@ -8333,10 +6912,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             return False, 0.0
 
-
-
     def _find_next_enabled_level(self, old_level: int) -> int | None:
-
         """Return the next enabled curriculum level, skipping circuit-breaker disabled levels."""
 
         new_level = old_level + 1
@@ -8357,10 +6933,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         return new_level
 
-
-
     def _reset_curriculum_advance_state(self, old_level: int) -> None:
-
         """Reset stall counters, archive tracking, and strategy state after level advance."""
 
         self.generations_stalled = 0
@@ -8388,17 +6961,11 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             decayed = self.strategy_archive.decay_level_records(old_level, factor=0.5)
 
             self._log(
-
                 f"[D3] Archive decay: {decayed} success records decayed at L{old_level} "
-
                 f"(total records: {n_records})"
-
             )
 
-
-
     def _reseed_champion_for_new_level(self, old_level: int) -> None:
-
         """Save old-level champion and bootstrap a fresh champion for the new level."""
 
         self._save_champion(old_level)
@@ -8421,10 +6988,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             self.champion_fitness = self._compute_fitness(self.champion, self.champion_trace)
 
-
-
     def _advance_curriculum(self) -> None:
-
         """Advance to the next curriculum level.
 
 
@@ -8451,10 +7015,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         self._log(f"Curriculum advanced: L{old_level} -> L{self.champion_level}")
 
-
-
     def _record_level_circuit_outcome(self, level: int, had_success: bool) -> None:
-
         """Record a cycle outcome for the given level."""
 
         if not self.config.level_circuit_breaker_enabled:
@@ -8463,10 +7024,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
         _record_level_circuit_outcome_fn(self._level_circuit_stats, level, had_success)
 
-
-
     def _check_level_circuit_breaker(self, level: int) -> bool:
-
         """Check if a level should be disabled by the circuit breaker."""
 
         if not self.config.level_circuit_breaker_enabled:
@@ -8474,54 +7032,33 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             return False
 
         return _check_level_circuit_breaker_fn(
-
             self._level_circuit_stats,
-
             self._disabled_levels,
-
             level,
-
             self.config.level_circuit_breaker_threshold,
-
             self.config.level_circuit_breaker_enabled,
-
             self._log,
-
         )
 
-
-
     def _is_level_disabled(self, level: int) -> bool:
-
         """Check if a level has been auto-disabled by the circuit breaker."""
 
         return _is_level_disabled_fn(self._disabled_levels, level)
 
-
-
     def _record_cycle_level_outcome(self) -> None:
-
         """Record the current cycle's outcome for the circuit breaker."""
 
         _record_cycle_level_outcome_fn(self)
 
-
-
     def get_disabled_levels(self) -> frozenset[int]:
-
         """Return the set of levels disabled by the circuit breaker."""
 
         return frozenset(self._disabled_levels)
 
-
-
     def get_level_circuit_stats(self) -> dict[int, dict]:
-
         """Return per-level circuit breaker statistics."""
 
         return {k: dict(v) for k, v in self._level_circuit_stats.items()}
-
-
 
     # ------------------------------------------------------------------
 
@@ -8529,10 +7066,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
     # ------------------------------------------------------------------
 
-
-
     def _save_champion(self, level: int | None = None) -> None:
-
         """Save the current champion to disk."""
 
         if self.champion is None:
@@ -8549,10 +7083,7 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             self._log(f"Champion L{lvl} saved ({len(self.champion)} words)")
 
-
-
     def _checkpoint(self) -> None:
-
         """Save a full checkpoint of the evolution state.
 
 
@@ -8579,8 +7110,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             return
 
-
-
         cp_dir = self._cached_checkpoint_dir
 
         if cp_dir is None:
@@ -8595,13 +7124,9 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             self._cached_checkpoint_dir = cp_dir
 
-
-
         # Save champion
 
         self._save_champion()
-
-
 
         # Save strategy archive -- use stable filename (overwrites previous)
 
@@ -8615,22 +7140,14 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             self.strategy_archive.save(sa_path)
 
-
-
         # Save metadata -- use stable filename (overwrites previous)
 
         meta = {
-
             "generation": self.current_generation,
-
             "level": self.champion_level,
-
             "fitness": self.champion_fitness,
-
             "program_words": len(self.champion) if self.champion else 0,
-
             "generations_stalled": self.generations_stalled,
-
         }
 
         meta_path = os.path.join(cp_dir, "meta.json")
@@ -8639,18 +7156,13 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             json.dump(meta, f, indent=2)
 
-
-
     # ------------------------------------------------------------------
 
     # Logging
 
     # ------------------------------------------------------------------
 
-
-
     def load_champion(self, level: int, path: str | None = None) -> bool:
-
         """Load a champion program from disk.
 
 
@@ -8677,8 +7189,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 
             return False
 
-
-
         try:
 
             self.champion = self.champion_anchor.load(path)
@@ -8696,9 +7206,6 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
             return False
 
 
-
-
-
 # ----------------------------------------------------------------------
 
 # Main entrypoint
@@ -8706,16 +7213,10 @@ class EvolutionEngine(SelectionMixin, QDArchiveMixin, RecurrentMixin, Diagnostic
 # ----------------------------------------------------------------------
 
 
-
-
-
 def main() -> None:
-
     """Command-line entry point for the evolution engine."""
 
     import argparse
-
-
 
     parser = argparse.ArgumentParser(description="RV32I Evolution Engine -- Champion/Challenger Evolution")
 
@@ -8735,39 +7236,22 @@ def main() -> None:
 
     parser.add_argument("--no-auto-curriculum", action="store_true", help="Disable automatic curriculum advancement")
 
-
-
     args = parser.parse_args()
 
-
-
     config = EvolutionConfig(
-
         population_size=args.population,
-
         max_generations=args.generations,
-
         curriculum_level=args.level,
-
         seed=args.seed,
-
         champion_dir=args.champion_dir,
-
         log_dir=args.log_dir,
-
         checkpoint_interval=args.checkpoint_interval,
-
         auto_curriculum=not args.no_auto_curriculum,
-
     )
-
-
 
     engine = EvolutionEngine(config=config)
 
     summary = engine.run()
-
-
 
     _logger.info("=" * 60)
 
@@ -8778,9 +7262,6 @@ def main() -> None:
     for k, v in summary.items():
 
         _logger.info(f"  {k}: {v}")
-
-
-
 
 
 if __name__ == "__main__":

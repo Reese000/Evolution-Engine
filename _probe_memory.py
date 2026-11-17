@@ -1,4 +1,5 @@
 """Report physical memory pressure (read-only)."""
+
 from __future__ import annotations
 
 import ctypes

@@ -2078,8 +2078,7 @@ def test_ranked_compression_skips_rebuild_between_rescans(tmp_path, monkeypatch)
     # load) and fault injection reproduces it exactly, but causation for that
     # particular run is not proven. _patch_progress_state now retries its write.
     assert terminal_efficiency_at_scan_floor(48), (
-        "scan-floor record did not persist to "
-        f"{agents / 'progress_controller_state.json'}"
+        "scan-floor record did not persist to " f"{agents / 'progress_controller_state.json'}"
     )
     calls = {"n": 0}
 

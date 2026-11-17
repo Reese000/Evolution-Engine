@@ -22,10 +22,7 @@ def test_deserialize_clamps_oversized_sidecar(monkeypatch):
     monkeypatch.delenv("EE_STRATEGY_ARCHIVE_MAX_RECORDS", raising=False)
     blob = {
         "max_records": 10000,
-        "records": [
-            {"strategy": "RANDOM", "level": 30, "success": True, "gen": i}
-            for i in range(5000)
-        ],
+        "records": [{"strategy": "RANDOM", "level": 30, "success": True, "gen": i} for i in range(5000)],
     }
     restored = StrategyArchive.deserialize(blob)
     assert restored.max_records == 3200

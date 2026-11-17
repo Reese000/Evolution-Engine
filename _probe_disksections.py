@@ -1,4 +1,5 @@
 """Report section names / sizes of the VM score disk cache (read-only)."""
+
 from __future__ import annotations
 
 import json

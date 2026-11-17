@@ -14,6 +14,7 @@ in the program can beat the champion either. This run closes that gap:
 Read-only: no fitness/gate modification, no seeds-file write unless a
 gate-qualified variant reaches the task bar.
 """
+
 import itertools
 import json
 import os
@@ -24,12 +25,9 @@ os.environ.setdefault("EE_USE_GPU", "0")
 from evolution import fitness_helpers as fh
 from evolution import terminal_stagnation as ts
 from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
-from evolution.terminal_stagnation import (
-    _SCAN_FLOOR_WIDE_IMM_DELTAS,
-    get_scan_floor_gate,
-    scan_floor_min_raw_gain,
-)
-from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+from evolution.terminal_stagnation import _SCAN_FLOOR_WIDE_IMM_DELTAS, get_scan_floor_gate, scan_floor_min_raw_gain
+from milestone1.rv32i_mask import decode as rv32i_decode
+from milestone1.rv32i_mask import encode as rv32i_encode
 from mutation_proposer import _is_ebreak
 
 TASK_BAR = 325.836
@@ -50,8 +48,11 @@ def apply_delta_one(prog, idx, delta):
         if "imm" not in d:
             return None
         w = rv32i_encode(
-            name=str(d["name"]), rd=int(d.get("rd", 0)), rs1=int(d.get("rs1", 0)),
-            rs2=int(d.get("rs2", 0)), imm=int(d.get("imm", 0)) + int(delta),
+            name=str(d["name"]),
+            rd=int(d.get("rd", 0)),
+            rs1=int(d.get("rs1", 0)),
+            rs2=int(d.get("rs2", 0)),
+            imm=int(d.get("imm", 0)) + int(delta),
             validate=True,
         )
     except (ValueError, TypeError, KeyError):
@@ -63,7 +64,7 @@ def apply_delta_one(prog, idx, delta):
 
 # ---- one real evaluation per unique program --------------------------------
 fh._PROMOTION_RAW_CACHE.clear()
-ts._VM_SCORE_DISK_MEM = {}       # in-process only; flush unreachable here
+ts._VM_SCORE_DISK_MEM = {}  # in-process only; flush unreachable here
 ts._VM_SCORE_DISK_LOADED = True
 
 rows = open("multi_cycle_results.jsonl", encoding="utf-8").readlines()
@@ -77,8 +78,7 @@ gate = get_scan_floor_gate(champ)
 champ_t = tuple(champ)
 champ_pr = float(compact_l30_promotion_raw_fitness(champ))
 bar = champ_pr + scan_floor_min_raw_gain(len(champ))
-diff_loci = sorted({j for s in payload["seeds"] for j in range(len(champ))
-                    if int(s[j]) != champ[j]})
+diff_loci = sorted({j for s in payload["seeds"] for j in range(len(champ)) if int(s[j]) != champ[j]})
 
 log(f"cycle={row.get('cycle')} words={len(champ)} anchor_match=True")
 log(f"champion FRESH prom={champ_pr:.10f} BAR={bar:.6f} task_bar={TASK_BAR}")
@@ -96,8 +96,7 @@ for i in range(len(champ)):
         name = str(rv32i_decode(champ[i], validate=False).get("name", "?"))
     except (ValueError, TypeError, KeyError, AttributeError):
         name = "?"
-    if any((nv := apply_delta_one(champ, i, dl)) is not None and nv != champ
-           for dl in WIDE):
+    if any((nv := apply_delta_one(champ, i, dl)) is not None and nv != champ for dl in WIDE):
         effectual.append(i)
     else:
         non_effectual.append((i, name))
@@ -135,8 +134,13 @@ for sz in range(1, MAX_SUBSET + 1):
             seen.add(key)
             pr = float(compact_l30_promotion_raw_fitness(list(key)))
             new += 1
-            rowr = {"prom": pr, "subset_size": sz, "loci": list(combo),
-                    "deltas": list(deltas), "program": [int(x) for x in key]}
+            rowr = {
+                "prom": pr,
+                "subset_size": sz,
+                "loci": list(combo),
+                "deltas": list(deltas),
+                "program": [int(x) for x in key],
+            }
             all_rows.append(rowr)
             if pr > best + 1e-9:
                 best = pr
@@ -169,12 +173,13 @@ for r in top:
         if max_gate_prom is None or r["prom"] > max_gate_prom:
             max_gate_prom = r["prom"]
             max_gate_row = r
-log(f"gate-checked {len(top)} in {time.time() - t_g:.1f}s; "
-    f"gate-qualified={gate_true}")
+log(f"gate-checked {len(top)} in {time.time() - t_g:.1f}s; " f"gate-qualified={gate_true}")
 if max_gate_row is not None:
-    log(f"MAX gate-qualified prom = {max_gate_prom:.10f} "
+    log(
+        f"MAX gate-qualified prom = {max_gate_prom:.10f} "
         f"(loci={max_gate_row['loci']} deltas={max_gate_row['deltas']} "
-        f"size={max_gate_row['subset_size']})")
+        f"size={max_gate_row['subset_size']})"
+    )
     log(f"max gate-qualified vs champion = {max_gate_prom - champ_pr:+.6f}")
     log(f"max gate-qualified vs task bar = {TASK_BAR - max_gate_prom:.6f} short")
 else:
@@ -214,11 +219,9 @@ evidence = {
     "gate_top_n": len(top),
     "gate_qualified_in_top": gate_true,
     "max_gate_qualified_prom": max_gate_prom,
-    "max_gate_qualified_gap": (None if max_gate_prom is None
-                               else TASK_BAR - max_gate_prom),
+    "max_gate_qualified_gap": (None if max_gate_prom is None else TASK_BAR - max_gate_prom),
     "gate_qualified_hits": len(gate_hits),
-    "top10": [{k: r[k] for k in ("prom", "subset_size", "loci", "deltas", "gate")}
-              for r in top[:10]],
+    "top10": [{k: r[k] for k in ("prom", "subset_size", "loci", "deltas", "gate")} for r in top[:10]],
     "disk_cache_disabled": True,
     "runtime_s": time.time() - t0,
 }
@@ -231,8 +234,7 @@ if gate_hits:
 
     gate_hits.sort(key=lambda h: h["prom"], reverse=True)
     log("RECORDING breakthrough ...")
-    record_scan_floor_eq_refine_seeds(champ, [list(gate_hits[0]["program"])],
-                                      cycle=int(row.get("cycle") or 0))
+    record_scan_floor_eq_refine_seeds(champ, [list(gate_hits[0]["program"])], cycle=int(row.get("cycle") or 0))
     log("recorded.")
 else:
     log("EXHAUSTED program-wide too: no gate-qualified variant >= task bar.")

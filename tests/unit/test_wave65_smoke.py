@@ -75,8 +75,14 @@ class TestEngineHealth:
         assert isinstance(diag, dict)
         assert len(diag) > 0
         # Core diagnostic keys that must be present
-        for key in ("champion_level", "champion_fitness", "generations_stalled",
-                     "current_generation", "mutation_rate", "population_size"):
+        for key in (
+            "champion_level",
+            "champion_fitness",
+            "generations_stalled",
+            "current_generation",
+            "mutation_rate",
+            "population_size",
+        ):
             assert key in diag, f"Missing diagnostic key: {key}"
 
     def test_get_performance_metrics_returns_dict(self, engine: EvolutionEngine):
@@ -84,8 +90,7 @@ class TestEngineHealth:
         metrics = engine.get_performance_metrics()
         assert isinstance(metrics, dict)
         assert len(metrics) > 0
-        for key in ("current_generation", "population_size", "eval_budget",
-                     "mutation_rate"):
+        for key in ("current_generation", "population_size", "eval_budget", "mutation_rate"):
             assert key in metrics, f"Missing metrics key: {key}"
 
 

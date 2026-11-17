@@ -1,4 +1,5 @@
 """Per-generation T= timing from cycle_<n>/logs/evolution.log for recent cycles."""
+
 from __future__ import annotations
 
 import glob
@@ -40,6 +41,4 @@ for n in sorted(want):
         continue
     top = sorted(enumerate(ts), key=lambda kv: -kv[1])[:4]
     tops = ", ".join(f"gen{g}={v:.1f}" for g, v in top)
-    print(
-        f"cycle {n}: gens={len(ts)} sum_T={total:8.1f}s  top: {tops}"
-    )
+    print(f"cycle {n}: gens={len(ts)} sum_T={total:8.1f}s  top: {tops}")

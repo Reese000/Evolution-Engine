@@ -87,7 +87,6 @@ class TestEpiMomentumGovernor(unittest.TestCase):
             tick = json.loads(open(os.path.join(agents, "tick_state.json"), encoding="utf-8").read())
             self.assertTrue(tick.get("force_champion_reseed"))
 
-
     def test_plateau_boost_on_negative_streak_without_reseed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agents = os.path.join(tmp, ".agents")
@@ -108,7 +107,6 @@ class TestEpiMomentumGovernor(unittest.TestCase):
             self.assertTrue(tick.get("force_register_repair"))
             self.assertNotIn("force_champion_reseed", tick)
 
-
     def test_plateau_escalation_reseed_on_long_streak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agents = os.path.join(tmp, ".agents")
@@ -117,9 +115,7 @@ class TestEpiMomentumGovernor(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 for i in range(1000):
                     mom = 0.0 if i < 900 else (0.8 if i < 990 else -0.5)
-                    f.write(
-                        json.dumps({"cycle": i, "epi_momentum": mom, "level": 19}) + "\n"
-                    )
+                    f.write(json.dumps({"cycle": i, "epi_momentum": mom, "level": 19}) + "\n")
             report = assess_epi_momentum(tmp, window=1000, target_avg=0.5)
             boost = assess_plateau_boost(tmp, report)
             self.assertTrue(boost.needs_boost)

@@ -9,6 +9,7 @@ Complements:
   - Phase 3 (_probe_imm_combo_sweep.py): dual/triple combos, all bases
 This run is the airtight version for the champion, where the gap is only 0.0103.
 """
+
 import itertools
 import json
 import os
@@ -19,12 +20,9 @@ os.environ.setdefault("EE_USE_GPU", "0")
 from evolution import fitness_helpers as fh
 from evolution import terminal_stagnation as ts
 from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
-from evolution.terminal_stagnation import (
-    _SCAN_FLOOR_WIDE_IMM_DELTAS,
-    get_scan_floor_gate,
-    scan_floor_min_raw_gain,
-)
-from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+from evolution.terminal_stagnation import _SCAN_FLOOR_WIDE_IMM_DELTAS, get_scan_floor_gate, scan_floor_min_raw_gain
+from milestone1.rv32i_mask import decode as rv32i_decode
+from milestone1.rv32i_mask import encode as rv32i_encode
 from mutation_proposer import _is_ebreak
 
 TASK_BAR = 325.836
@@ -43,8 +41,11 @@ def apply_delta_one(prog, idx, delta):
         if "imm" not in d:
             return None
         w = rv32i_encode(
-            name=str(d["name"]), rd=int(d.get("rd", 0)), rs1=int(d.get("rs1", 0)),
-            rs2=int(d.get("rs2", 0)), imm=int(d.get("imm", 0)) + int(delta),
+            name=str(d["name"]),
+            rd=int(d.get("rd", 0)),
+            rs1=int(d.get("rs1", 0)),
+            rs2=int(d.get("rs2", 0)),
+            imm=int(d.get("imm", 0)) + int(delta),
             validate=True,
         )
     except (ValueError, TypeError, KeyError):
@@ -56,7 +57,7 @@ def apply_delta_one(prog, idx, delta):
 
 # ---- force REAL evals: keep in-process memo, drop the persistent disk cache --
 fh._PROMOTION_RAW_CACHE.clear()
-ts._VM_SCORE_DISK_MEM = {}      # no disk lookups => no stale daemon-cached values
+ts._VM_SCORE_DISK_MEM = {}  # no disk lookups => no stale daemon-cached values
 ts._VM_SCORE_DISK_LOADED = True
 
 rows = open("multi_cycle_results.jsonl", encoding="utf-8").readlines()
@@ -78,10 +79,7 @@ for i in loci:
     if _is_ebreak(champ[i]):
         log(f"  locus {i}: EBREAK - skipped")
         continue
-    mutable = any(
-        (nv := apply_delta_one(champ, i, dl)) is not None and tuple(nv) != champ_t
-        for dl in WIDE
-    )
+    mutable = any((nv := apply_delta_one(champ, i, dl)) is not None and tuple(nv) != champ_t for dl in WIDE)
     if mutable:
         effectual.append(i)
     else:
@@ -131,12 +129,10 @@ for sz in range(1, len(effectual) + 1):
                 best_desc = f"size{sz} loci={list(combo)} deltas={list(deltas)}"
                 log(f"  ** NEW BEST {pr:.6f} {best_desc}")
             if pr >= TASK_BAR:
-                hits.append({"prom": pr, "loci": list(combo), "deltas": list(deltas),
-                             "program": [int(x) for x in key]})
+                hits.append({"prom": pr, "loci": list(combo), "deltas": list(deltas), "program": [int(x) for x in key]})
                 log(f"  !! >= task_bar {pr:.6f} {list(combo)} {list(deltas)}")
     sizes_run.append({"size": sz, "planned": n_planned, "distinct_tested": tested})
-    log(f"  size {sz} done: distinct={tested} in {time.time() - t_size:.1f}s "
-        f"best={best:.6f}")
+    log(f"  size {sz} done: distinct={tested} in {time.time() - t_size:.1f}s " f"best={best:.6f}")
 
 log("=" * 72)
 log(f"TOTAL distinct real evals = {total}")
@@ -188,8 +184,7 @@ if gate_hits:
     from evolution.mutation_helpers import record_scan_floor_eq_refine_seeds
 
     log("RECORDING breakthrough ...")
-    record_scan_floor_eq_refine_seeds(champ, [list(gate_hits[0]["program"])],
-                                      cycle=int(row.get("cycle") or 0))
+    record_scan_floor_eq_refine_seeds(champ, [list(gate_hits[0]["program"])], cycle=int(row.get("cycle") or 0))
     log("recorded.")
 else:
     log("EXHAUSTED: no gate-qualified variant >= task bar in the full imm space.")

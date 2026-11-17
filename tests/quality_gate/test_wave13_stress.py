@@ -182,7 +182,16 @@ class TestMetaControllerStress:
 class TestStrategyArchiveStress:
     """Stress-test StrategyArchive with 1000 outcomes across 10 levels."""
 
-    STRATEGIES: ClassVar[list[str]] = ["RANDOM", "TASK_AWARE", "PERTURBATION", "CROSSOVER", "ELITIST", "DIVERSITY", "NOVELTY", "ADAPTIVE"]
+    STRATEGIES: ClassVar[list[str]] = [
+        "RANDOM",
+        "TASK_AWARE",
+        "PERTURBATION",
+        "CROSSOVER",
+        "ELITIST",
+        "DIVERSITY",
+        "NOVELTY",
+        "ADAPTIVE",
+    ]
 
     def _populate(self, n_records=1000, n_levels=10):
         """Create a fully populated archive."""

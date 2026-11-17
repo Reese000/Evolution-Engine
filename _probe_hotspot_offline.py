@@ -4,6 +4,7 @@ Runs in a fresh process (cold caches, like generation 0 of a cycle).
 Read-only with respect to project state (only reads the results JSONL for the
 champion).  Usage: python _probe_hotspot_offline.py
 """
+
 from __future__ import annotations
 
 import json
@@ -41,7 +42,7 @@ def load_champion() -> list[int]:
 
 
 def measure(label: str, fn) -> None:
-    c0, = [vm_eval_totals()[1]]
+    (c0,) = [vm_eval_totals()[1]]
     s0 = vm_eval_totals()[0]
     t0 = time.perf_counter()
     try:
@@ -82,9 +83,7 @@ def main() -> None:
     measure("scan_floor_compression_hot", lambda: scan_floor_compression_hot(list(champ), rng))
     measure(
         "terminal_wide_imm_sweep_probe_variants(max_evals=96)",
-        lambda: terminal_wide_imm_sweep_probe_variants(
-            list(champ), max_evals=96, start_offset=0, gate=gate
-        ),
+        lambda: terminal_wide_imm_sweep_probe_variants(list(champ), max_evals=96, start_offset=0, gate=gate),
     )
     measure(
         "terminal_wide_imm_perturb_probe_variants",
@@ -113,9 +112,7 @@ def main() -> None:
 
     measure(
         "select_terminal_probes_for_batch(no parents)",
-        lambda: select_terminal_probes_for_batch(
-            list(champ), 30, rng, 12, pop_size=50
-        ),
+        lambda: select_terminal_probes_for_batch(list(champ), 30, rng, 12, pop_size=50),
     )
 
     from evolution_engine import EvolutionEngine  # noqa: F401  (import cost only)

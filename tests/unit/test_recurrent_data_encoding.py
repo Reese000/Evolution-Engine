@@ -176,9 +176,7 @@ def _point_recurrent_paths(tmp_path: Path, monkeypatch, recurrent_path: str):
     return rmc
 
 
-def test_dedup_load_reads_the_non_ascii_row_written_by_write_recurrent_entries(
-    tmp_path, monkeypatch
-):
+def test_dedup_load_reads_the_non_ascii_row_written_by_write_recurrent_entries(tmp_path, monkeypatch):
     """Round trip: _write_recurrent_entries -> merge_archive_to_recurrent's dedup load.
 
     The seed row carries a real multi-byte ``trace_status`` and the merge must
@@ -193,9 +191,7 @@ def test_dedup_load_reads_the_non_ascii_row_written_by_write_recurrent_entries(
     os.makedirs(tmp_path / "champions", exist_ok=True)
     archive_path = str(tmp_path / "champions" / "archive.jsonl")
     archive = ChampionArchive(path=archive_path, max_size=100)
-    assert archive.add(
-        [0x100073, 0x100074], level=13, fitness=200.0, cycle=1, trace_status=NON_ASCII_VALUE
-    )
+    assert archive.add([0x100073, 0x100074], level=13, fitness=200.0, cycle=1, trace_status=NON_ASCII_VALUE)
     archive.save()
 
     recurrent_dir = tmp_path / "recurrent_data"
@@ -285,9 +281,7 @@ def test_a_torn_or_corrupt_line_does_not_escape_the_dedup_load(tmp_path, monkeyp
     recurrent_path = recurrent_dir / "recurrent_data.jsonl"
 
     # a valid row, then a line no UTF-8 decoder accepts (0xff is never valid)
-    recurrent_path.write_bytes(
-        b'{"champion_sha256": "seed", "trace_status": "x"}\n{"torn": \xff\xfe\n'
-    )
+    recurrent_path.write_bytes(b'{"champion_sha256": "seed", "trace_status": "x"}\n{"torn": \xff\xfe\n')
 
     rmc = _point_recurrent_paths(tmp_path, monkeypatch, str(recurrent_path))
 
@@ -330,8 +324,7 @@ def test_run_multi_cycle_pins_utf8_on_every_recurrent_data_open():
     for lineno, line in enumerate(src.splitlines(), 1):
         if "open(" in line and "recurrent_data" in line:
             assert "encoding=" in line, (
-                f"run_multi_cycle.py:{lineno} opens recurrent_data.jsonl on the "
-                f"platform default: {line.strip()}"
+                f"run_multi_cycle.py:{lineno} opens recurrent_data.jsonl on the " f"platform default: {line.strip()}"
             )
 
     # both pure-read paths tolerate torn bytes, not just one of them

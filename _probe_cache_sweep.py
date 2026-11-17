@@ -4,6 +4,7 @@ EE_PROBE_CACHE=1024 reproduces production behaviour; a large value shows the
 memoization head-room.  Each build uses a different rng seed (stand-in for a
 different cycle).
 """
+
 from __future__ import annotations
 
 import functools
@@ -68,24 +69,22 @@ def main() -> None:
     champ = load_champion()
     print(f"champion words={len(champ)} cache_size={SIZE} builds={N}", flush=True)
     set_cache_size()
-    from evolution.terminal_stagnation import select_terminal_probes_for_batch
     from evolution.mutation_helpers import collect_scan_floor_growth_crossover_fills
+    from evolution.terminal_stagnation import select_terminal_probes_for_batch
 
     for i in range(N):
         seed = 7596 + i
         measure(
             f"probe_pool build #{i + 1} (seed {seed})",
-            lambda s=seed: select_terminal_probes_for_batch(
-                list(champ), 30, random.Random(s), 12, pop_size=50
-            ),
+            lambda s=seed: select_terminal_probes_for_batch(list(champ), 30, random.Random(s), 12, pop_size=50),
         )
         measure(
             f"growth fills #{i + 1} (cycle {7596 + i})",
-            lambda c=7596 + i: collect_scan_floor_growth_crossover_fills(
-                list(champ), cycle_no=c
-            )
-            if "cycle_no" in collect_scan_floor_growth_crossover_fills.__code__.co_varnames
-            else collect_scan_floor_growth_crossover_fills(list(champ)),
+            lambda c=7596 + i: (
+                collect_scan_floor_growth_crossover_fills(list(champ), cycle_no=c)
+                if "cycle_no" in collect_scan_floor_growth_crossover_fills.__code__.co_varnames
+                else collect_scan_floor_growth_crossover_fills(list(champ))
+            ),
         )
     print("done", flush=True)
 

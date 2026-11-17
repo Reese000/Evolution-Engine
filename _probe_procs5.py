@@ -1,4 +1,5 @@
 """Read-only: list processes whose CommandLine matches patterns (no killing)."""
+
 from __future__ import annotations
 
 import json
@@ -11,8 +12,7 @@ PAT = sys.argv[1] if len(sys.argv) > 1 else "multi_cycle|meta_controller|evoluti
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 out = subprocess.run(
-    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-     os.path.join(HERE, "_probe_procs5.ps1")],
+    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", os.path.join(HERE, "_probe_procs5.ps1")],
     capture_output=True,
     text=True,
     timeout=180,
@@ -34,7 +34,6 @@ except json.JSONDecodeError:
 
 if isinstance(rows, dict):
     rows = [rows]
-import re
 
 rx = re.compile(PAT, re.I)
 for r in rows:

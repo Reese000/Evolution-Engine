@@ -1,6 +1,6 @@
 """Shared constants for evolution engine mixins."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 _EMPTY_TUPLE: tuple = ()
 _EBREAK_INST: int = 0x00100073

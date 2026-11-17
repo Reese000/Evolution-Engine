@@ -54,6 +54,7 @@ def terminal_incremental_repair_active(level: int | None = None) -> bool:
         return False
     return True
 
+
 # Incremental instruction counts per level in reference solutions (L17+ tails)
 _LEVEL_TAIL_COUNTS: dict[int, int] = {
     17: 12,
@@ -658,7 +659,7 @@ def reference_passes_nudge_gate(level: int, min_verify: float = 0.72) -> bool:
     if not words:
         return False
     try:
-        from evolution_engine import EvolutionEngine, EvolutionConfig
+        from evolution_engine import EvolutionConfig, EvolutionEngine
 
         cfg = EvolutionConfig(curriculum_level=int(level), max_generations=1)
         eng = EvolutionEngine(cfg)

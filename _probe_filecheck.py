@@ -1,4 +1,5 @@
 """Check line endings + syntax of a source file (read-only)."""
+
 from __future__ import annotations
 
 import py_compile
@@ -22,4 +23,4 @@ for p in paths:
 src = open(paths[0], encoding="utf-8", errors="replace").read()
 idx = src.find("for _ in range(pop_size):")
 if idx != -1:
-    print("region repr:", repr(src[idx:idx + 180]))
+    print("region repr:", repr(src[idx : idx + 180]))

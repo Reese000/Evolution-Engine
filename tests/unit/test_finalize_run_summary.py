@@ -1,4 +1,5 @@
 """Regression: _finalize_run_summary must not reference undefined effective_verify."""
+
 import os
 from unittest.mock import MagicMock
 

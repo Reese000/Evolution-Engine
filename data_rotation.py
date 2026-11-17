@@ -259,6 +259,7 @@ def quality_aware_rotate_checkpoints(keep_n: int = 5, fitness_scores: dict[str, 
 def _rotate_current_file(data_file: Path, result: dict) -> bool:
     """Rotate the current recurrent data file to a timestamped backup."""
     import shutil
+
     timestamp = datetime.now(timezone.utc).strftime(_TIMESTAMP_FMT)
     backup_name = f"recurrent_data.jsonl.{timestamp}"
     backup_path = data_file.parent / backup_name
@@ -267,12 +268,12 @@ def _rotate_current_file(data_file: Path, result: dict) -> bool:
         shutil.move(str(data_file), str(backup_path))
         result["rotated"] = True
         result["backup_path"] = str(backup_path)
-        logger.info("Rotated recurrent data (%.2f MB) -> %s",
-                     backup_path.stat().st_size / (1024 * 1024), backup_name)
+        logger.info("Rotated recurrent data (%.2f MB) -> %s", backup_path.stat().st_size / (1024 * 1024), backup_name)
         return True
     except OSError as exc:
         logger.error("Failed to rotate recurrent data file: %s", exc)
         return False
+
 
 def _create_fresh_file(data_file: Path) -> None:
     """Create a fresh empty recurrent data file."""
@@ -281,6 +282,7 @@ def _create_fresh_file(data_file: Path) -> None:
         logger.info("Created fresh recurrent_data.jsonl")
     except OSError as exc:
         logger.error("Failed to create fresh recurrent_data.jsonl: %s", exc)
+
 
 def _prune_old_backups(recurrent_dir: Path, result: dict) -> None:
     """Prune old recurrent data backups beyond DEFAULT_RECURRENT_BACKUPS."""
@@ -300,6 +302,7 @@ def _prune_old_backups(recurrent_dir: Path, result: dict) -> None:
                 logger.info("Pruned old recurrent backup: %s", old_backup.name)
             except OSError as exc:
                 logger.warning("Failed to prune backup %s: %s", old_backup.name, exc)
+
 
 def rotate_recurrent_data(
     max_mb: int = DEFAULT_RECURRENT_MAX_MB,

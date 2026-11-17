@@ -1,4 +1,5 @@
 """Attribute _execute_vm calls to their call sites during the two rebuilds."""
+
 from __future__ import annotations
 
 import json
@@ -38,10 +39,7 @@ def load_champion() -> list[int]:
             except json.JSONDecodeError:
                 continue
             if rec.get("cycle") == 7595:
-                return [
-                    int(x, 16) if isinstance(x, str) else int(x)
-                    for x in rec["champion_program"]
-                ]
+                return [int(x, 16) if isinstance(x, str) else int(x) for x in rec["champion_program"]]
     raise SystemExit("champion not found")
 
 

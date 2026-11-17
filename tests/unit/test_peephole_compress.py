@@ -1,15 +1,16 @@
 """Peephole compress must shorten ADDI chains without extra VM."""
 
-from mutation_proposer import EBREAK, DirectedMutator, make_rv32i
-from evolution.terminal_stagnation import (
-    peephole_compress,
-    overwrite_dead_compress,
-    li_mem_fold_compress,
-    semantic_compress,
-    zero_identity_compress,
-    terminal_efficiency_variants,
-)
 import random
+
+from evolution.terminal_stagnation import (
+    li_mem_fold_compress,
+    overwrite_dead_compress,
+    peephole_compress,
+    semantic_compress,
+    terminal_efficiency_variants,
+    zero_identity_compress,
+)
+from mutation_proposer import EBREAK, DirectedMutator, make_rv32i
 
 
 def test_fold_addi_chain():
@@ -166,6 +167,7 @@ def test_inherit_verify_if_semantic_clone():
 
 def test_ensure_semantic_compress_elite_prepends(monkeypatch):
     from types import SimpleNamespace
+
     from evolution.selection_mixin import SelectionMixin
     from mutation_proposer import EBREAK, make_rv32i
 
@@ -189,6 +191,7 @@ def test_ensure_semantic_compress_elite_prepends(monkeypatch):
 
 def test_ensure_semantic_compress_elite_skips_compact_l30():
     from types import SimpleNamespace
+
     from evolution.selection_mixin import SelectionMixin
     from mutation_proposer import EBREAK, make_rv32i
 

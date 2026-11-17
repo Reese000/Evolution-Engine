@@ -122,15 +122,12 @@ class ProgressController:
         )
         if err is not None:
             logging.getLogger(progress_state_io.LOGGER_NAME).warning(
-                "progress-controller state unreadable at %s during merge: %s "
-                "(pre-existing keys were not preserved)",
+                "progress-controller state unreadable at %s during merge: %s " "(pre-existing keys were not preserved)",
                 path,
                 err,
             )
 
-    def reconcile_from_cycle_result(
-        self, final_level: int, verify: float, fitness: float
-    ) -> None:
+    def reconcile_from_cycle_result(self, final_level: int, verify: float, fitness: float) -> None:
         """Persist completed cycle level — repairs stale writes from collapse recovery."""
         lvl = int(final_level)
         if lvl != self.state.level:
@@ -207,7 +204,9 @@ class ProgressController:
         self.state.raw_fitness = raw
         self.state.champion_fitness = fitness
 
-    def on_generation_end(self, generations_stalled: int, level: int, verify: float, raw: float, fitness: float) -> ActionPlan:
+    def on_generation_end(
+        self, generations_stalled: int, level: int, verify: float, raw: float, fitness: float
+    ) -> ActionPlan:
         """Within-cycle: decide per-generation anti-plateau actions."""
         self.sync_generation(generations_stalled, level, verify, raw, fitness)
         plan = ActionPlan(verify_threshold=self.verify_threshold(level))
@@ -229,7 +228,9 @@ class ProgressController:
 
     def on_run_end(self, level: int, verify: float, raw: float, fitness: float) -> ActionPlan:
         """End of evolution run: quality-gated chain advance (max 3 steps)."""
-        self.sync_generation(max(self.state.generations_stalled, self.state.stall_threshold), level, verify, raw, fitness)
+        self.sync_generation(
+            max(self.state.generations_stalled, self.state.stall_threshold), level, verify, raw, fitness
+        )
         plan = ActionPlan()
         min_fitness = float(os.environ.get("EE_END_RUN_MIN_FITNESS", "80"))
         max_steps = int(os.environ.get("EE_END_RUN_MAX_ADVANCE", "3"))
@@ -237,7 +238,9 @@ class ProgressController:
         cur_level = level
         cur_verify, cur_raw, cur_fit = verify, raw, fitness
         for step in range(max_steps):
-            if not curriculum_fitness_gate(cur_level, self.state.generations_stalled, cur_raw, self.state.stall_threshold):
+            if not curriculum_fitness_gate(
+                cur_level, self.state.generations_stalled, cur_raw, self.state.stall_threshold
+            ):
                 break
             if not self.passes_certify_verify(cur_level, cur_verify):
                 plan.log_lines.append(

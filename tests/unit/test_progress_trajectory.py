@@ -67,9 +67,7 @@ def test_epi_uses_max_pop_verify_at_terminal():
         "vm_gpu_batches": 100,
         "vm_cpu_fallbacks": 0,
     }
-    champ_only = _compute_epi(
-        {**row, "max_pop_verify": 0.8421}, {30: 40.0}, {30: 50.8}
-    )
+    champ_only = _compute_epi({**row, "max_pop_verify": 0.8421}, {30: 40.0}, {30: 50.8})
     with_pop = _compute_epi(row, {30: 40.0}, {30: 50.8})
     assert with_pop["epi"] >= champ_only["epi"]
 
@@ -262,11 +260,7 @@ def test_append_trajectory_lines_rewrites_entire_file(tmp_path, monkeypatch):
 def test_certified_terminal_with_ee_max_level_clamp(monkeypatch):
     """L30 must count as terminal when EE_MAX_LEVEL recovery clamp is 31."""
     monkeypatch.setenv("EE_MAX_LEVEL", "31")
-    from scripts.progress_trajectory import (
-        _apply_epi_momentum,
-        _is_certified_terminal_point,
-        _terminal_growth_momentum,
-    )
+    from scripts.progress_trajectory import _apply_epi_momentum, _is_certified_terminal_point, _terminal_growth_momentum
 
     point = {
         "cycle": 3916,
@@ -541,6 +535,7 @@ def test_trajectory_needs_epi_rebuild_when_terminal_bump_missing():
 
 def test_stop_stale_watcher_kills_legacy_heartbeat(monkeypatch, tmp_path):
     import json as json_mod
+
     from scripts import progress_trajectory as pt
 
     monkeypatch.setattr(pt, "WATCHER_PID_FILE", str(tmp_path / "watcher.pid"))

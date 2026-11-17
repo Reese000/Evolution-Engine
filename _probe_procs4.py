@@ -1,4 +1,5 @@
 """List python/evolution processes: psutil if available, else PowerShell CIM via subprocess."""
+
 from __future__ import annotations
 
 import subprocess
@@ -31,12 +32,14 @@ ps = (
     "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
     "ForEach-Object { $c = $_.CommandLine; if ($c -eq $null) { $c = '' }; "
     "if ($c.Length -gt 260) { $c = $c.Substring(0,260) }; "
-    "\"$($_.ProcessId)|$($_.CreationDate)|$c\" }"
+    '"$($_.ProcessId)|$($_.CreationDate)|$c" }'
 )
 try:
     out = subprocess.run(
         ["powershell", "-NoProfile", "-Command", ps],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
     print(f"--- powershell rows: {len(lines)}")

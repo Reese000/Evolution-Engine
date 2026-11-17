@@ -2,6 +2,7 @@
 
 Usage: python _probe_logtags.py <cycle> [gen0 gen1 ...]
 """
+
 from __future__ import annotations
 
 import collections

@@ -164,9 +164,7 @@ def _carry_payload_beats(existing: dict[str, Any], payload: dict[str, Any]) -> b
             old_words = int(existing.get("words", 0))
             if new_words < old_words:
                 return True
-            if new_words == old_words and _carry_capability_score(payload) > _carry_capability_score(
-                existing
-            ) + 1e-6:
+            if new_words == old_words and _carry_capability_score(payload) > _carry_capability_score(existing) + 1e-6:
                 return True
             return False
     return _carry_rank(payload) > _carry_rank(existing)
@@ -184,9 +182,7 @@ def _decode_program(prog: list[Any]) -> list[int] | None:
     return words
 
 
-def _payload_for_level(
-    levels: dict[str, dict[str, Any]], level: int
-) -> dict[str, Any] | None:
+def _payload_for_level(levels: dict[str, dict[str, Any]], level: int) -> dict[str, Any] | None:
     payload = levels.get(str(level))
     if not payload:
         return None
@@ -198,11 +194,7 @@ def _payload_for_level(
         return None
     if stored_level >= 30 and verify >= 0.99 - 1e-6 and fitness < 150.0:
         return None
-    if (
-        stored_level >= 30
-        and int(payload.get("words", 0)) <= L30_COMPACT_MAX_WORDS
-        and verify >= 0.989 - 1e-6
-    ):
+    if stored_level >= 30 and int(payload.get("words", 0)) <= L30_COMPACT_MAX_WORDS and verify >= 0.989 - 1e-6:
         return None
     if not _decode_program(payload.get("champion_program", [])):
         return None
@@ -299,9 +291,7 @@ def _iter_compact_l30_task_rows(results_file: str, level: int = 30):
             yield row
 
 
-def _enrich_payload_task_fitness(
-    project_root: str, payload: dict[str, Any]
-) -> dict[str, Any]:
+def _enrich_payload_task_fitness(project_root: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Backfill task_fitness for legacy carry rows from the matching jsonl cycle."""
     if payload.get("task_fitness") is not None:
         return payload
@@ -388,9 +378,7 @@ def persist_carry_forward_from_engine(project_root: str, engine: Any) -> None:
     persist_carry_forward_champion(project_root, evo_result)
 
 
-def load_carry_forward_champion(
-    project_root: str, start_level: int
-) -> tuple[list[int], str] | None:
+def load_carry_forward_champion(project_root: str, start_level: int) -> tuple[list[int], str] | None:
     """Load champion for start level, or prior level on depth-nudge (+1)."""
     path = carry_forward_path(project_root)
     levels = _read_store(path)

@@ -103,9 +103,7 @@ def find_last_clean_champion(
     if not os.path.isfile(results_file):
         return None
     extra = ("last_clean", int(level), float(min_verify), int(min_words), max_words, before_cycle)
-    key, path, size, offset, acc = _jsonl_inc_begin(
-        results_file, extra, {"best": None, "best_cycle": -1}
-    )
+    key, path, size, offset, acc = _jsonl_inc_begin(results_file, extra, {"best": None, "best_cycle": -1})
     lvl = int(level)
     cap = max_words
     if cap is None and lvl >= 21:
@@ -227,17 +225,11 @@ def find_best_certified_champion(
             best_fit = rank_score
             best_cycle = cycle
             best = row
-        elif (
-            abs(rank_score - best_fit) <= 1e-6
-            and words == best_words
-            and cycle > best_cycle
-        ):
+        elif abs(rank_score - best_fit) <= 1e-6 and words == best_words and cycle > best_cycle:
             best_fit = rank_score
             best_cycle = cycle
             best = row
-    _jsonl_inc_commit(
-        key, size, new_off, {"best": best, "best_fit": best_fit, "best_cycle": best_cycle}
-    )
+    _jsonl_inc_commit(key, size, new_off, {"best": best, "best_fit": best_fit, "best_cycle": best_cycle})
     return best
 
 
@@ -290,9 +282,7 @@ def find_best_honest_compact_l30(
         if not isinstance(prog, list) or not prog:
             continue
         cycle = int(row.get("cycle", -1))
-        if verify > best_verify + 1e-6 or (
-            abs(verify - best_verify) <= 1e-6 and cycle > best_cycle
-        ):
+        if verify > best_verify + 1e-6 or (abs(verify - best_verify) <= 1e-6 and cycle > best_cycle):
             best_verify = verify
             best_cycle = cycle
             best = row
@@ -388,9 +378,7 @@ def apply_l30_certified_metrics_if_degraded(
             words = int(metrics.get("champion_words", 0))
 
     results = os.path.join(project_root, "multi_cycle_results.jsonl")
-    clean = find_best_certified_champion(
-        results, level, min_verify=0.99, min_fitness=100.0
-    )
+    clean = find_best_certified_champion(results, level, min_verify=0.99, min_fitness=100.0)
     if not clean:
         return False
 
@@ -415,16 +403,10 @@ def apply_l30_certified_metrics_if_degraded(
         if not collapsed:
             if 12 <= words <= L30_COMPACT_MAX_WORDS:
                 return False
-            if (
-                fit >= 200.0
-                and (words < clean_words and fit >= clean_fit - 0.5 or words <= clean_words)
-            ):
+            if fit >= 200.0 and (words < clean_words and fit >= clean_fit - 0.5 or words <= clean_words):
                 return False
 
-    prog = [
-        int(x, 16) if isinstance(x, str) else int(x)
-        for x in clean["champion_program"]
-    ]
+    prog = [int(x, 16) if isinstance(x, str) else int(x) for x in clean["champion_program"]]
     if len(prog) < 8:
         return False
 
@@ -443,9 +425,7 @@ def apply_l30_certified_metrics_if_degraded(
 
     from evolution.fitness_helpers import reporting_champion_fitness
 
-    reported_fit = float(
-        reporting_champion_fitness(engine, prog, engine.champion_trace, logged_verify)
-    )
+    reported_fit = float(reporting_champion_fitness(engine, prog, engine.champion_trace, logged_verify))
     if logged_fit > reported_fit:
         reported_fit = logged_fit
 
@@ -549,9 +529,7 @@ def collect_jsonl_archive_parents(
         if not isinstance(prog, list) or not prog:
             continue
         try:
-            decoded = tuple(
-                int(x, 16) if isinstance(x, str) else int(x) for x in prog
-            )
+            decoded = tuple(int(x, 16) if isinstance(x, str) else int(x) for x in prog)
         except (TypeError, ValueError):
             continue
         if tol > 0 and len(decoded) != champ_n:
@@ -566,9 +544,7 @@ def collect_jsonl_archive_parents(
         if prev is None:
             seen[decoded] = (cycle, prom)
         elif rank_by_promotion_raw:
-            if prom > prev[1] + 1e-6 or (
-                abs(prom - prev[1]) <= 1e-6 and cycle > prev[0]
-            ):
+            if prom > prev[1] + 1e-6 or (abs(prom - prev[1]) <= 1e-6 and cycle > prev[0]):
                 seen[decoded] = (cycle, prom)
         elif cycle > prev[0]:
             seen[decoded] = (cycle, prom)
@@ -635,9 +611,7 @@ def collect_jsonl_long_archive_parents(
         if not isinstance(prog, list) or not prog:
             continue
         try:
-            decoded = tuple(
-                int(x, 16) if isinstance(x, str) else int(x) for x in prog
-            )
+            decoded = tuple(int(x, 16) if isinstance(x, str) else int(x) for x in prog)
         except (TypeError, ValueError):
             continue
         if len(decoded) <= champ_n or decoded == champ_t:
@@ -646,9 +620,7 @@ def collect_jsonl_long_archive_parents(
         if prom < float(min_promotion_raw):
             continue
         prev = seen.get(decoded)
-        if prev is None or prom > prev[1] + 1e-6 or (
-            abs(prom - prev[1]) <= 1e-6 and cycle > prev[0]
-        ):
+        if prev is None or prom > prev[1] + 1e-6 or (abs(prom - prev[1]) <= 1e-6 and cycle > prev[0]):
             seen[decoded] = (cycle, prom)
     _jsonl_inc_commit(
         key,
@@ -778,9 +750,7 @@ def _growth_material_l10_lift_qualifies(
     if min_lift is not None:
         margin = float(min_lift)
     elif anchor_l10 < 0.85 - 1e-6:
-        margin = float(
-            os.environ.get("EE_GROWTH_MATERIAL_L10_LIFT_MARGIN_WEAK", "0.05")
-        )
+        margin = float(os.environ.get("EE_GROWTH_MATERIAL_L10_LIFT_MARGIN_WEAK", "0.05"))
     else:
         margin = float(os.environ.get("EE_GROWTH_MATERIAL_L10_LIFT_MARGIN", "0.15"))
     variant_l10 = float(curriculum_verify_mean(list(variant), 10))
@@ -794,10 +764,7 @@ def _growth_material_capability_qualifies(
     """Held-out + curriculum side parity for persisted growth material."""
     if not anchor or not variant or len(variant) <= len(anchor):
         return False
-    from evolution.mutation_helpers import (
-        scan_floor_growth_completion_qualifies,
-        scan_floor_growth_heldout_qualifies,
-    )
+    from evolution.mutation_helpers import scan_floor_growth_completion_qualifies, scan_floor_growth_heldout_qualifies
     from evolution.terminal_stagnation import get_scan_floor_gate
 
     if not scan_floor_growth_heldout_qualifies(anchor, variant):
@@ -856,9 +823,7 @@ def record_scan_floor_growth_material(
         if not isinstance(existing_prog, list):
             continue
         existing_prom = float(existing.get("prom") or 0.0)
-        if existing_prom + 1e-6 >= prom_floor or _growth_material_l10_lift_qualifies(
-            anchor, list(existing_prog)
-        ):
+        if existing_prom + 1e-6 >= prom_floor or _growth_material_l10_lift_qualifies(anchor, list(existing_prog)):
             deduped.append(existing)
     deduped.append(entry)
 
@@ -871,11 +836,7 @@ def record_scan_floor_growth_material(
 
             l10 = float(curriculum_verify_mean(prog_list, 10))
         prom_val = float(e.get("prom") or 0.0)
-        lift = (
-            1.0
-            if prog_list and _growth_material_l10_lift_qualifies(anchor, prog_list)
-            else 0.0
-        )
+        lift = 1.0 if prog_list and _growth_material_l10_lift_qualifies(anchor, prog_list) else 0.0
         return (lift, l10, prom_val, int(e.get("cycle") or 0))
 
     deduped.sort(key=_growth_material_bucket_rank, reverse=True)
@@ -979,9 +940,7 @@ def collect_growth_material_parents(
         prog = entry.get("program")
         if not isinstance(prog, list) or len(prog) <= champ_n:
             continue
-        if not _growth_material_entry_passes_prom_floor(
-            list(anchor), list(prog), entry_prom, prom_floor
-        ):
+        if not _growth_material_entry_passes_prom_floor(list(anchor), list(prog), entry_prom, prom_floor):
             continue
         if at_scan_floor and entry_prom + 1e-6 < anchor_prom:
             if not _growth_material_l10_lift_qualifies(list(anchor), list(prog)):
@@ -1026,9 +985,7 @@ def collect_growth_material_compress_parents(
     anchor_l10_weak = float(curriculum_verify_mean(list(anchor), 10)) < 0.85 - 1e-6
     extra_words = int(os.environ.get("EE_GROWTH_COMPRESS_TARGET_EXTRA_WORDS", "4"))
     if anchor_l10_weak:
-        extra_words = int(
-            os.environ.get("EE_GROWTH_COMPRESS_TARGET_EXTRA_WORDS_WEAK_L10", "2")
-        )
+        extra_words = int(os.environ.get("EE_GROWTH_COMPRESS_TARGET_EXTRA_WORDS_WEAK_L10", "2"))
     target_len = champ_n + max(2, extra_words)
     candidates: list[tuple[float, int, list[int]]] = []
     for entry in entries:
@@ -1036,9 +993,7 @@ def collect_growth_material_compress_parents(
         prog = entry.get("program")
         if not isinstance(prog, list) or len(prog) <= champ_n:
             continue
-        if not _growth_material_entry_passes_prom_floor(
-            list(anchor), list(prog), entry_prom, prom_floor
-        ):
+        if not _growth_material_entry_passes_prom_floor(list(anchor), list(prog), entry_prom, prom_floor):
             continue
         if not _growth_material_capability_qualifies(list(anchor), list(prog)):
             continue
@@ -1092,6 +1047,4 @@ def collect_growth_material_compress_parents(
     from evolution.mutation_helpers import select_diverse_growth_material_programs
 
     progs = [list(prog) for _, _, prog in candidates]
-    return select_diverse_growth_material_programs(
-        list(anchor), progs, max_select=cap
-    )
+    return select_diverse_growth_material_programs(list(anchor), progs, max_select=cap)

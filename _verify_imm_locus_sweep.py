@@ -6,6 +6,7 @@ Answers:
   3. Is the disk/in-memory score cache consistent with a fresh evaluation?
   4. Does anything reach/promote past the 325.836 task bar?
 """
+
 import json
 import os
 import time
@@ -16,7 +17,8 @@ from evolution import fitness_helpers as fh
 from evolution import terminal_stagnation as ts
 from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
 from evolution.terminal_stagnation import _SCAN_FLOOR_WIDE_IMM_DELTAS
-from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+from milestone1.rv32i_mask import decode as rv32i_decode
+from milestone1.rv32i_mask import encode as rv32i_encode
 
 TASK_BAR = 325.836
 FINE = (-8, -4, -2, -1, 1, 2, 4, 8)
@@ -41,8 +43,11 @@ def apply_delta(prog, idx, delta):
         if "imm" not in d:
             return None
         w = rv32i_encode(
-            name=str(d["name"]), rd=int(d.get("rd", 0)), rs1=int(d.get("rs1", 0)),
-            rs2=int(d.get("rs2", 0)), imm=int(d.get("imm", 0)) + int(delta),
+            name=str(d["name"]),
+            rd=int(d.get("rd", 0)),
+            rs1=int(d.get("rs1", 0)),
+            rs2=int(d.get("rs2", 0)),
+            imm=int(d.get("imm", 0)) + int(delta),
             validate=True,
         )
     except (ValueError, TypeError, KeyError):
@@ -139,8 +144,7 @@ for k, p in enumerate(samples):
     again = float(compact_l30_promotion_raw_fitness(list(p)))  # pure cache hit
     fresh = fresh_score(p)
     ok = abs(cached - fresh) <= 1e-9 and abs(again - fresh) <= 1e-9
-    log(f"  sample{k}: cached={cached:.10f} repeat={again:.10f} fresh={fresh:.10f} "
-        f"{'OK' if ok else 'MISMATCH'}")
+    log(f"  sample{k}: cached={cached:.10f} repeat={again:.10f} fresh={fresh:.10f} " f"{'OK' if ok else 'MISMATCH'}")
 
 # ---- 4. seeds baseline (fresh) ---------------------------------------------
 log("seed baselines (fresh):")
@@ -161,10 +165,7 @@ out = {
     "best_prom": best,
     "best_desc": best_desc,
     "gap_to_task_bar": TASK_BAR - best,
-    "per_locus_distinct_prom": {
-        str(i): sorted(set(round(v, 6) for v in per_locus[i].values()))
-        for i in imm_loci
-    },
+    "per_locus_distinct_prom": {str(i): sorted(set(round(v, 6) for v in per_locus[i].values())) for i in imm_loci},
 }
 path = ".agents/evidence/t_6f4be05a_imm_locus_verify.json"
 os.makedirs(os.path.dirname(path), exist_ok=True)

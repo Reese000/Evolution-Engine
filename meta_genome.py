@@ -381,8 +381,12 @@ class MetaGenome:
             ("retrain_min_examples", "retrain_min_examples"),
         )
         _int_fields = {
-            "retrain_batch_size", "retrain_patience", "retrain_max_epochs",
-            "retrain_freeze_layers", "retrain_max_per_level", "retrain_timeout",
+            "retrain_batch_size",
+            "retrain_patience",
+            "retrain_max_epochs",
+            "retrain_freeze_layers",
+            "retrain_max_per_level",
+            "retrain_timeout",
             "retrain_min_examples",
         }
         for genome_field, config_field in _retrain_map:

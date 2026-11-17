@@ -1,4 +1,5 @@
 """Eq-length 1-bit hamming probe at 28w champion."""
+
 import json
 import os
 

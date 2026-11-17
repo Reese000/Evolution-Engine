@@ -248,9 +248,7 @@ def _release_os_lock(handle) -> None:
         pass
 
 
-def _open_and_lock(
-    lock_file: str, timeout: float, label: str
-) -> tuple[Any, bool]:
+def _open_and_lock(lock_file: str, timeout: float, label: str) -> tuple[Any, bool]:
     """Open ``lock_file`` and poll until the lock is taken or ``timeout``.
 
     Returns ``(handle, acquired)``. ``handle`` is ``None`` when the lock file
@@ -265,8 +263,7 @@ def _open_and_lock(
         handle = open(lock_file, "a+b")  # noqa: SIM115 - closed on every path
     except (OSError, ValueError) as exc:
         log.warning(
-            "%s: cross-process lock %s cannot be opened (%s) — proceeding "
-            "without it (last-writer-wins, as before)",
+            "%s: cross-process lock %s cannot be opened (%s) — proceeding " "without it (last-writer-wins, as before)",
             label,
             lock_file,
             exc,
@@ -331,9 +328,7 @@ def _open_and_lock(
 
 
 @contextlib.contextmanager
-def cross_process_lock(
-    path: str, *, timeout: float | None = None, label: str = _DEFAULT_LABEL
-) -> Iterator[bool]:
+def cross_process_lock(path: str, *, timeout: float | None = None, label: str = _DEFAULT_LABEL) -> Iterator[bool]:
     """Advisory cross-process lock guarding one read → merge → write of ``path``.
 
     Yields ``True`` when this process holds the lock on the sibling
@@ -400,9 +395,7 @@ def cross_process_lock(
                     handle.close()
 
 
-def update_state(
-    path: str, updates: dict, *, label: str = _DEFAULT_LABEL
-) -> tuple[bool, BaseException | None]:
+def update_state(path: str, updates: dict, *, label: str = _DEFAULT_LABEL) -> tuple[bool, BaseException | None]:
     """Read → merge ``updates`` → atomic write, under both locks.
 
     Returns ``(written, read_error)``. ``read_error`` is non-``None`` when the
@@ -436,9 +429,7 @@ def update_state(
         return write_state(path, state, label=label), err
 
 
-def write_state(
-    path: str, state: dict, *, label: str = _DEFAULT_LABEL
-) -> bool:
+def write_state(path: str, state: dict, *, label: str = _DEFAULT_LABEL) -> bool:
     """Atomically persist ``state`` to ``path`` (tmp + fsync + ``os.replace``).
 
     Returns ``True`` when the file now holds ``state``; ``False`` when the

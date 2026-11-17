@@ -1,4 +1,5 @@
 """Inspect keys + timestamps of recent multi_cycle_results records."""
+
 from __future__ import annotations
 
 import json
@@ -35,8 +36,10 @@ for c in sorted(by):
     ts = {k: v for k, v in r.items() if "time" in k.lower() or "ts" == k or k.endswith("_at")}
     print(
         c,
-        "elapsed=", r.get("elapsed_seconds"),
-        "gens=", r.get("generations_completed"),
+        "elapsed=",
+        r.get("elapsed_seconds"),
+        "gens=",
+        r.get("generations_completed"),
         "| ts:",
         json.dumps(ts, default=str)[:400],
     )

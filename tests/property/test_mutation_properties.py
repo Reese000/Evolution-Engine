@@ -4,6 +4,7 @@ Uses Hypothesis to verify invariants that hold for ALL valid inputs,
 not just the examples we think to test. These catch edge cases that
 example-based tests miss.
 """
+
 from __future__ import annotations
 
 import random
@@ -68,9 +69,7 @@ def _valid_instruction():
 
 def _valid_program():
     """Strategy: a list of valid RV32I instructions ending with EBREAK."""
-    return st.lists(_valid_instruction(), min_size=1, max_size=50).map(
-        lambda prog: prog + [EBREAK]
-    )
+    return st.lists(_valid_instruction(), min_size=1, max_size=50).map(lambda prog: prog + [EBREAK])
 
 
 def _valid_program_no_ebreak():
@@ -389,7 +388,7 @@ class TestProgramStructure:
 
         if ebreak_idx is not None:
             trimmed = trim_dead_code(prog)
-            assert trimmed == prog[:ebreak_idx + 1]
+            assert trimmed == prog[: ebreak_idx + 1]
 
     @given(length=st.integers(min_value=1, max_value=50))
     @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])

@@ -269,12 +269,8 @@ class MetaController:
                 self.best_fitness = snapshot.fitness
                 if snapshot.champion_words > 0:
                     self._best_words_at_best_fitness = snapshot.champion_words
-            elif (
-                snapshot.champion_words > 0
-                and (
-                    self._best_words_at_best_fitness <= 0
-                    or snapshot.champion_words < self._best_words_at_best_fitness
-                )
+            elif snapshot.champion_words > 0 and (
+                self._best_words_at_best_fitness <= 0 or snapshot.champion_words < self._best_words_at_best_fitness
             ):
                 self._best_words_at_best_fitness = snapshot.champion_words
             self.cycles_since_fitness_improvement = 0
@@ -441,8 +437,9 @@ class MetaController:
                     vl_first = vj
         return f_min, f_max, div_min, vl_first, vl_last
 
-    def _classify_indicators(self, f_min, f_max, div_min, vl_first, vl_last,
-                              fp_cycles, vlr_ratio, dc_thresh) -> StagnationResult:
+    def _classify_indicators(
+        self, f_min, f_max, div_min, vl_first, vl_last, fp_cycles, vlr_ratio, dc_thresh
+    ) -> StagnationResult:
         """Classify indicators and return the stagnation result."""
         indications_count = 0
         ind_fitness = ind_level = ind_valloss = False
@@ -525,8 +522,9 @@ class MetaController:
             return 1e-5, 4, 3, 30
         return 5e-6, 6, 3, 25
 
-    def _apply_stagnation_override(self, state: StagnationResult, consecutive: int,
-                                    base_lr: float, base_freeze: int) -> tuple[float, int]:
+    def _apply_stagnation_override(
+        self, state: StagnationResult, consecutive: int, base_lr: float, base_freeze: int
+    ) -> tuple[float, int]:
         """Apply stagnation-based overrides to base_lr and base_freeze."""
         if state == StagnationResult.FITNESS_PLATEAU:
             base_lr = min(self.lr_max, base_lr * 2.0)
@@ -546,8 +544,9 @@ class MetaController:
             base_lr, base_freeze = self._apply_compound_stall_override(base_lr, base_freeze)
         return base_lr, base_freeze
 
-    def _apply_diversity_collapse_override(self, consecutive: int,
-                                            base_lr: float, base_freeze: int) -> tuple[float, int]:
+    def _apply_diversity_collapse_override(
+        self, consecutive: int, base_lr: float, base_freeze: int
+    ) -> tuple[float, int]:
         """Apply diversity collapse overrides with escalating tiers."""
         if consecutive <= 2:
             base_freeze = max(self.freeze_min, base_freeze - 1)
@@ -557,8 +556,13 @@ class MetaController:
         else:
             base_freeze = 0
             base_lr = self.lr_max
-        self._record_tuning("retrain", "retrain_freeze_layers", None, base_freeze,
-                            f"stagnation: diversity_collapse (tier {min(consecutive, 3)})")
+        self._record_tuning(
+            "retrain",
+            "retrain_freeze_layers",
+            None,
+            base_freeze,
+            f"stagnation: diversity_collapse (tier {min(consecutive, 3)})",
+        )
         return base_lr, base_freeze
 
     def _apply_compound_stall_override(self, base_lr: float, base_freeze: int) -> tuple[float, int]:
@@ -575,22 +579,35 @@ class MetaController:
         """Apply fitness-based fallback when val_loss is unavailable for 3+ cycles."""
         if self._consecutive_none_val_loss >= 3:
             if self.cycles_since_fitness_improvement <= 1:
-                self._log(f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
-                          f"fitness improving, keeping LR={base_lr:.2e}")
+                self._log(
+                    f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
+                    f"fitness improving, keeping LR={base_lr:.2e}"
+                )
             elif self.cycles_since_fitness_improvement >= 3:
                 base_lr = max(self.lr_min, base_lr * 0.5)
-                self._log(f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}, "
-                          f"fitness stagnant ({self.cycles_since_fitness_improvement} cycles): "
-                          f"halving LR to {base_lr:.2e}")
+                self._log(
+                    f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}, "
+                    f"fitness stagnant ({self.cycles_since_fitness_improvement} cycles): "
+                    f"halving LR to {base_lr:.2e}"
+                )
                 self._record_tuning("retrain", "retrain_lr", None, base_lr, "fallback: val_loss_none_fitness_stagnant")
             else:
-                self._log(f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
-                          f"fitness slightly stale ({self.cycles_since_fitness_improvement}), "
-                          f"keeping LR={base_lr:.2e}")
+                self._log(
+                    f"  [Fallback] val_loss=None x{self._consecutive_none_val_loss}: "
+                    f"fitness slightly stale ({self.cycles_since_fitness_improvement}), "
+                    f"keeping LR={base_lr:.2e}"
+                )
         return base_lr
 
-    def _apply_retrain_overrides(self, cycle: int, base_lr: float, base_freeze: int,
-                                  base_patience: int, base_epochs: int, state: StagnationResult) -> dict[str, Any]:
+    def _apply_retrain_overrides(
+        self,
+        cycle: int,
+        base_lr: float,
+        base_freeze: int,
+        base_patience: int,
+        base_epochs: int,
+        state: StagnationResult,
+    ) -> dict[str, Any]:
         """Apply per-level, recovery mode, and assemble final retrain params."""
         params: dict[str, Any] = {}
         if cycle >= 3:
@@ -609,12 +626,21 @@ class MetaController:
         params["retrain_max_epochs"] = base_epochs
         return params
 
-    def _log_retrain_params(self, cycle: int, base_lr: float, base_freeze: int,
-                             base_patience: int, base_epochs: int, state: StagnationResult) -> None:
+    def _log_retrain_params(
+        self,
+        cycle: int,
+        base_lr: float,
+        base_freeze: int,
+        base_patience: int,
+        base_epochs: int,
+        state: StagnationResult,
+    ) -> None:
         """Log the final retrain parameters."""
-        self._log(f"Retrain params for C{cycle}: LR={base_lr:.2e} "
-                  f"freeze={base_freeze} patience={base_patience} "
-                  f"epochs={base_epochs} state={state.value}")
+        self._log(
+            f"Retrain params for C{cycle}: LR={base_lr:.2e} "
+            f"freeze={base_freeze} patience={base_patience} "
+            f"epochs={base_epochs} state={state.value}"
+        )
 
     def _check_meta_evolution(self, state: StagnationResult, cycle: int, params: dict[str, Any]) -> None:
         """Check if meta-evolution should be requested (compound_stall persists)."""
@@ -632,9 +658,11 @@ class MetaController:
             state == StagnationResult.COMPOUND_STALL or self.cycles_since_fitness_improvement >= 3
         ):
             if not self.force_retrain:
-                self._log(f"  *** FORCE RETRAIN REQUESTED "
-                          f"(no val_loss x{self._consecutive_none_val_loss}, "
-                          f"state={state.value}, fitness_stale={self.cycles_since_fitness_improvement})")
+                self._log(
+                    f"  *** FORCE RETRAIN REQUESTED "
+                    f"(no val_loss x{self._consecutive_none_val_loss}, "
+                    f"state={state.value}, fitness_stale={self.cycles_since_fitness_improvement})"
+                )
             self.force_retrain = True
 
     def tune_evolution_params(self, cycle: int) -> dict[str, Any]:
@@ -683,16 +711,18 @@ class MetaController:
             params["diversity_inject_ratio"] = 0.30
             params["mutation_rate"] = 0.65
             params["diversity_threshold"] = 0.15
-            self._record_tuning("evolution", "diversity_inject_ratio", None, 0.30,
-                                "stagnation: diversity_collapse (tier 1)")
+            self._record_tuning(
+                "evolution", "diversity_inject_ratio", None, 0.30, "stagnation: diversity_collapse (tier 1)"
+            )
         elif consecutive <= 4:
             params["diversity_inject_ratio"] = 0.50
             params["mutation_rate"] = 0.80
             params["novelty_weight"] = 0.50
             params["champion_crossover_prob"] = 0.85
             params["diversity_threshold"] = 0.10
-            self._record_tuning("evolution", "champion_crossover_prob", None, 0.85,
-                                "stagnation: diversity_collapse (tier 2)")
+            self._record_tuning(
+                "evolution", "champion_crossover_prob", None, 0.85, "stagnation: diversity_collapse (tier 2)"
+            )
         else:
             params["diversity_inject_ratio"] = 0.75
             params["mutation_rate"] = 0.90
@@ -701,8 +731,7 @@ class MetaController:
             params["champion_crossover_prob"] = 0.90
             params["diversity_threshold"] = 0.08
             params["elite_ratio"] = 0.05
-            self._record_tuning("evolution", "population_size", None, 120,
-                                "stagnation: diversity_collapse (tier 3)")
+            self._record_tuning("evolution", "population_size", None, 120, "stagnation: diversity_collapse (tier 3)")
 
     def _set_evolution_val_loss_regression(self, params: dict[str, Any], consecutive: int) -> None:
         """Set evolution params for val loss regression."""
@@ -714,8 +743,13 @@ class MetaController:
             params["elite_ratio"] = 0.20
             params["mutation_rate"] = 0.40
             params["novelty_weight"] = 0.10
-        self._record_tuning("evolution", "elite_ratio", None, params.get("elite_ratio", 0.15),
-                            f"regression: val_loss_regression (tier {min(consecutive, 2)})")
+        self._record_tuning(
+            "evolution",
+            "elite_ratio",
+            None,
+            params.get("elite_ratio", 0.15),
+            f"regression: val_loss_regression (tier {min(consecutive, 2)})",
+        )
 
     def _set_evolution_compound_stall(self, params: dict[str, Any], consecutive: int) -> None:
         """Set evolution params for compound stall."""
@@ -728,8 +762,13 @@ class MetaController:
             params["diversity_inject_ratio"] = 0.50
             params["novelty_weight"] = 0.50
             params["population_size"] = 100
-        self._record_tuning("evolution", "mutation_rate", None, params.get("mutation_rate", 0.75),
-                            f"stagnation: compound_stall (tier {min(consecutive, 2)})")
+        self._record_tuning(
+            "evolution",
+            "mutation_rate",
+            None,
+            params.get("mutation_rate", 0.75),
+            f"stagnation: compound_stall (tier {min(consecutive, 2)})",
+        )
 
     def _set_evolution_recovery(self, params: dict[str, Any]) -> None:
         """Set evolution params for recovery mode."""
@@ -780,14 +819,17 @@ class MetaController:
             return False
 
         state = self.detect_stagnation()
-        if state in (StagnationResult.VAL_LOSS_REGRESSION, StagnationResult.COMPOUND_STALL) and self.cycles_since_fitness_improvement >= 2:
-                self._log(
-                    f"ROLLBACK: state={state.value}, "
-                    f"cycles_since_fitness_improvement="
-                    f"{self.cycles_since_fitness_improvement}"
-                )
-                self._rollback_count += 1
-                return True
+        if (
+            state in (StagnationResult.VAL_LOSS_REGRESSION, StagnationResult.COMPOUND_STALL)
+            and self.cycles_since_fitness_improvement >= 2
+        ):
+            self._log(
+                f"ROLLBACK: state={state.value}, "
+                f"cycles_since_fitness_improvement="
+                f"{self.cycles_since_fitness_improvement}"
+            )
+            self._rollback_count += 1
+            return True
 
         # Trigger on critically low effectiveness with sustained stagnation.
         # Catches systems stuck in a local minimum where tuning actions
@@ -1400,12 +1442,14 @@ class MetaController:
         else:
             val_loss_trend = {"direction": "stable", "slope": 0.0, "confidence": 0.0}
 
-        self._log(f"Trends: fitness={fitness_trend['direction']} "
-                  f"(slope={fitness_trend['slope']:.4f}, conf={fitness_trend['confidence']:.2f}), "
-                  f"val_loss={val_loss_trend['direction']} "
-                  f"(slope={val_loss_trend['slope']:.4f}, conf={val_loss_trend['confidence']:.2f}), "
-                  f"diversity={diversity_trend['direction']} "
-                  f"(slope={diversity_trend['slope']:.4f}, conf={diversity_trend['confidence']:.2f})")
+        self._log(
+            f"Trends: fitness={fitness_trend['direction']} "
+            f"(slope={fitness_trend['slope']:.4f}, conf={fitness_trend['confidence']:.2f}), "
+            f"val_loss={val_loss_trend['direction']} "
+            f"(slope={val_loss_trend['slope']:.4f}, conf={val_loss_trend['confidence']:.2f}), "
+            f"diversity={diversity_trend['direction']} "
+            f"(slope={diversity_trend['slope']:.4f}, conf={diversity_trend['confidence']:.2f})"
+        )
 
         return {"fitness": fitness_trend, "val_loss": val_loss_trend, "diversity": diversity_trend}
 
@@ -1458,9 +1502,7 @@ class MetaController:
         _logger.info(msg)
         if self.log_file:
             try:
-                max_bytes = int(
-                    os.environ.get("EE_META_CONTROLLER_LOG_MAX_BYTES", str(50 * 1024 * 1024))
-                )
+                max_bytes = int(os.environ.get("EE_META_CONTROLLER_LOG_MAX_BYTES", str(50 * 1024 * 1024)))
                 if max_bytes > 0 and os.path.isfile(self.log_file):
                     try:
                         if os.path.getsize(self.log_file) >= max_bytes:
@@ -1567,14 +1609,22 @@ def parse_grad_norms_from_retrain_log(log_path: str) -> dict[str, float] | None:
 # ══════════════════════════════════════════════════════════════════════
 
 
-def _make_snap(cycle: int, fitness: float, level: int, val_loss: float,
-               diversity: float = 0.3, traces_count: int = 20) -> TelemetrySnapshot:
+def _make_snap(
+    cycle: int, fitness: float, level: int, val_loss: float, diversity: float = 0.3, traces_count: int = 20
+) -> TelemetrySnapshot:
     """Create a TelemetrySnapshot with default values for non-critical fields."""
     return TelemetrySnapshot(
-        cycle=cycle, fitness=fitness, level=level,
-        champion_words=50, val_loss=val_loss, diversity=diversity,
-        novelty_size=10, qd_occupied=5, qd_total=100,
-        traces_count=traces_count, retrained=True,
+        cycle=cycle,
+        fitness=fitness,
+        level=level,
+        champion_words=50,
+        val_loss=val_loss,
+        diversity=diversity,
+        novelty_size=10,
+        qd_occupied=5,
+        qd_total=100,
+        traces_count=traces_count,
+        retrained=True,
         generations_completed=50,
     )
 

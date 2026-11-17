@@ -5,10 +5,20 @@ Mirrors agent/continuous_work_critic.py critic_gate() lines ~816-847:
   APPROVE if lower/strip() == a single-word keyword (exact match)
   APPROVE if any multi-word keyword appears as substring
 """
+
 USER_OVERRIDE_KEYWORDS = {
-    "stop", "override", "enough", "done", "quit", "exit",
-    "you can stop", "stop working", "you are looping",
-    "that's enough", "we're done", "that is enough",
+    "stop",
+    "override",
+    "enough",
+    "done",
+    "quit",
+    "exit",
+    "you can stop",
+    "stop working",
+    "you are looping",
+    "that's enough",
+    "we're done",
+    "that is enough",
 }
 
 CASES = [
@@ -43,5 +53,4 @@ for m in CASES:
     print(f"{verdict:<34} {str(skipped):<6} {str(exact):<6} {str(multi):<6} {m[:44]!r}")
 
 print()
-print("Messages that end the CW loop WITHOUT calling the critic:",
-      [m for m in approve_cases if not m.startswith("#")])
+print("Messages that end the CW loop WITHOUT calling the critic:", [m for m in approve_cases if not m.startswith("#")])

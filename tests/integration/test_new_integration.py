@@ -7,6 +7,7 @@ Tests end-to-end functionality:
 
 These tests use lightweight mocks and stubs — no GPU or full model needed.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,10 +20,10 @@ import pytest
 
 # Path setup
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
 from config import Config, EvolutionSection, RetrainSection
-
 
 # ══════════════════════════════════════════════════════════════════════
 # 1. Full evolution cycle integration
@@ -69,7 +70,7 @@ class TestEvolutionCycleIntegration:
 
         # 4. Select (tournament selection via simple max)
         scored.sort(key=lambda x: x[0], reverse=True)
-        survivors = scored[:pop_size // 2]
+        survivors = scored[: pop_size // 2]
         assert len(survivors) == pop_size // 2
 
         # 5. Archive top solutions
@@ -121,7 +122,7 @@ class TestEvolutionCycleIntegration:
 
             # Select top half
             scored.sort(key=lambda x: x[0], reverse=True)
-            survivors = scored[:pop_size // 2]
+            survivors = scored[: pop_size // 2]
 
             # Fill rest with copies of survivors
             new_pop = [list(s[2]) for s in survivors]

@@ -27,6 +27,7 @@ from novelty import (
 # Helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _make_descriptor(
     inst_diversity: float = 0.5,
     reg_pressure: float = 0.3,
@@ -69,6 +70,7 @@ def _make_n_descriptors(n: int, seed: int = 42) -> list[dict[str, float]]:
 # Tests for _flatten_descriptor
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestFlattenDescriptor:
     def test_basic_flatten(self):
         d = _make_descriptor()
@@ -87,6 +89,7 @@ class TestFlattenDescriptor:
 # ══════════════════════════════════════════════════════════════════════════════
 # Tests for _opcode_category_bits
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestOpcodeCategoryBits:
     def test_empty_program(self):
@@ -116,6 +119,7 @@ class TestOpcodeCategoryBits:
 # Tests for _count_instruction_categories
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestCountInstructionCategories:
     def test_empty_program(self):
         result = _count_instruction_categories([])
@@ -144,6 +148,7 @@ class TestCountInstructionCategories:
 # ══════════════════════════════════════════════════════════════════════════════
 # Tests for SparseArchive
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestSparseArchiveInit:
     def test_default_init(self):
@@ -302,9 +307,7 @@ class TestSparseArchiveBatchLookup:
         archive = SparseArchive()
         for d in _make_n_descriptors(5):
             archive.add_to_archive(d, metadata={"program": [1, 2]})
-        result = archive.batch_lookup(
-            [[1, 2], [3, 4]], current_generation=10, half_life=100
-        )
+        result = archive.batch_lookup([[1, 2], [3, 4]], current_generation=10, half_life=100)
         assert isinstance(result, dict)
 
 
@@ -393,6 +396,7 @@ class TestSparseArchiveImpactCorrelation:
 # Tests for extract_behavioral_descriptor
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestExtractBehavioralDescriptor:
     def test_empty_trace(self):
         desc = extract_behavioral_descriptor([], [], budget=100)
@@ -421,6 +425,7 @@ class TestExtractBehavioralDescriptor:
 # Tests for adaptive threshold
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestAdaptiveThreshold:
     def test_empty_archive(self):
         archive = SparseArchive()
@@ -439,6 +444,7 @@ class TestAdaptiveThreshold:
 # ══════════════════════════════════════════════════════════════════════════════
 # Tests for _k_nn_distance
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestKNnDistance:
     def test_empty_archive(self):
@@ -463,6 +469,7 @@ class TestKNnDistance:
 # ══════════════════════════════════════════════════════════════════════════════
 # Tests for _rebuild_tree and _rebuild_prog_hash_index
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestInternalHelpers:
     def test_rebuild_tree_empty(self):
@@ -493,6 +500,7 @@ class TestInternalHelpers:
 # ══════════════════════════════════════════════════════════════════════════════
 # Tests for _relative_novelty_multiplier
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestRelativeNoveltyMultiplier:
     def test_empty_archive(self):

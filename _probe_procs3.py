@@ -1,4 +1,5 @@
 """Print command lines of all python processes (psutil if present)."""
+
 from __future__ import annotations
 
 import sys

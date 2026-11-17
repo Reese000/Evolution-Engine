@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import random
 import unittest
-import os
 
 from evolution.register_repair import (
     critical_wrong_register,
@@ -106,7 +106,6 @@ class TestRegisterRepair(unittest.TestCase):
                 if old_env is not None:
                     os.environ["EE_REGISTER_REPAIR_BOOST"] = old_env
 
-
     def test_repair_program_boost_replaces_instead_of_stacking(self) -> None:
         prog = [0x00000013] * 40 + [0x00100073]
         analysis = TraceAnalysis(
@@ -206,7 +205,7 @@ class TestRegisterRepair(unittest.TestCase):
         import os
 
         os.environ.setdefault("EE_USE_GPU", "0")
-        from evolution_engine import EvolutionEngine, EvolutionConfig
+        from evolution_engine import EvolutionConfig, EvolutionEngine
 
         results_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
@@ -220,10 +219,7 @@ class TestRegisterRepair(unittest.TestCase):
                     continue
                 if float(row.get("champion_verify_score") or 0) >= 0.84:
                     if float(row.get("champion_verify_score") or 0) < 0.85:
-                        prog = [
-                            int(x, 16) if isinstance(x, str) else int(x)
-                            for x in row["champion_program"]
-                        ]
+                        prog = [int(x, 16) if isinstance(x, str) else int(x) for x in row["champion_program"]]
                         break
         if prog is None:
             cf_path = os.path.join(
@@ -237,10 +233,7 @@ class TestRegisterRepair(unittest.TestCase):
             level_data = cf.get("levels", {}).get("30")
             if not level_data:
                 self.skipTest("L30 champion missing")
-            prog = [
-                int(x, 16) if isinstance(x, str) else int(x)
-                for x in level_data["champion_program"]
-            ]
+            prog = [int(x, 16) if isinstance(x, str) else int(x) for x in level_data["champion_program"]]
         eng = EvolutionEngine(EvolutionConfig(curriculum_level=30))
         eng._refresh_task_instance()
         trace = eng._evaluate(prog)

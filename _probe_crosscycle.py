@@ -3,6 +3,7 @@
 Three back-to-back builds of the terminal probe pool with different rng
 seeds (stand-ins for consecutive cycles) under enlarged memo caches.
 """
+
 from __future__ import annotations
 
 import functools
@@ -77,16 +78,14 @@ def main() -> None:
     champ = load_champion()
     print(f"champion words={len(champ)} big_cache={BIG}", flush=True)
     enlarge_caches()
-    from evolution.terminal_stagnation import select_terminal_probes_for_batch, terminal_cycles_at_level
     from evolution.mutation_helpers import collect_scan_floor_growth_crossover_fills
+    from evolution.terminal_stagnation import select_terminal_probes_for_batch, terminal_cycles_at_level
 
     print("terminal_cycles_at_level =", terminal_cycles_at_level(), flush=True)
     for i, seed in enumerate((7596, 7597, 7598), start=1):
         measure(
             f"probe_pool build #{i} (rng seed {seed})",
-            lambda s=seed: select_terminal_probes_for_batch(
-                list(champ), 30, random.Random(s), 12, pop_size=50
-            ),
+            lambda s=seed: select_terminal_probes_for_batch(list(champ), 30, random.Random(s), 12, pop_size=50),
         )
     measure(
         "growth crossover fills (2nd)",

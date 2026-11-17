@@ -143,12 +143,15 @@ def test_pick_mutation_parent_uses_shorter_archive_cell():
     longp = eng.champion
     eng.qd_archive.add_solution(compute_qd_axes(short, _trace(12)), 1.0, short, _trace(12))
     eng.qd_archive.add_solution(compute_qd_axes(longp, _trace(2)), 572.0, longp, _trace(2))
+
     # Force archive branch
     class _Always:
         def random(self):
             return 0.0
+
         def randrange(self, n):
             return 0
+
     eng.rng = _Always()
     parent, traces = eng._pick_mutation_parent()
     assert parent == short

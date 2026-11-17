@@ -1,4 +1,5 @@
 import json
+
 for r in open("multi_cycle_results.jsonl").readlines()[-18:]:
     d = json.loads(r)
     print(

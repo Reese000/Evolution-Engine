@@ -76,12 +76,8 @@ def rank_env(monkeypatch, tmp_path):
     def _l10(prog, level=10):
         return _LIFT_L10 if tuple(prog) in lift_keys else _CHAMP_L10
 
-    monkeypatch.setattr(
-        "evolution.fitness_helpers.compact_l30_promotion_raw_fitness", _prom
-    )
-    monkeypatch.setattr(
-        "evolution.terminal_stagnation.curriculum_verify_mean", _l10
-    )
+    monkeypatch.setattr("evolution.fitness_helpers.compact_l30_promotion_raw_fitness", _prom)
+    monkeypatch.setattr("evolution.terminal_stagnation.curriculum_verify_mean", _l10)
     monkeypatch.setattr(
         "evolution.terminal_stagnation.terminal_efficiency_at_scan_floor",
         lambda _n: True,
@@ -126,9 +122,7 @@ def test_engine_tie_rerecord_keeps_warm_invariant(rank_env):
     record_scan_floor_eq_refine_seeds(_CHAMP, ties[:6] + lifts[:2], cycle=1)
     payload = json.loads(rank_env.read_text())
     n_ties, n_lifts = _split(payload["seeds"], ties, lifts)
-    assert (n_ties, n_lifts) == (6, 2), "seed state was %s" % (
-        (n_ties, n_lifts),
-    )
+    assert (n_ties, n_lifts) == (6, 2), "seed state was %s" % ((n_ties, n_lifts),)
 
     # External run_multi_cycle.py auto-record: its eq pool is all ties.
     record_scan_floor_eq_refine_seeds(_CHAMP, ties, cycle=7596)
@@ -137,18 +131,19 @@ def test_engine_tie_rerecord_keeps_warm_invariant(rank_env):
     stored = payload["seeds"]
     n_ties, n_lifts = _split(stored, ties, lifts)
     assert len(stored) == 8
-    assert n_lifts >= 2, (
-        "engine tie re-record left only %d L10-lift seeds "
-        "(%d ties + %d lift) -> payload is COLD" % (n_lifts, n_ties, n_lifts)
+    assert (
+        n_lifts >= 2
+    ), "engine tie re-record left only %d L10-lift seeds " "(%d ties + %d lift) -> payload is COLD" % (
+        n_lifts,
+        n_ties,
+        n_lifts,
     )
     assert warm_eq_refine_disk_seeds_sufficient(_CHAMP, stored, seed_cap=8)
 
     loaded = load_scan_floor_eq_refine_seeds(_CHAMP, max_seeds=8)
     assert len(loaded) == 8
     _l_ties, loaded_lifts = _split(loaded, ties, lifts)
-    assert loaded_lifts >= 2, "load returned only %d L10-lift seeds" % (
-        loaded_lifts,
-    )
+    assert loaded_lifts >= 2, "load returned only %d L10-lift seeds" % (loaded_lifts,)
     assert warm_eq_refine_disk_seeds_sufficient(_CHAMP, loaded, seed_cap=8)
 
 
@@ -160,10 +155,7 @@ def test_six_ties_plus_lift_rerecord_stays_warm_characterization(rank_env):
     the 6-vs-7 threshold; `test_engine_tie_rerecord_keeps_warm_invariant` is
     the case that actually fails pre-fix.
     """
-    from evolution.mutation_helpers import (
-        record_scan_floor_eq_refine_seeds,
-        warm_eq_refine_disk_seeds_sufficient,
-    )
+    from evolution.mutation_helpers import record_scan_floor_eq_refine_seeds, warm_eq_refine_disk_seeds_sufficient
 
     ties = _ties(7)
     lifts = _lifts(8)
@@ -174,9 +166,7 @@ def test_six_ties_plus_lift_rerecord_stays_warm_characterization(rank_env):
     n_ties, n_lifts = _split(payload["seeds"], ties, lifts)
     assert len(payload["seeds"]) == 8
     assert (n_ties, n_lifts) == (6, 2)
-    assert warm_eq_refine_disk_seeds_sufficient(
-        _CHAMP, payload["seeds"], seed_cap=8
-    )
+    assert warm_eq_refine_disk_seeds_sufficient(_CHAMP, payload["seeds"], seed_cap=8)
 
 
 def test_record_without_lift_candidates_keeps_prom_ranking(rank_env):
@@ -194,10 +184,7 @@ def test_record_without_lift_candidates_keeps_prom_ranking(rank_env):
 
 def test_lift_reserve_applies_at_reduced_cap(rank_env, monkeypatch):
     """cap=4 -> reserve min(2, 4) = 2 lift slots, ties take the rest."""
-    from evolution.mutation_helpers import (
-        record_scan_floor_eq_refine_seeds,
-        warm_eq_refine_disk_seeds_sufficient,
-    )
+    from evolution.mutation_helpers import record_scan_floor_eq_refine_seeds, warm_eq_refine_disk_seeds_sufficient
 
     monkeypatch.setenv("EE_SCAN_FLOOR_EQ_REFINE_SEED_CAP", "4")
     ties = _ties(7)
@@ -212,25 +199,18 @@ def test_lift_reserve_applies_at_reduced_cap(rank_env, monkeypatch):
     assert n_ties == 2
     assert warm_eq_refine_disk_seeds_sufficient(_CHAMP, stored, seed_cap=4)
     # survivors stay PROM-ranked: ties (higher prom) still come first
-    assert n_ties == sum(
-        1 for s in stored[:2] if tuple(s) in {tuple(t) for t in ties}
-    )
+    assert n_ties == sum(1 for s in stored[:2] if tuple(s) in {tuple(t) for t in ties})
 
 
 def test_no_reserve_when_champion_l10_saturated(rank_env, monkeypatch):
     """warm_eq_refine_disk_seeds_sufficient short-circuits at champ L10 >= 0.85,
     so reserving lift slots there would be dead weight."""
-    from evolution.mutation_helpers import (
-        record_scan_floor_eq_refine_seeds,
-        warm_eq_refine_disk_seeds_sufficient,
-    )
+    from evolution.mutation_helpers import record_scan_floor_eq_refine_seeds, warm_eq_refine_disk_seeds_sufficient
 
     def _saturated(prog, level=10):
         return 0.9
 
-    monkeypatch.setattr(
-        "evolution.terminal_stagnation.curriculum_verify_mean", _saturated
-    )
+    monkeypatch.setattr("evolution.terminal_stagnation.curriculum_verify_mean", _saturated)
     ties = _ties(7)
     lifts = _lifts(8)
     record_scan_floor_eq_refine_seeds(_CHAMP, ties + lifts, cycle=5)
@@ -239,18 +219,13 @@ def test_no_reserve_when_champion_l10_saturated(rank_env, monkeypatch):
     stored = payload["seeds"]
     assert len(stored) == 8
     # unchanged historical behaviour: PROM-ranked, no slots held open
-    assert [tuple(p) for p in stored[: len(ties)]] == [
-        tuple(p) for p in ties
-    ]
+    assert [tuple(p) for p in stored[: len(ties)]] == [tuple(p) for p in ties]
     assert warm_eq_refine_disk_seeds_sufficient(_CHAMP, stored, seed_cap=8)
 
 
 def test_lift_reserve_at_floor_cap_2(rank_env, monkeypatch):
     """record()'s cap floor is max(2, env): at cap=2 both slots go to lift seeds."""
-    from evolution.mutation_helpers import (
-        record_scan_floor_eq_refine_seeds,
-        warm_eq_refine_disk_seeds_sufficient,
-    )
+    from evolution.mutation_helpers import record_scan_floor_eq_refine_seeds, warm_eq_refine_disk_seeds_sufficient
 
     monkeypatch.setenv("EE_SCAN_FLOOR_EQ_REFINE_SEED_CAP", "2")
     ties = _ties(7)

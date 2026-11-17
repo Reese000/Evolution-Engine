@@ -57,6 +57,7 @@ def test_flag_verify_regression_rollback(tmp_path):
     assert tick.get("champion_rollback_cycle") == 3444
     assert tick.get("champion_rollback_program") == prog
 
+
 def test_find_best_certified_prefers_high_fitness(tmp_path, monkeypatch):
     """Cycle 10 (fitness 264) beats cycle 11 (fitness 26) when both verify=1.0."""
     monkeypatch.setattr(
@@ -363,13 +364,8 @@ def test_growth_material_anchor_uses_certified_floor_when_live_longer(tmp_path, 
     assert parents == [grown]
 
 
-def test_record_growth_material_strips_duplicate_trailing_ebreak(
-    tmp_path, monkeypatch
-):
-    from evolution.champion_rollback import (
-        _growth_material_path,
-        record_scan_floor_growth_material,
-    )
+def test_record_growth_material_strips_duplicate_trailing_ebreak(tmp_path, monkeypatch):
+    from evolution.champion_rollback import _growth_material_path, record_scan_floor_growth_material
 
     champ = [1, 2, 3, 0x00100073]
     padded = champ + [9, 10, 0x00100073, 0x00100073, 0x00100073]
@@ -401,9 +397,7 @@ def test_record_growth_material_strips_duplicate_trailing_ebreak(
     assert prog == champ + [9, 10, 0x00100073]
 
 
-def test_collect_growth_material_compress_parents_prefers_champ_prom_ties(
-    tmp_path, monkeypatch
-):
+def test_collect_growth_material_compress_parents_prefers_champ_prom_ties(tmp_path, monkeypatch):
     from evolution.champion_rollback import collect_growth_material_compress_parents
 
     champ = [1, 2, 3, 0x00100073]
@@ -443,9 +437,7 @@ def test_collect_growth_material_compress_parents_prefers_champ_prom_ties(
     assert growth_phase in parents
 
 
-def test_collect_growth_material_compress_parents_prefers_growth_phase_without_ties(
-    tmp_path, monkeypatch
-):
+def test_collect_growth_material_compress_parents_prefers_growth_phase_without_ties(tmp_path, monkeypatch):
     from evolution.champion_rollback import collect_growth_material_compress_parents
 
     champ = [1, 2, 3, 0x00100073]
@@ -477,9 +469,7 @@ def test_collect_growth_material_compress_parents_prefers_growth_phase_without_t
     )
     monkeypatch.setattr(
         "evolution.fitness_helpers.compact_l30_promotion_raw_fitness",
-        lambda prog: 325.5
-        if prog == champ
-        else (325.03 if prog == growth_phase else 325.1),
+        lambda prog: 325.5 if prog == champ else (325.03 if prog == growth_phase else 325.1),
     )
 
     parents = collect_growth_material_compress_parents(champ, max_parents=4)
@@ -530,9 +520,7 @@ def test_collect_growth_material_skips_stale_sub_champion_prom(tmp_path, monkeyp
     assert parents == [fresh]
 
 
-def test_collect_growth_material_parents_prefers_l10_lift_below_prom_floor(
-    tmp_path, monkeypatch
-):
+def test_collect_growth_material_parents_prefers_l10_lift_below_prom_floor(tmp_path, monkeypatch):
     from evolution.champion_rollback import collect_growth_material_parents
 
     champ = [1, 2, 3, 0x00100073]
@@ -613,13 +601,8 @@ def test_growth_material_records_l10_lift_below_prom_floor(tmp_path, monkeypatch
     assert record_scan_floor_growth_material(champ, grown, cycle=10) is True
 
 
-def test_growth_material_retains_l10_lift_when_recording_higher_prom(
-    tmp_path, monkeypatch
-):
-    from evolution.champion_rollback import (
-        _load_growth_material_store,
-        record_scan_floor_growth_material,
-    )
+def test_growth_material_retains_l10_lift_when_recording_higher_prom(tmp_path, monkeypatch):
+    from evolution.champion_rollback import _load_growth_material_store, record_scan_floor_growth_material
     from evolution.mutation_helpers import clear_scan_floor_inject_caches
 
     clear_scan_floor_inject_caches()

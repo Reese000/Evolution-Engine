@@ -8,6 +8,7 @@ axis (immediate values) over the SAME prefix-locked loci to 2-way and
 No fitness/gate modification. Records via record_scan_floor_eq_refine_seeds
 only if a variant reaches the task bar AND gate-qualifies.
 """
+
 import itertools
 import json
 import os
@@ -16,12 +17,9 @@ import time
 os.environ.setdefault("EE_USE_GPU", "0")
 
 from evolution.fitness_helpers import compact_l30_promotion_raw_fitness
-from evolution.terminal_stagnation import (
-    _SCAN_FLOOR_WIDE_IMM_DELTAS,
-    get_scan_floor_gate,
-    scan_floor_min_raw_gain,
-)
-from milestone1.rv32i_mask import decode as rv32i_decode, encode as rv32i_encode
+from evolution.terminal_stagnation import _SCAN_FLOOR_WIDE_IMM_DELTAS, get_scan_floor_gate, scan_floor_min_raw_gain
+from milestone1.rv32i_mask import decode as rv32i_decode
+from milestone1.rv32i_mask import encode as rv32i_encode
 from mutation_proposer import _is_ebreak
 
 TASK_BAR = 325.836
@@ -43,8 +41,11 @@ def apply_delta_one(prog, idx, delta):
         if "imm" not in d:
             return None
         w = rv32i_encode(
-            name=str(d["name"]), rd=int(d.get("rd", 0)), rs1=int(d.get("rs1", 0)),
-            rs2=int(d.get("rs2", 0)), imm=int(d.get("imm", 0)) + int(delta),
+            name=str(d["name"]),
+            rd=int(d.get("rd", 0)),
+            rs1=int(d.get("rs1", 0)),
+            rs2=int(d.get("rs2", 0)),
+            imm=int(d.get("imm", 0)) + int(delta),
             validate=True,
         )
     except (ValueError, TypeError, KeyError):
@@ -106,7 +107,7 @@ for name, b in bases:
         if len(e) >= sz:
             plan.append((name, list(itertools.combinations(e, sz)), sz))
 
-log(f"plan: " + ", ".join(f"{n}/size{sz}x{len(c)}" for n, c, sz in plan))
+log("plan: " + ", ".join(f"{n}/size{sz}x{len(c)}" for n, c, sz in plan))
 
 for name, combos, sz in plan:
     base = dict(bases)[name]
@@ -138,8 +139,15 @@ for name, combos, sz in plan:
                 log(f"  NEW BEST prom={pr:.6f} {best_desc}")
             per_base_best[name] = max(per_base_best.get(name, 0.0), pr)
             if pr >= TASK_BAR:
-                hits.append({"prom": pr, "base": name, "loci": list(combo),
-                             "deltas": list(deltas), "program": [int(x) for x in key]})
+                hits.append(
+                    {
+                        "prom": pr,
+                        "base": name,
+                        "loci": list(combo),
+                        "deltas": list(deltas),
+                        "program": [int(x) for x in key],
+                    }
+                )
                 log(f"  !! >= task_bar {pr:.6f} {name} {list(combo)} {list(deltas)}")
             if evals % 2000 == 0:
                 log(f"  ...evals={evals}/{MAX_EVALS} best={best:.6f}")
@@ -162,8 +170,7 @@ gate_ok_hits = []
 for h in hits:
     ok = gate.qualifies(h["program"])
     h["gate"] = ok
-    log(f"  hit prom={h['prom']:.6f} gate={ok} base={h['base']} "
-        f"loci={h['loci']} deltas={h['deltas']}")
+    log(f"  hit prom={h['prom']:.6f} gate={ok} base={h['base']} " f"loci={h['loci']} deltas={h['deltas']}")
     if ok:
         gate_ok_hits.append(h)
 
@@ -201,8 +208,7 @@ if gate_ok_hits:
 
     top = gate_ok_hits[0]
     log("RECORDING breakthrough via record_scan_floor_eq_refine_seeds ...")
-    record_scan_floor_eq_refine_seeds(champ, [list(top["program"])],
-                                      cycle=int(row.get("cycle") or 0))
+    record_scan_floor_eq_refine_seeds(champ, [list(top["program"])], cycle=int(row.get("cycle") or 0))
     log("recorded.")
 else:
     log("NO gate-qualified variant >= task bar - combo axis exhausted (nothing recorded).")

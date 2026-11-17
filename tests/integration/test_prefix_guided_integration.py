@@ -161,7 +161,6 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
         """_replace_with_model_guided lazily initializes PrefixGenerator."""
         import tempfile
 
-
         with tempfile.TemporaryDirectory() as tmpdir:
             engine = self._make_engine(tmpdir)
             # No prefix generator yet
@@ -177,9 +176,11 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
                 ["0x02a00093", "0x03a00113", "0x00100073"],
             ]
 
-            with patch("prefix_generator.PrefixGenerator", return_value=mock_pg), \
-                 patch("os.path.isfile", return_value=True):
-                    engine._replace_with_model_guided(challengers, model_ratio=0.2)
+            with (
+                patch("prefix_generator.PrefixGenerator", return_value=mock_pg),
+                patch("os.path.isfile", return_value=True),
+            ):
+                engine._replace_with_model_guided(challengers, model_ratio=0.2)
 
             # PrefixGenerator should now be set
             self.assertIsNotNone(engine._prefix_generator)
@@ -201,9 +202,11 @@ class TestPrefixGuidedEngineWiring(unittest.TestCase):
                 ["0x02a00093", "0x002080b3", "0x00100073"],
             ]
 
-            with patch("prefix_generator.PrefixGenerator", return_value=mock_pg), \
-                 patch("os.path.isfile", return_value=True):
-                    replaced = engine._replace_with_model_guided(challengers, model_ratio=0.2)
+            with (
+                patch("prefix_generator.PrefixGenerator", return_value=mock_pg),
+                patch("os.path.isfile", return_value=True),
+            ):
+                replaced = engine._replace_with_model_guided(challengers, model_ratio=0.2)
 
             # At least one challenger should have been replaced
             self.assertGreater(len(replaced), 0)

@@ -12,12 +12,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from evolution.flatline_guard import (
-    apply_flatline_halt,
-    assess_flatline,
-    clear_flatline_halt,
-    is_flatline_halted,
-)
+from evolution.flatline_guard import apply_flatline_halt, assess_flatline, clear_flatline_halt, is_flatline_halted
 
 
 def _stop_daemon() -> None:

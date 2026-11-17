@@ -232,7 +232,6 @@ def _run_training_epochs(
 ) -> dict[str, Any]:
     from rv32i_model import compute_loss as weighted_compute_loss
     from rv32i_model import compute_loss_with_scheduled_sampling
-
     from training.schedule import adjust_dropout
 
     best_val_loss = float("inf")
@@ -416,9 +415,7 @@ def train(
     checkpoint_dir = os.path.join(BASE_DIR, "checkpoints")
     ckpt_path = _prepare_train_checkpoint(resume_path, checkpoint_dir, reset_checkpoint)
     device = _resolve_train_device()
-    model = _load_compiled_train_model(
-        ckpt_path, model_size, device, migrate, use_grad_checkpointing, compile_mode
-    )
+    model = _load_compiled_train_model(ckpt_path, model_size, device, migrate, use_grad_checkpointing, compile_mode)
 
     datasets = _build_training_datasets(recurrent_data_path, augmentation_k, val_split, device)
     if datasets is None:

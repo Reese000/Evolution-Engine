@@ -1,4 +1,5 @@
 """Per-program partial verify scaling at terminal depth."""
+
 import os
 import random
 import unittest
@@ -8,7 +9,7 @@ class TestPartialVerifyFitness(unittest.TestCase):
     def test_full_verify_program_not_scaled_by_champion_partial(self):
         os.environ.setdefault("EE_USE_GPU", "0")
         from evolution.fitness_helpers import partial_verify_multiplier
-        from evolution_engine import EvolutionEngine, EvolutionConfig
+        from evolution_engine import EvolutionConfig, EvolutionEngine
 
         eng = EvolutionEngine(EvolutionConfig(curriculum_level=30))
         eng.champion_level = 30

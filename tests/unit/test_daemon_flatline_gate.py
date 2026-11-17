@@ -10,6 +10,7 @@ Red-check: if the gate line in scripts/continuous_evolution_daemon.py is
 mutated back (e.g., `return False` hardcoded / main ignoring the result),
 these tests fail.
 """
+
 from __future__ import annotations
 
 import json
@@ -38,9 +39,7 @@ def _write_flatline(project_root: Path, halted: bool) -> None:
         "report": {"halted": halted, "window": 40, "reasons": ["oscillation trap"]},
         "resume_requires": "development work; run scripts/flatline_guard.py --resume",
     }
-    (project_root / ".agents" / "flatline_state.json").write_text(
-        json.dumps(state), encoding="utf-8"
-    )
+    (project_root / ".agents" / "flatline_state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
 def _write_tick(project_root: Path, user_paused: bool) -> None:
@@ -49,9 +48,7 @@ def _write_tick(project_root: Path, user_paused: bool) -> None:
         "loop_paused": user_paused,
         "status": "in_progress",
     }
-    (project_root / ".agents" / "tick_state.json").write_text(
-        json.dumps(state), encoding="utf-8"
-    )
+    (project_root / ".agents" / "tick_state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
 def test_gate_returns_true_when_flatline_halted(project_root: Path, monkeypatch) -> None:
@@ -95,9 +92,7 @@ def test_gate_disabled_when_env_guard_off(project_root: Path, monkeypatch) -> No
     assert daemon._maybe_apply_flatline_halt() is False
 
 
-def test_wait_loop_blocks_while_halted_and_exits_after_resume(
-    project_root: Path, monkeypatch
-) -> None:
+def test_wait_loop_blocks_while_halted_and_exits_after_resume(project_root: Path, monkeypatch) -> None:
     """The wait loop must stay blocked while halted, and return once the halt
     is cleared (resume path). Real threads + a tiny poll interval."""
     _write_flatline(project_root, halted=True)

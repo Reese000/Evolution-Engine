@@ -115,9 +115,7 @@ def assess_flatline(
     tail_n = int(os.environ.get("EE_FLATLINE_TAIL", "15"))
     tail = points[-tail_n:] if len(points) >= tail_n else points
     tail_levels = [int(p.get("level", p.get("final_level", 0))) for p in tail]
-    tail_verifies = [
-        float(p.get("verify_score", p.get("champion_verify_score", 0))) for p in tail
-    ]
+    tail_verifies = [float(p.get("verify_score", p.get("champion_verify_score", 0))) for p in tail]
     tail_plateau = (
         len(tail) >= tail_n
         and (max(tail_levels) - min(tail_levels)) == 0
@@ -145,8 +143,7 @@ def assess_flatline(
     if tail_plateau and c3_stuck:
         report.halted = True
         report.reasons.append(
-            f"tail plateau: L{tail_levels[-1]} verify={tail_verifies[-1]:.3f} "
-            f"unchanged for {len(tail)} cycles"
+            f"tail plateau: L{tail_levels[-1]} verify={tail_verifies[-1]:.3f} " f"unchanged for {len(tail)} cycles"
         )
         report.reasons.append(f"C3 stuck ({report.c3_passes}/10)")
 
@@ -156,9 +153,7 @@ def assess_flatline(
 
     if oscillation_trap and c3_stuck and level_flat and len(points) >= min_window:
         report.halted = True
-        report.reasons.append(
-            f"oscillation trap: {unique_states} unique (level,verify) states in {len(points)} cycles"
-        )
+        report.reasons.append(f"oscillation trap: {unique_states} unique (level,verify) states in {len(points)} cycles")
 
     if epi_flat and verify_flat and level_flat and c3_stuck and epi_stalled:
         report.halted = True
@@ -182,9 +177,7 @@ def assess_flatline(
         fitness = float(last.get("fitness", last.get("final_fitness", 0)))
         if terminal_certified_plateau(level, verify, fitness):
             report.halted = False
-            report.reasons.append(
-                "certified L30 terminal plateau: flat metrics expected; evolution continues"
-            )
+            report.reasons.append("certified L30 terminal plateau: flat metrics expected; evolution continues")
 
     return report
 

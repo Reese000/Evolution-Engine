@@ -6,6 +6,7 @@ complementing the mutation-focused tests in test_mutation_properties.py.
 Covers: population management, QD archive monotonicity, fitness bounds,
 mutation rate scheduling, and archive coverage.
 """
+
 from __future__ import annotations
 
 import math
@@ -17,6 +18,7 @@ from hypothesis import strategies as st
 
 # Path setup
 from paths import ensure_project_on_path
+
 ensure_project_on_path()
 
 # ── Hypothesis strategies ────────────────────────────────────────────
@@ -81,9 +83,7 @@ class TestArchiveProperties:
 
         # Monotonicity: each size >= previous
         for i in range(1, len(sizes)):
-            assert sizes[i] >= sizes[i - 1], (
-                f"Archive shrank: sizes[{i-1}]={sizes[i-1]} -> sizes[{i}]={sizes[i]}"
-            )
+            assert sizes[i] >= sizes[i - 1], f"Archive shrank: sizes[{i-1}]={sizes[i-1]} -> sizes[{i}]={sizes[i]}"
 
     @given(
         descriptors=st.lists(_descriptor(), min_size=1, max_size=30),
@@ -99,9 +99,7 @@ class TestArchiveProperties:
         for i in range(n):
             archive.add_solution(descriptors[i], fitnesses[i], [i])
         solutions = archive.grid_solutions()
-        assert len(solutions) == archive.size, (
-            f"grid_solutions={len(solutions)} != size={archive.size}"
-        )
+        assert len(solutions) == archive.size, f"grid_solutions={len(solutions)} != size={archive.size}"
 
     @given(desc=_descriptor())
     @settings(max_examples=100)
@@ -210,9 +208,9 @@ class TestMutationRateScheduling:
         else:
             frac = gen / total_gens
             rate = start_rate + (end_rate - start_rate) * frac
-        assert min(start_rate, end_rate) <= rate <= max(start_rate, end_rate), (
-            f"scheduled rate={rate} outside [{min(start_rate, end_rate)}, {max(start_rate, end_rate)}]"
-        )
+        assert (
+            min(start_rate, end_rate) <= rate <= max(start_rate, end_rate)
+        ), f"scheduled rate={rate} outside [{min(start_rate, end_rate)}, {max(start_rate, end_rate)}]"
 
     @given(
         start_rate=st.floats(min_value=0.0, max_value=1.0),

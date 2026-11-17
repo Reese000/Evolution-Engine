@@ -30,6 +30,7 @@ Repairs, all matching production drift observed 2026-09-24 (7 failing tests):
    L30 champions (live rows ~27w) -> flip a valid interior word instead.
    Oracle unchanged (mutant must still score strictly below champion).
 """
+
 import pathlib
 import sys
 
@@ -37,10 +38,12 @@ PATH = pathlib.Path(__file__).resolve().parent / "tests" / "unit" / "test_archiv
 text = PATH.read_text(encoding="utf-8")
 edits = []
 
+
 def rep(old: str, new: str, tag: str) -> None:
     n = text.count(old)
     assert n == 1, f"[{tag}] expected exactly 1 occurrence, found {n}: {old[:80]!r}"
     edits.append(tag)
+
 
 # --- F1: record (mode, offset) tuples -------------------------------------
 OLD_F1A = """    calls: list[bool | None] = []
@@ -72,8 +75,8 @@ NEW_F1B = (
 rep(OLD_F1B, NEW_F1B, "F1b-assert")
 
 # --- F3: probe_material kwarg ---------------------------------------------
-OLD_F3 = '        lambda _c, max_seeds=4: [alt],\n'
-NEW_F3 = '        lambda _c, max_seeds=4, probe_material=False: [alt],\n'
+OLD_F3 = "        lambda _c, max_seeds=4: [alt],\n"
+NEW_F3 = "        lambda _c, max_seeds=4, probe_material=False: [alt],\n"
 rep(OLD_F3, NEW_F3, "F3-probe-material")
 
 # --- F4: persist-floor env -------------------------------------------------

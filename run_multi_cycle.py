@@ -119,12 +119,7 @@ except ImportError:
 
 # MetaController -- dynamic parameterization orchestration
 try:
-    from meta_controller import (
-        MetaController,
-        StagnationResult,
-        TelemetrySnapshot,
-        parse_val_loss_from_retrain_log,
-    )
+    from meta_controller import MetaController, StagnationResult, TelemetrySnapshot, parse_val_loss_from_retrain_log
 
     _HAS_META_CONTROLLER = True
 except ImportError:
@@ -302,14 +297,10 @@ def _sync_champion_metrics_from_engine(engine: Any, metrics: dict[str, Any]) -> 
                 and 12 <= len(engine.champion) <= L30_COMPACT_MAX_WORDS
                 and metrics.get("champion_verified")
             ):
-                prom_raw = float(
-                    compact_l30_promotion_raw_fitness(list(engine.champion))
-                )
+                prom_raw = float(compact_l30_promotion_raw_fitness(list(engine.champion)))
                 if prom_raw > 0.0:
                     metrics["promotion_raw_fitness"] = prom_raw
-    metrics["verified_fitness"] = (
-        float(metrics["final_fitness"]) if metrics["champion_verified"] else 0.0
-    )
+    metrics["verified_fitness"] = float(metrics["final_fitness"]) if metrics["champion_verified"] else 0.0
 
 
 def run_evolution(
@@ -449,9 +440,9 @@ def run_evolution(
             tick = json.load(f)
         if tick.get("force_reference_champion") or tick.get("force_champion_reseed"):
             os.environ["EE_FORCE_REFERENCE_CHAMPION"] = "1"
-        if (
-            tick.get("force_register_repair") or tick.get("force_champion_reseed")
-        ) and not tick.get("terminal_diversity_boost"):
+        if (tick.get("force_register_repair") or tick.get("force_champion_reseed")) and not tick.get(
+            "terminal_diversity_boost"
+        ):
             os.environ["EE_REGISTER_REPAIR_BOOST"] = "1"
     except (OSError, json.JSONDecodeError):
         pass
@@ -513,11 +504,7 @@ def run_evolution(
     hist = getattr(engine, "best_fitness_history", None) or []
     fitness_start = hist[0] if hist else None
     fitness_end = hist[-1] if hist else None
-    fitness_gain = (
-        (fitness_end - fitness_start)
-        if fitness_start is not None and fitness_end is not None
-        else 0.0
-    )
+    fitness_gain = (fitness_end - fitness_start) if fitness_start is not None and fitness_end is not None else 0.0
 
     metrics = {
         "cycle": cycle,
@@ -571,10 +558,7 @@ def run_evolution(
             engine._enforce_l30_certified_champion()
         elif hasattr(engine, "_maybe_restore_best_certified_champion"):
             engine._maybe_restore_best_certified_champion()
-        from evolution.fitness_helpers import (
-            reporting_champion_fitness,
-            terminal_certified_fitness_context,
-        )
+        from evolution.fitness_helpers import reporting_champion_fitness, terminal_certified_fitness_context
 
         with terminal_certified_fitness_context(engine):
             verified, verify_score = engine._verify_champion()
@@ -614,14 +598,10 @@ def run_evolution(
                     and 12 <= len(engine.champion) <= L30_COMPACT_MAX_WORDS
                     and metrics.get("champion_verified")
                 ):
-                    prom_raw = float(
-                        compact_l30_promotion_raw_fitness(list(engine.champion))
-                    )
+                    prom_raw = float(compact_l30_promotion_raw_fitness(list(engine.champion)))
                     if prom_raw > 0.0:
                         metrics["promotion_raw_fitness"] = prom_raw
-        metrics["verified_fitness"] = (
-            float(metrics["final_fitness"]) if metrics["champion_verified"] else 0.0
-        )
+        metrics["verified_fitness"] = float(metrics["final_fitness"]) if metrics["champion_verified"] else 0.0
     except (RuntimeError, TypeError, ValueError, AttributeError) as e:
         log(f"  Cycle {cycle}: Champion verify/fitness recompute failed: {e}")
 
@@ -660,19 +640,14 @@ def run_evolution(
             champ_prog
             and certified_words > 0
             and len(champ_prog) == certified_words
-            and int(metrics.get("final_level", 0)) >= int(
-                getattr(getattr(engine, "config", None), "max_level", 30)
-            )
+            and int(metrics.get("final_level", 0)) >= int(getattr(getattr(engine, "config", None), "max_level", 30))
         ):
             if maybe_rearm_scan_floor_above_champion(
                 int(cycle),
                 list(champ_prog),
                 verify_score=float(metrics.get("champion_verify_score", 0.0)),
             ):
-                log(
-                    f"  Cycle {cycle}: Re-armed scan floor at "
-                    f"{len(champ_prog)}w (champion outgrew shorter floor)"
-                )
+                log(f"  Cycle {cycle}: Re-armed scan floor at " f"{len(champ_prog)}w (champion outgrew shorter floor)")
     except (RuntimeError, TypeError, ValueError, AttributeError, ImportError) as e:
         log(f"  Cycle {cycle}: Scan floor re-arm failed: {e}")
 
@@ -1186,9 +1161,7 @@ def _retry_gpu_retrain_after_cuda_error(
     is_device_not_ready = "device not ready" in cuda_err_str.lower()
     is_cudagraph = cudagraph_err and compile_mode is not None
     if is_cudagraph and not is_device_not_ready:
-        log(
-            f"  Cycle {cycle}: CUDAGraphs error with compile_mode={compile_mode} -- retrying without compile"
-        )
+        log(f"  Cycle {cycle}: CUDAGraphs error with compile_mode={compile_mode} -- retrying without compile")
         train_kwargs["compile_mode"] = None
         try:
             train_mod.train(**train_kwargs)
@@ -1395,9 +1368,7 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
     retrain_log = os.path.join(PROJECT_ROOT, f"cycle_{cycle}", "retrain.log")
 
     run_cfg = _resolve_retrain_run_config(cycle, config, best_level)
-    cmd = _build_retrain_subprocess_cmd(
-        cycle, checkpoint_path, recurrent_data, train_script, run_cfg, best_level
-    )
+    cmd = _build_retrain_subprocess_cmd(cycle, checkpoint_path, recurrent_data, train_script, run_cfg, best_level)
     log_cmd = " ".join(cmd[:6]) + " [...]"
     log(f"  Cycle {cycle}: Command: {log_cmd}")
     log(f"  Cycle {cycle}: Retrain timeout: {run_cfg.train_timeout}s")
@@ -1422,10 +1393,7 @@ def retrain_model(cycle: int, checkpoint_path: str, config: Any = None, best_lev
         train_kwargs = _build_retrain_train_kwargs(checkpoint_path, recurrent_data, run_cfg, config)
         compile_mode = run_cfg.compile_mode
         use_amp = train_kwargs.get("amp", True)
-        log(
-            f"  Cycle {cycle}: AMP={'disabled' if not use_amp else 'enabled'}, "
-            f"torch.compile={compile_mode}"
-        )
+        log(f"  Cycle {cycle}: AMP={'disabled' if not use_amp else 'enabled'}, " f"torch.compile={compile_mode}")
 
         train_kwargs["output_path"] = os.path.join(M1_CHECKPOINTS, f"checkpoint_cycle_{cycle}.pt")
         retrain_ok, fatal_result = _execute_in_process_retrain(
@@ -1854,9 +1822,7 @@ def _apply_resume_state(ctx: MultiCycleContext) -> None:
             float(last.get("final_fitness", 0.0)),
         ):
             cap = int(os.environ.get("EE_TERMINAL_STRATEGY_ARCHIVE_CAP", "3200"))
-            ctx.prev_archive_state = (
-                cap_strategy_archive_state(ctx.prev_archive_state, cap) or ctx.prev_archive_state
-            )
+            ctx.prev_archive_state = cap_strategy_archive_state(ctx.prev_archive_state, cap) or ctx.prev_archive_state
     log(f"  Resuming: {len(ctx.completed_cycles)} cycles already completed")
     if valid_for_sustained:
         last = valid_for_sustained[-1]
@@ -2015,7 +1981,6 @@ def _prepare_multi_cycle_context(args: argparse.Namespace) -> MultiCycleContext:
     return ctx
 
 
-
 def _run_cycles(ctx: MultiCycleContext) -> None:
     from run_multi_cycle_loop import execute_cycles
 
@@ -2125,7 +2090,9 @@ def compute_forgetting_curve(
     failed = sum(1 for s in scores.values() if s == 0.0)
     from logging import info
 
-    info(f"[ForgettingCurve] L0-L{champion_level}: {perfect} perfect, {partial} partial, {failed} failed")  # noqa: LOG015
+    info(
+        f"[ForgettingCurve] L0-L{champion_level}: {perfect} perfect, {partial} partial, {failed} failed"
+    )  # noqa: LOG015
     return scores
 
 
@@ -2240,7 +2207,9 @@ def _stratified_sample_mem_examples(
     for ex in stratified:
         lev = int(ex.get("level", 0))
         stratified_counts[lev] = stratified_counts.get(lev, 0) + 1
-    logging.info(f"[MemGen] Level distribution after stratified sample: {stratified_counts} ({len(stratified)} taken)")  # noqa: LOG015
+    logging.info(
+        f"[MemGen] Level distribution after stratified sample: {stratified_counts} ({len(stratified)} taken)"
+    )  # noqa: LOG015
 
     # Fill remaining quota with shuffled remaining examples
     # R16: Use id-based set for O(1) membership check (avoids O(N*M) list scan)

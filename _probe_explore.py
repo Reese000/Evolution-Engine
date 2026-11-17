@@ -1,4 +1,5 @@
 """Explore: champion source, seed diff loci vs champion (prefix-locked), scorer timing."""
+
 import json
 import os
 import time
@@ -57,10 +58,7 @@ for i, s in enumerate(seeds):
     pr = compact_l30_promotion_raw_fitness(s)
     dt = time.time() - t
     l10 = curriculum_verify_mean(s, 10)
-    print(
-        f"  seed{i}: diffs={diffs} first_div={prefix} "
-        f"prom={pr:.4f} L10={l10:.3f} score={dt:.2f}s"
-    )
+    print(f"  seed{i}: diffs={diffs} first_div={prefix} " f"prom={pr:.4f} L10={l10:.3f} score={dt:.2f}s")
 
 print(f"\nunion of diff loci ({len(all_locs)}): {sorted(all_locs)}")
 print(f"timings: base_scoring={t_base:.2f}s gate_build={t_gate:.2f}s")

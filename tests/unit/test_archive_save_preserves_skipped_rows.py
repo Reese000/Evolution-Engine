@@ -272,9 +272,9 @@ def test_read_failure_is_reported_loudly(tmp_path: Path, monkeypatch, caplog) ->
     # once per path per process: a locked file must not warn every cycle
     with caplog.at_level(logging.WARNING, logger="champion_archive"):
         ChampionArchive(path=str(path))
-    assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 1, (
-        "the second failing load must be deduped, not repeated"
-    )
+    assert (
+        len([r for r in caplog.records if r.levelname == "WARNING"]) == 1
+    ), "the second failing load must be deduped, not repeated"
 
 
 def test_program_readded_after_eviction_is_written_at_the_tail(tmp_path: Path) -> None:
@@ -305,9 +305,9 @@ def test_program_readded_after_eviction_is_written_at_the_tail(tmp_path: Path) -
     lines = _lines(path)
     assert NULL_GENERATION in lines, "the skipped row must still be preserved"
     assert len(lines) == 3
-    assert lines[-1] == json.dumps(archive.entries[-1].to_dict()), (
-        "a re-added program must be written at the tail, not at its evicted row's slot"
-    )
+    assert lines[-1] == json.dumps(
+        archive.entries[-1].to_dict()
+    ), "a re-added program must be written at the tail, not at its evicted row's slot"
 
 
 def test_skipped_row_keeps_surrounding_whitespace(tmp_path: Path) -> None:

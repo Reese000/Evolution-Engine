@@ -283,7 +283,7 @@ class MetricsCollector:
             sum_ab += da * db
             sum_a2 += da * da
             sum_b2 += db * db
-        denom = (sum_a2 ** 0.5) * (sum_b2 ** 0.5)
+        denom = (sum_a2**0.5) * (sum_b2**0.5)
         r = sum_ab / denom if denom > 0 else 0.0
         return max(-1.0, min(1.0, r))
 
@@ -312,8 +312,14 @@ class MetricsCollector:
         a_vals, b_vals = self._extract_paired_values(records, metric_a, metric_b)
         n = len(a_vals)
         if n < 2:
-            return {"metric_a": metric_a, "metric_b": metric_b, "correlation": 0.0,
-                    "strength": "none", "direction": "none", "sample_size": n}
+            return {
+                "metric_a": metric_a,
+                "metric_b": metric_b,
+                "correlation": 0.0,
+                "strength": "none",
+                "direction": "none",
+                "sample_size": n,
+            }
         r = self._pearson_correlation(a_vals, b_vals)
         abs_r = abs(r)
         if abs_r >= 0.7:
@@ -330,5 +336,11 @@ class MetricsCollector:
             direction = "negative"
         else:
             direction = "none"
-        return {"metric_a": metric_a, "metric_b": metric_b, "correlation": round(r, 6),
-                "strength": strength, "direction": direction, "sample_size": n}
+        return {
+            "metric_a": metric_a,
+            "metric_b": metric_b,
+            "correlation": round(r, 6),
+            "strength": strength,
+            "direction": direction,
+            "sample_size": n,
+        }

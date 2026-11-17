@@ -6,14 +6,8 @@ from strategy_archive import StrategyArchive
 def test_success_rate_matches_after_batch_and_repeat_queries():
     archive = StrategyArchive(max_records=500)
     archive.record_batch(
-        [
-            {"strategy": "RANDOM", "level": 30, "success": True, "gen": i}
-            for i in range(40)
-        ]
-        + [
-            {"strategy": "RANDOM", "level": 30, "success": False, "gen": 40 + i}
-            for i in range(10)
-        ]
+        [{"strategy": "RANDOM", "level": 30, "success": True, "gen": i} for i in range(40)]
+        + [{"strategy": "RANDOM", "level": 30, "success": False, "gen": 40 + i} for i in range(10)]
     )
     first = archive.success_rate("RANDOM", window=20, level=30)
     second = archive.success_rate("RANDOM", window=20, level=30)

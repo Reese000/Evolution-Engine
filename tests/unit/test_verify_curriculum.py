@@ -11,16 +11,12 @@ _ROOT = str(Path(__file__).resolve().parent.parent)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from verify_curriculum import (
-    LEVEL_CLASSES,
-    VERIFY_REGS,
-    encode_program,
-    run_level,
-)
+from verify_curriculum import LEVEL_CLASSES, VERIFY_REGS, encode_program, run_level
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tests for encode_program
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestEncodeProgram:
     def test_empty_program(self):
@@ -49,6 +45,7 @@ class TestEncodeProgram:
 # Tests for VERIFY_REGS
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestVerifyRegs:
     def test_all_levels_defined(self):
         for level_num in range(17):
@@ -66,6 +63,7 @@ class TestVerifyRegs:
 # ══════════════════════════════════════════════════════════════════════════════
 # Tests for run_level
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestRunLevel:
     def test_run_level_returns_dict(self):
@@ -104,6 +102,7 @@ class TestRunLevel:
 # ══════════════════════════════════════════════════════════════════════════════
 # Tests for LEVEL_CLASSES
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestLevelClasses:
     def test_all_17_levels(self):

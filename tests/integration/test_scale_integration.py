@@ -40,11 +40,7 @@ from milestone1.training.scaling.saturation_detector import SaturationDetector
 from milestone1.training.scaling.scale_coordinator import ScaleCoordinator, ScaleState
 from milestone1.training.scaling.scale_validator import ScaleValidator
 from milestone1.training.scaling.scaling_planner import ScalingPlanner
-from milestone1.training.scaling.types import (
-    MigrationResult,
-    TrendSnapshot,
-    ValidationResult,
-)
+from milestone1.training.scaling.types import MigrationResult, TrendSnapshot, ValidationResult
 from milestone1.training.scaling.warm_start_trainer import WarmStartConfig, WarmStartTrainer
 
 # ---------------------------------------------------------------------------

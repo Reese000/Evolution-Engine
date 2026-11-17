@@ -208,9 +208,7 @@ def _decode_word(word: int) -> dict:
 
 def _stub_engine() -> SimpleNamespace:
     """Minimal engine for build_recurrent_dataset.collect_champion_snapshots()."""
-    champion = SimpleNamespace(
-        program=list(WORDS), generation=3, code_size=3, sha256=SHA_TWO, scores={}
-    )
+    champion = SimpleNamespace(program=list(WORDS), generation=3, code_size=3, sha256=SHA_TWO, scores={})
     return SimpleNamespace(
         champion=champion,
         champion_fitness=200.0,
@@ -494,9 +492,7 @@ def test_the_source_guard_flags_the_pre_fix_lines():
         pre_fix_lines = [pre for _pinned, pre in reverts if 'encoding="utf-8"' not in pre]
         # exactly one reverted line was encoding-pinned before this card
         # (recurrent_mixin's eviction reader); every other one was bare
-        assert len(pre_fix_lines) == len(reverts) - (
-            1 if rel == "evolution/recurrent_mixin.py" else 0
-        ), rel
+        assert len(pre_fix_lines) == len(reverts) - (1 if rel == "evolution/recurrent_mixin.py" else 0), rel
         hits = _unpinned_sites("\n".join(pre_fix_lines), rel)
         total += len(pre_fix_lines)
         for line in pre_fix_lines:

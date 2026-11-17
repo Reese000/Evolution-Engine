@@ -205,9 +205,7 @@ def test_projection_seeds_hydrate_after_restart(monkeypatch):
         lambda prog: prom.get(tuple(prog), 325.6),
     )
 
-    first = collect_growth_material_projection_seeds(
-        champ, max_seeds=2, cycle_no=3, gate=gate
-    )
+    first = collect_growth_material_projection_seeds(champ, max_seeds=2, cycle_no=3, gate=gate)
     assert len(first) == 2
     assert builds["n"] >= 1
     built = builds["n"]
@@ -216,22 +214,16 @@ def test_projection_seeds_hydrate_after_restart(monkeypatch):
     # (mutation_helpers.py:3808) while the cold build returns it prom-ranked.
     # That asymmetry pre-dates disk hydration, so the contract a restart must
     # reproduce is the warm process's answer — not the cold build's order.
-    warm = collect_growth_material_projection_seeds(
-        champ, max_seeds=2, cycle_no=3, gate=gate
-    )
+    warm = collect_growth_material_projection_seeds(champ, max_seeds=2, cycle_no=3, gate=gate)
     assert builds["n"] == built, "warm in-process call must not rebuild"
     assert warm == first[1:] + first[:1], "cycle_no=3 rotates the 2 stored seeds"
 
     # simulated restart: in-process dict gone, disk file remains -> hydrate
     _projection_seeds_cache.clear()
-    again = collect_growth_material_projection_seeds(
-        champ, max_seeds=2, cycle_no=3, gate=gate
-    )
+    again = collect_growth_material_projection_seeds(champ, max_seeds=2, cycle_no=3, gate=gate)
     assert builds["n"] == built, "disk hydration must skip the rebuild after restart"
     assert again == warm, "hydrated post-restart result must equal the warm result"
-    assert set(map(tuple, again)) == set(map(tuple, first)), (
-        "hydration must not change the seed set, only the rotation"
-    )
+    assert set(map(tuple, again)) == set(map(tuple, first)), "hydration must not change the seed set, only the rotation"
 
 
 def test_bootstrap_disk_hydration_is_anchor_isolated(tmp_path, monkeypatch):
@@ -379,12 +371,8 @@ def test_growth_pool_cache_keeps_every_plateau(tmp_path, monkeypatch):
     stable = list(range(1, 28))  # 27-word champion
     growth = list(range(1000, 1060))  # 60-word growth champion
 
-    mh.save_scan_floor_growth_pool_cache(
-        stable, [[7, 7, 7]], cross_keys={tuple([1, 2])}, cycle=10
-    )
-    mh.save_scan_floor_growth_pool_cache(
-        growth, [[9, 9, 9]], cross_keys=set(), cycle=11
-    )
+    mh.save_scan_floor_growth_pool_cache(stable, [[7, 7, 7]], cross_keys={tuple([1, 2])}, cycle=10)
+    mh.save_scan_floor_growth_pool_cache(growth, [[9, 9, 9]], cross_keys=set(), cycle=11)
 
     hit_stable = mh.load_scan_floor_growth_pool_cache(stable)
     hit_growth = mh.load_scan_floor_growth_pool_cache(growth)
@@ -502,9 +490,7 @@ def test_growth_pool_cache_cap_pins_the_entry_being_written(tmp_path, monkeypatc
     for i, length in enumerate(range(5, 13)):
         prog = list(range(500 + length, 500 + length * 2))
         assert len(prog) == length
-        mh.save_scan_floor_growth_pool_cache(
-            prog, [[length, length]], cycle=9 - i
-        )
+        mh.save_scan_floor_growth_pool_cache(prog, [[length, length]], cycle=9 - i)
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert len(payload["entries"]) == 8
 
@@ -513,9 +499,7 @@ def test_growth_pool_cache_cap_pins_the_entry_being_written(tmp_path, monkeypatc
     mh.save_scan_floor_growth_pool_cache(late, [[14, 14]], cycle=1)
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert len(payload["entries"]) == 8, "cap must still bound the file"
-    assert any(e["anchor"] == late for e in payload["entries"]), (
-        "the entry just written was evicted by its own cap"
-    )
+    assert any(e["anchor"] == late for e in payload["entries"]), "the entry just written was evicted by its own cap"
     hit = mh.load_scan_floor_growth_pool_cache(late)
     assert hit is not None
     assert [list(p) for p in hit[1]] == [[14, 14]]

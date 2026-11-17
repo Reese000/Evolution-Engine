@@ -2,6 +2,7 @@
 
 Usage: python _probe_gen_phases.py [min_cycle]
 """
+
 from __future__ import annotations
 
 import json

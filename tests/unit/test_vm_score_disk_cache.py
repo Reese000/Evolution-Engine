@@ -94,10 +94,7 @@ def test_fingerprint_inputs_are_producers_not_the_whole_module():
     hashed, so any probe/gate/diagnostic edit made the next process load 0 of
     122,291 stored scores and re-score 1,137,353 VM calls in generation 0.
     """
-    from evolution.terminal_stagnation import (
-        _VM_SCORE_FINGERPRINT_FUNCS,
-        _vm_score_fingerprint_inputs,
-    )
+    from evolution.terminal_stagnation import _VM_SCORE_FINGERPRINT_FUNCS, _vm_score_fingerprint_inputs
 
     labels = [label for label, _blob in _vm_score_fingerprint_inputs()]
     assert not any(label.endswith("terminal_stagnation.py") for label in labels), labels
@@ -135,25 +132,18 @@ def test_every_score_producer_in_module_is_fingerprinted():
 
     producers = set()
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "_vm_score_disk_put"
-        ):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_vm_score_disk_put":
             owner = top_level_statement(node)
             if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 producers.add(owner.name)
             else:
                 # Class methods / module-level writes are not in the list, so
                 # this name can never match and the assertion below fails.
-                producers.add(
-                    f"<top-level {type(owner).__name__ if owner is not None else 'None'}>"
-                )
+                producers.add(f"<top-level {type(owner).__name__ if owner is not None else 'None'}>")
     assert producers, "expected at least one in-module score producer"
     missing = producers - set(ts._VM_SCORE_FINGERPRINT_FUNCS)
     assert not missing, (
-        f"score producers {sorted(missing)} write memo values but are not "
-        "covered by _VM_SCORE_FINGERPRINT_FUNCS"
+        f"score producers {sorted(missing)} write memo values but are not " "covered by _VM_SCORE_FINGERPRINT_FUNCS"
     )
 
 

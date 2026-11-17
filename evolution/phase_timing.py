@@ -113,11 +113,7 @@ _subphases: dict[str, float] = {}
 def _safe_subphase_snapshot() -> dict[str, float]:
     """Sub-block seconds for the closing generation; never raises."""
     try:
-        return {
-            k: round(v, 3)
-            for k, v in sorted(snapshot_subphases().items(), key=lambda kv: -kv[1])
-            if v >= 0.05
-        }
+        return {k: round(v, 3) for k, v in sorted(snapshot_subphases().items(), key=lambda kv: -kv[1]) if v >= 0.05}
     except Exception:  # noqa: BLE001 -- markers must never break evolution
         return {}
 
@@ -155,7 +151,6 @@ def subphase(name: str) -> Iterator[None]:
                     _subphases[name] = _subphases.get(name, 0.0) + elapsed
             except Exception:  # noqa: BLE001 -- markers must never raise
                 pass
-
 
 
 def _warn_unknown_phase(name: str) -> None:

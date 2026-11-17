@@ -9,8 +9,8 @@ from evolution.curriculum_advance import (
     forced_advance_verify_floor,
     level_verify_reg_count,
     missed_regs_allowance,
-    nudge_verify_passes,
     nudge_fitness_passes,
+    nudge_verify_passes,
 )
 
 

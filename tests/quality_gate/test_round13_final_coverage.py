@@ -700,12 +700,14 @@ def test_skip_model_guided_at_terminal_saturated():
 
 def test_compact_terminal_prefers_task_aware():
     from types import SimpleNamespace
+
     from evolution.mutation_helpers import apply_level_aware_strategy_bias
     from mutation_proposer import MutationStrategy
 
     class _R:
         def random(self):
             return 0.0
+
         def choice(self, xs):
             return xs[0]
 
@@ -721,11 +723,14 @@ def test_compact_terminal_prefers_task_aware():
     assert chosen == MutationStrategy.TASK_AWARE
 
     eng.champion = [0] * 19
+
     class _RHigh:
         def random(self):
             return 0.65
+
         def choice(self, xs):
             return xs[0]
+
     eng.rng = _RHigh()
     chosen_short = apply_level_aware_strategy_bias(eng, MutationStrategy.RANDOM)
     assert chosen_short == MutationStrategy.TASK_AWARE
@@ -841,6 +846,7 @@ class TestTryQDChampionReset:
         orig = evolution_engine._HAS_QD
         evolution_engine._HAS_QD = True
         try:
+
             class FakeArchive:
                 def grid_solutions(self):
                     return [{"program": [0x00000033, 0x00100073], "fitness": 12.0}]
@@ -873,6 +879,7 @@ class TestTryQDChampionReset:
         orig = evolution_engine._HAS_QD
         evolution_engine._HAS_QD = True
         try:
+
             class FakeArchive:
                 def grid_solutions(self):
                     return [{"program": [0x00100073], "fitness": 5.0}]

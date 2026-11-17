@@ -276,7 +276,11 @@ def _get_method_ast_node(
             for item in ast.iter_child_nodes(node):
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method_name:
                     return item
-        elif class_name is None and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == method_name:
+        elif (
+            class_name is None
+            and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == method_name
+        ):
             return node
     return None
 
@@ -308,7 +312,7 @@ class TestCodeQuality:
             stripped = line.strip()
             # Skip lines that are part of a docstring (triple-quoted)
             if stripped.startswith(("#", '"', "'")) and re.search(r"\b(TODO|FIXME|HACK)\b", stripped, re.IGNORECASE):
-                    violations.append(f"  Line {i}: {stripped}")
+                violations.append(f"  Line {i}: {stripped}")
 
         assert (
             not violations

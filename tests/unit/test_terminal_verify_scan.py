@@ -265,9 +265,7 @@ def test_find_best_challenger_at_scan_floor_ranks_promotion_raw(monkeypatch, tmp
     assert selection_fitness(eng, best_prog, trace) == pytest.approx(324.5)
 
 
-def test_find_best_challenger_verify_best_not_blocked_by_reporting_fitness(
-    monkeypatch, tmp_path
-):
+def test_find_best_challenger_verify_best_not_blocked_by_reporting_fitness(monkeypatch, tmp_path):
     """Population verify_best must apply when champion_fitness is reporting-inflated."""
     monkeypatch.setenv("EE_TERMINAL_VERIFY_PROMOTE", "1")
     agents = tmp_path / ".agents"
@@ -318,9 +316,7 @@ def test_find_best_challenger_verify_best_not_blocked_by_reporting_fitness(
     assert best_fit == pytest.approx(324.25)
 
 
-def test_ensure_semantic_compress_elite_uses_selection_fitness_for_champion(
-    monkeypatch, tmp_path
-):
+def test_ensure_semantic_compress_elite_uses_selection_fitness_for_champion(monkeypatch, tmp_path):
     monkeypatch.setenv("EE_TERMINAL_VERIFY_PROMOTE", "1")
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -404,10 +400,7 @@ def test_maybe_promote_terminal_efficiency_champion(monkeypatch, tmp_path):
 
     row = None
     for candidate in live_result_rows():
-        if (
-            candidate.get("champion_words") == 73
-            and float(candidate.get("final_fitness", 0.0)) > 260.0
-        ):
+        if candidate.get("champion_words") == 73 and float(candidate.get("final_fitness", 0.0)) > 260.0:
             row = candidate
             break
     assert row is not None, "need a certified 73w row in multi_cycle_results.jsonl"

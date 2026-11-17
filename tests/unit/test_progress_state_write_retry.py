@@ -53,9 +53,7 @@ def sleeps(monkeypatch):
     return calls
 
 
-def test_progress_state_write_recovers_from_transient_replace_failures(
-    agents, monkeypatch, sleeps
-):
+def test_progress_state_write_recovers_from_transient_replace_failures(agents, monkeypatch, sleeps):
     replace = _flaky_replace(monkeypatch, fail_times=2)
 
     ts.record_terminal_efficiency_scan_floor(6543, 48, 1.0)
@@ -63,17 +61,13 @@ def test_progress_state_write_recovers_from_transient_replace_failures(
     assert replace["remaining"] == 0, "write retry never consumed the injected faults"
     assert replace["calls"] == 3, "one attempt per injected fault, then one win"
     assert sleeps == [pytest.approx(0.05), pytest.approx(0.10)]
-    state = json.loads(
-        (agents / "progress_controller_state.json").read_text(encoding="utf-8")
-    )
+    state = json.loads((agents / "progress_controller_state.json").read_text(encoding="utf-8"))
     assert state["terminal_efficiency_scan_floor_words"] == 48
     assert state["terminal_efficiency_scan_floor_cycle"] == 6543
     assert ts.terminal_efficiency_at_scan_floor(48) is True
 
 
-def test_progress_state_write_recovers_from_transient_fsync_fault(
-    agents, monkeypatch, sleeps
-):
+def test_progress_state_write_recovers_from_transient_fsync_fault(agents, monkeypatch, sleeps):
     real_fsync = os.fsync
     state = {"remaining": 1}
 
@@ -92,9 +86,7 @@ def test_progress_state_write_recovers_from_transient_fsync_fault(
     assert ts.terminal_efficiency_at_scan_floor(48) is True
 
 
-def test_progress_state_write_retries_are_bounded_and_logged(
-    agents, monkeypatch, sleeps, caplog
-):
+def test_progress_state_write_retries_are_bounded_and_logged(agents, monkeypatch, sleeps, caplog):
     replace = _flaky_replace(monkeypatch, fail_times=10**6)
 
     # Historic contract: a dead/unwritable state file must not raise out of a

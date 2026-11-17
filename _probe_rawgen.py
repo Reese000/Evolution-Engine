@@ -1,4 +1,5 @@
 """Dump raw generation_phase_timing records for a cycle (read-only)."""
+
 from __future__ import annotations
 
 import json

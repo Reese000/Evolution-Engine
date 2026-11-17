@@ -1,4 +1,5 @@
 """Time the JSONL-scanning helpers against the real results file (read-only)."""
+
 from __future__ import annotations
 
 import json
@@ -24,10 +25,7 @@ with open(RESULTS, encoding="utf-8", errors="replace") as fh:
         n += 1
 print(f"full json.loads of {n} lines: {time.perf_counter() - t0:.2f}s")
 
-from evolution.champion_rollback import (  # noqa: E402
-    collect_jsonl_archive_parents,
-    find_best_certified_champion,
-)
+from evolution.champion_rollback import collect_jsonl_archive_parents, find_best_certified_champion  # noqa: E402
 
 t0 = time.perf_counter()
 clean = find_best_certified_champion(RESULTS, 30, min_verify=0.99, min_fitness=100.0)

@@ -14,6 +14,7 @@ Steps:
   5. Re-run the ORIGINAL full file: expect the same 1 failed / 89 passed (determinism).
   6. Restore the .agents cache file to its pre-run bytes; delete the probe copy.
 """
+
 import json
 import pathlib
 import shutil
@@ -56,7 +57,9 @@ text = SRC.read_text(encoding="utf-8")
 OLD = '    monkeypatch.setenv("EE_EQ_REFINE_WARM_SKIP_LOCUS", "0")'
 count = text.count(OLD)
 assert count == 1, f"expected exactly 1 WARM_SKIP_LOCUS setenv, found {count}"
-NEW = OLD + """
+NEW = (
+    OLD
+    + """
     # FIXPROBE copy of the review-prescribed fix: the warm-skip perturb guard
     # (default "1") also zeroes perturb_budget, and the module-level merged
     # cache is pre-occupied by an earlier test under the same plateau key.
@@ -69,6 +72,7 @@ NEW = OLD + """
         "evolution.mutation_helpers.load_eq_refine_late_merged_cache",
         lambda *_a, **_k: None,
     )"""
+)
 text = text.replace(OLD, NEW)
 
 assert text != SRC.read_text(encoding="utf-8"), "fix did not change the source"
@@ -97,9 +101,7 @@ try:
             ),
         }
     else:
-        results["agents_cache_after_fixprobe"] = {
-            "verdict": "no file created — no test wrote repo state"
-        }
+        results["agents_cache_after_fixprobe"] = {"verdict": "no file created — no test wrote repo state"}
 
     # --- 5. determinism re-run of the ORIGINAL file -----------------------
     rc_orig, out_orig = run_pytest("tests/unit/test_scan_floor_throughput.py")
@@ -115,10 +117,12 @@ finally:
     if backup is not None:
         AGENTS_CACHE.write_bytes(backup)
 
-print(json.dumps(
-    {k: (list(v) if isinstance(v, tuple) else v) for k, v in results.items()},
-    indent=2,
-))
+print(
+    json.dumps(
+        {k: (list(v) if isinstance(v, tuple) else v) for k, v in results.items()},
+        indent=2,
+    )
+)
 # Exit non-zero unless BOTH runs matched expectations.
 ok = (
     results["fixprobe"][1].startswith("90 passed")

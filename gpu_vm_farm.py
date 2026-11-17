@@ -333,10 +333,7 @@ def _decode_insn(word: int) -> tuple[int, int, int, int, int, int, int, int, int
         imm = _sign_extend(((word >> 25) & 0x7F) << 5 | ((word >> 7) & 0x1F), 12)
     elif opcode == OP_BRANCH:
         imm = _sign_extend(
-            (word >> 31) << 12
-            | ((word >> 7) & 1) << 11
-            | ((word >> 25) & 0x3F) << 5
-            | ((word >> 8) & 0xF) << 1,
+            (word >> 31) << 12 | ((word >> 7) & 1) << 11 | ((word >> 25) & 0x3F) << 5 | ((word >> 8) & 0xF) << 1,
             13,
         )
     elif opcode == OP_JAL:
@@ -759,9 +756,7 @@ def _dedupe_vm_batch(
     return remap, uniq_p, uniq_i
 
 
-def _scatter_unique_results(
-    remap: list[int], unique_results: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+def _scatter_unique_results(remap: list[int], unique_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for slot in remap:
         src = unique_results[slot]
