@@ -1,0 +1,818 @@
+{
+  "metric": "nDCG@10 (gains 0-3, 2^g-1) and P@10 (grade>=2); ideal over raw-FTS candidate pool",
+  "db": "C:/Windows/Temp/t_1dd79833/snap.db",
+  "per_page": 20,
+  "k": 10,
+  "queries": [
+    {
+      "query": "haas vf-2 used",
+      "vertical": "cnc",
+      "note": "Exact used model search \u2014 an article stub ('What They Actually Sell For') sits in the real candidate pool and must not outrank actual VF-2 listings.",
+      "result": {
+        "query": "haas vf-2 used",
+        "returned": 13,
+        "total": 13,
+        "nDCG_at_10": 1.0,
+        "P_at_10": 1.0,
+        "sold_in_top10": 0,
+        "gate_fail_in_top10": 0,
+        "non_listing_in_top10": 0,
+        "backend_used": "fts5",
+        "top10": [
+          {
+            "id": 5242,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "2012 Haas VF-2 Used CNC Vertical Machining Center For Sale",
+            "price": 31500.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5157,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "2016 Used Haas VF-2 CNC Vertical Machining Center For Sale - Low Hours",
+            "price": 49500.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5856,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "Used 2018 Haas VF-2 CNC Vertical Machining Center Mill CAT40 Low Hours",
+            "price": 42500.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5844,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "Used 1997 Haas VF-2 CNC Vertical Machining Center Mill 4th Axis Ready w Ha5c",
+            "price": 12990.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 24487,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "Used Haas VF-2",
+            "price": 54900.0,
+            "source_site": "kd-machinery"
+          },
+          {
+            "id": 1759200,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "Used 1994 HAAS VF-2 VMC",
+            "price": 3000.0,
+            "source_site": "machinesales"
+          },
+          {
+            "id": 1759240,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "Used 2008 Haas VF-2 CNC Vertical Machining Center",
+            "price": 33500.0,
+            "source_site": "machinesales"
+          },
+          {
+            "id": 1759111,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "Used Haas VF-2 Vertical Machining Center 4TH Axis Ready",
+            "price": 17550.0,
+            "source_site": "machinesales"
+          },
+          {
+            "id": 1759275,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "Used HAAS VF-2 CNC VERTICAL MACHINING CENTER CNC MILL",
+            "price": 19800.0,
+            "source_site": "machinesales"
+          },
+          {
+            "id": 813123,
+            "grade": 3,
+            "reason": "exact used VF-2 listing",
+            "title": "Used 2023 HAAS VF-2 | Vertical Machining Centers",
+            "price": null,
+            "source_site": "toolquipusa"
+          }
+        ],
+        "candidate_count": 70,
+        "error": null
+      }
+    },
+    {
+      "query": "fadal 4020",
+      "vertical": "cnc",
+      "note": "Exact model search \u2014 pool mixes Fadal VMC 4020 machines with other Fadal models and a 'WTB VMC, 4020 Fadal or Similar' wanted post.",
+      "result": {
+        "query": "fadal 4020",
+        "returned": 20,
+        "total": 105,
+        "nDCG_at_10": 1.0,
+        "P_at_10": 1.0,
+        "sold_in_top10": 0,
+        "gate_fail_in_top10": 0,
+        "non_listing_in_top10": 0,
+        "backend_used": "fts5",
+        "top10": [
+          {
+            "id": 911735,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "Fadal 4020, 1990 + Fadal VMC20, 1993 + Fadal VMC 4020, 1990 (4th Axis) Package",
+            "price": 10000.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912884,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "Fadal VMC 4020 Machining Center, 1998",
+            "price": 6900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912500,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "Fadal VMC 4020 HT CNC VMC, 2007",
+            "price": 9900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 911782,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "Fadal VMC 4020 AHT, 1999 \u2013 Wired for 4th",
+            "price": 14500.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912493,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "Fadal 4020 HT VMC 1989 \u2013 2005 New Spindle",
+            "price": 7500.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 911780,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "Fadal VMC 4020 AHT 1999 \u2013 Vises Included, Under Power",
+            "price": 13500.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 911641,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "2003 Fadal VMC 4020 HT CNC VMC With 4th Axis",
+            "price": 14500.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 911766,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "MAG Fadal VMC 4020 HT, 2007 \u2013 10,000 RPM, CNC 32MP",
+            "price": 24500.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 913219,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "Fadal VMC 4020, 1990 \u2013 Spindle Chiller, Auto-Lube System, Rigid Tap",
+            "price": 8900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912541,
+            "grade": 3,
+            "reason": "Fadal VMC 4020",
+            "title": "Fadal VMC 4020 HT Vertical Mill, 1995- 4th Axis Rotary Table, High Torque",
+            "price": 14900.0,
+            "source_site": "revelationmachinery"
+          }
+        ],
+        "candidate_count": 60,
+        "error": null
+      }
+    },
+    {
+      "query": "3 axis cnc mill under 50k",
+      "vertical": "cnc",
+      "note": "Constraint query: class + budget. FTS5 AND over 'under 50k' returns zero rows today; grading rewards recovered 3-axis mills at/below $50k and demotes RFQ / over-budget / non-mill rows.",
+      "result": {
+        "query": "3 axis cnc mill under 50k",
+        "returned": 20,
+        "total": 297,
+        "nDCG_at_10": 1.0,
+        "P_at_10": 1.0,
+        "sold_in_top10": 0,
+        "gate_fail_in_top10": 0,
+        "non_listing_in_top10": 0,
+        "backend_used": "fts5",
+        "top10": [
+          {
+            "id": 5397,
+            "grade": 3,
+            "reason": "3-axis mill at $13,500 <= $50k",
+            "title": "1995 Milltronics MB-18 3-Axis CNC Vertical Bed Mill Milling Machine",
+            "price": 13500.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5752,
+            "grade": 3,
+            "reason": "3-axis mill at $25,000 <= $50k",
+            "title": "Haas TM-1P CNC Toolroom Mill \u2013 2007 \u2013 3-Axis Vertical Machining Center",
+            "price": 25000.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5627,
+            "grade": 3,
+            "reason": "3-axis mill at $9,900 <= $50k",
+            "title": "Used Fryer MB-11  w Anilam CNC Vertical Machining Center 3 Axis Mill Anilam 5000",
+            "price": 9900.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 12550,
+            "grade": 3,
+            "reason": "3-axis mill at $7,000 <= $50k",
+            "title": "For sale: Milltronics Partner knee mill 3 axis CNC",
+            "price": 7000.0,
+            "source_site": "practicalmachinist"
+          },
+          {
+            "id": 912465,
+            "grade": 3,
+            "reason": "3-axis mill at $4,900 <= $50k",
+            "title": "Bridgeport V2XT CNC Vertical Knee Mill, 1999- 3-Axis",
+            "price": 4900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912306,
+            "grade": 3,
+            "reason": "3-axis mill at $17,500 <= $50k",
+            "title": "Bridgeport Hardinge EZ Vision 3 Axis CNC Knee Mill, 2007",
+            "price": 17500.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912661,
+            "grade": 3,
+            "reason": "3-axis mill at $5,500 <= $50k",
+            "title": "Bridgeport Series 1 Interact CNC Knee Mill, 1990 \u2013 3 Axis CNC",
+            "price": 5500.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912945,
+            "grade": 3,
+            "reason": "3-axis mill at $3,900 <= $50k",
+            "title": "Bridgeport Interact CNC Knee Mill \u2013 No Issues, Make Offer, 3 Axis",
+            "price": 3900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912704,
+            "grade": 3,
+            "reason": "3-axis mill at $43,900 <= $50k",
+            "title": "Sharp LMV-50 3 Axis CNC Knee Mill, 2023 \u2013 Never Used, Full Transferable Warranty, Available Immediately",
+            "price": 43900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 5677,
+            "grade": 3,
+            "reason": "3-axis mill at $11,000 <= $50k",
+            "title": "Seiki VS 3 Axis CNC Vertical Knee Mill",
+            "price": 11000.0,
+            "source_site": "ebay"
+          }
+        ],
+        "candidate_count": 60,
+        "error": null
+      }
+    },
+    {
+      "query": "cnc mill cat 40 taper",
+      "vertical": "cnc",
+      "note": "Taper constraint \u2014 grading separates verified CAT40 machines from machines with unknown or non-CAT40 taper.",
+      "result": {
+        "query": "cnc mill cat 40 taper",
+        "returned": 20,
+        "total": 41,
+        "nDCG_at_10": 1.0,
+        "P_at_10": 1.0,
+        "sold_in_top10": 0,
+        "gate_fail_in_top10": 0,
+        "non_listing_in_top10": 0,
+        "backend_used": "fts5",
+        "top10": [
+          {
+            "id": 5854,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "Used 2004 Milltronics VM17 CNC Vertical Machining Center Mill Side Mount CAT 40",
+            "price": 14500.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5683,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "HAAS Vf3 1997 Vertical Machining Center Cnc Mill With Lots Of Cat 40 Tooling",
+            "price": 19000.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5857,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "Used 2013 DOOSAN DNM 400 CNC Vertical Machining Center Mill Fanuc Probing CAT 40",
+            "price": 37400.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5852,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "Used 2022 Okuma Genos M560-V CNC Vertical Machining Center Mill CAT 40 15K rpm",
+            "price": 139900.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5851,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "Used 2019 GEN MILL 5127 CNC Vertical Machining Center Mill CAT 40 12k RPM Probe",
+            "price": 89990.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5125,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "Used 2012 Geng-Shuen 1500L CNC Vertical Machining Center Mill FAGOR CAT 40 60x33",
+            "price": 27500.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 8295,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "Haas #Mini-Mill, CNC Vertical Machining Center, 16\" X, 12\" Y, 10\" Z, 7.5 HP, 6000 RPM, CAT-40 taper, 10 automatic tool c",
+            "price": null,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 8402,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "Haas #TM-2P, CNC toolroom mill, 40\" X, 16\" Y, 16\" Z, 7.5 HP, 6,000 RPM, CAT 40, 10 automatic tool changer, 2016",
+            "price": null,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 6396,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "Haas Mini Mill Cnc Vertical Machining Center 3 Axis 10 Automatic Tool Changer 16 X 12 Y 10 Z 6000 Rpm Cat 40",
+            "price": null,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 8334,
+            "grade": 3,
+            "reason": "CAT40 taper (cat40)",
+            "title": "Haas Super Mini Mill 2 Cnc Vertical Machining Center 20 X 16 Y 14 Z 40 X 14 Table 15 Hp 10000 Rpm Cat 40 20 Automatic To",
+            "price": null,
+            "source_site": "surplusrecord"
+          }
+        ],
+        "candidate_count": 41,
+        "error": null
+      }
+    },
+    {
+      "query": "12000 rpm vmc",
+      "vertical": "cnc",
+      "note": "Spindle-speed constraint \u2014 grading uses structured max_rpm/title RPM.",
+      "result": {
+        "query": "12000 rpm vmc",
+        "returned": 20,
+        "total": 58,
+        "nDCG_at_10": 1.0,
+        "P_at_10": 1.0,
+        "sold_in_top10": 0,
+        "gate_fail_in_top10": 0,
+        "non_listing_in_top10": 0,
+        "backend_used": "fts5",
+        "top10": [
+          {
+            "id": 15862,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "Haas VF-2SS VMC, 2022 \u2013 LOW HOURS, HSM, 12,000 RPM, Rigid Tapping, Safe Run, Side-Mount Tool Changer",
+            "price": 61900.0,
+            "source_site": "revelation-dealer"
+          },
+          {
+            "id": 16537,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "Smart Machine Tool SV-3 CNC Vertical Machining Center, 2022 \u2013 Fanuc 0i-MF Plus, CAT40 Big Plus, 12,000 RPM, 30 ATC, 41.3",
+            "price": 49900.0,
+            "source_site": "revelation-dealer"
+          },
+          {
+            "id": 5135,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "2021 Haas VF-5SS CNC Vertical Machining Center VMC 12K RPM 30+1 TSC",
+            "price": 114900.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 1764371,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "Deckel Maho Dmu 80 Hi Dyn 5 Axis Vmc 31 5 X 27 6 Y 23 6 Z 12000 Rpm Millplus Control 30 Automatic Tool Changer 39 X24 Ta",
+            "price": null,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 1764927,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "Samsung Vmc 400 Cnc Vertical Machining Center 3 Axis 30 3 X 16 9 Y 20 1 Z 36 22 X 18 11 Table 20 Hp 12000 Rpm Ct40 Taper",
+            "price": null,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 6590,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "Morrison Vmc 4220B Vertical Machining Center 4 Axis 47 X 20 Table 42 X 20 Y 24 Z 12000 Rpm 230 V 65 Amps 2012",
+            "price": null,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 8785,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "Haas Vf 3Ss Vmc 40 X 20 Y 25 Z 12000 Rpm 48 X18 Table 300 Psi Thru Spindle Coolant 40 Automatic Tool Changer Rotary Trun",
+            "price": null,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 7054,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "LK #VM3, CNC Vmc, CAT-40 spindle, 12000 RPM, 44\" x 19.6\" table, 39.4\" X, 19.6\" Y x 24\" Z, 24 automatic tool changer, Fan",
+            "price": null,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 16632,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "YCM NXV560A-APC VMC, 2015 \u2013 Chip Conveyor, Fanuc Control, 12K RPM",
+            "price": 39900.0,
+            "source_site": "revelation-dealer"
+          },
+          {
+            "id": 16631,
+            "grade": 3,
+            "reason": "max spindle 12,000 RPM >= 12,000",
+            "title": "Hurco VMX-30 VMC, 2008",
+            "price": 19900.0,
+            "source_site": "revelation-dealer"
+          }
+        ],
+        "candidate_count": 58,
+        "error": null
+      }
+    },
+    {
+      "query": "30 x 16 x 20 travel mill",
+      "vertical": "cnc",
+      "note": "Travel-envelope constraint: FTS5 AND returns zero rows today; grading rewards machines whose parsed travel meets 30 x 16 x 20 inches.",
+      "result": {
+        "query": "30 x 16 x 20 travel mill",
+        "returned": 20,
+        "total": 282,
+        "nDCG_at_10": 0.8224,
+        "P_at_10": 0.9,
+        "sold_in_top10": 0,
+        "gate_fail_in_top10": 0,
+        "non_listing_in_top10": 0,
+        "backend_used": "fts5",
+        "top10": [
+          {
+            "id": 8607,
+            "grade": 3,
+            "reason": "travel 30\" x 16\" x 20\"",
+            "title": "Haas #VF-2, CNC Vertical Machining Center, 30\" X, 16\" Y, 20\" Z, 36\" x 14\" table, 30 HP, 8100 RPM, 20 automatic tool chan",
+            "price": 74500.0,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 6523,
+            "grade": 3,
+            "reason": "travel 30\" x 16\" x 20\"",
+            "title": "Haas #VF-2, vertical machining center, 20 automatic tool changer, 30\" X, 16\" Y, 20\" Z, 7500 RPM, 15 HP, 1994",
+            "price": 5950.0,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 19801,
+            "grade": 2,
+            "reason": "machine, travel unknown",
+            "title": "30\" x  16\" x 20\" Haas Model VF-2 4 Axis Vertical Machining Center (1998)",
+            "price": 3950.0,
+            "source_site": "assetexchange-dealer"
+          },
+          {
+            "id": 8083,
+            "grade": 3,
+            "reason": "travel 30\" x 16\" x 20\"",
+            "title": "Fadal #VMC3016, CNC vertical machining center, 30\" X, 16\" Y, 20\" Z, 7500 RPM, 21 automatic tool changer, 16\" x 39\" table",
+            "price": 14500.0,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 7165,
+            "grade": 3,
+            "reason": "travel 30\" x 16\" x 20\"",
+            "title": "Fadal #VMC3016, CNC vertical machining center, 20 automatic tool changer, 30\" X, 16\" Y, 20\" Z, 10000 RPM, #40, 15 HP, 39",
+            "price": 5950.0,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 8629,
+            "grade": 0,
+            "reason": "not a mill / VMC",
+            "title": "Haas #VF-2, 30\" X, 16\" Y, 20\" Z, 10,000 RPM, 24 automatic tool changer, Cat 40, Haas CNC, 2008",
+            "price": 22750.0,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 5249,
+            "grade": 3,
+            "reason": "travel 37\" x 16\" x 20\"",
+            "title": "Okuma ESV-3016 CNC Vert Machining Center, 37\" x 18\" Tbl, XYZ=30/16/20\", 8000 RPM",
+            "price": 14500.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 7046,
+            "grade": 3,
+            "reason": "travel 30\" x 16\" x 20\"",
+            "title": "Fadal #VMC15, vertical machining center, 21 automatic tool changer, 30\" X, 16\" Y, 20\" Z, 7500 RPM, #40, 2006",
+            "price": 19000.0,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 7047,
+            "grade": 3,
+            "reason": "travel 30\" x 16\" x 20\"",
+            "title": "Fadal #VMC15XT, vertical machining center, 21 automatic tool changer, 30\" X, 16\" Y, 20\" Z, 7500 RPM, #40, 2006",
+            "price": 19500.0,
+            "source_site": "surplusrecord"
+          },
+          {
+            "id": 1603420,
+            "grade": 2,
+            "reason": "machine, travel unknown",
+            "title": "30\" x 16\" x 20\" fadal VMC 3016, 904-1, Used #A2358",
+            "price": 23500.0,
+            "source_site": "sterling"
+          }
+        ],
+        "candidate_count": 197,
+        "error": null
+      }
+    },
+    {
+      "query": "haas vf-2 price",
+      "vertical": "cnc",
+      "note": "Price-intent query (zero rows today): exact VF-2s with a visible price should outrank RFQ (Request Quote) copies of the same machine.",
+      "result": {
+        "query": "haas vf-2 price",
+        "returned": 20,
+        "total": 239,
+        "nDCG_at_10": 1.0,
+        "P_at_10": 1.0,
+        "sold_in_top10": 0,
+        "gate_fail_in_top10": 0,
+        "non_listing_in_top10": 0,
+        "backend_used": "fts5",
+        "top10": [
+          {
+            "id": 911797,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2 VMC, 1999",
+            "price": 15900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912405,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2 VMC, 1994",
+            "price": 9900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 913188,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2  VMC, 1994",
+            "price": 7900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912108,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2 VMC, 2000 \u2013 Low Hours",
+            "price": 12900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912499,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2 VMC, 2020 \u2013 Video Available",
+            "price": 38900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 913184,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2 VMC, 2012 \u2013 Probe, Haas 5C Indexer",
+            "price": 34900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 911715,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2 VMC, 1996- Rotary Indexer, Tailstock",
+            "price": 11000.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912229,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2  VMC, 1997 \u2013 4th Axis, Available Immediately",
+            "price": 9900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912317,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2 VMC, 2012 \u2013 Chip Auger, Renishaw Probe",
+            "price": 34500.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912467,
+            "grade": 3,
+            "reason": "exact used VF-2 listing with visible price",
+            "title": "Haas VF-2 VMC, 1996 \u2013 New Vector Drive Installed",
+            "price": 11900.0,
+            "source_site": "revelationmachinery"
+          }
+        ],
+        "candidate_count": 60,
+        "error": null
+      }
+    },
+    {
+      "query": "mazak variaxis",
+      "vertical": "cnc",
+      "note": "Brand + family search over a large real pool.",
+      "result": {
+        "query": "mazak variaxis",
+        "returned": 20,
+        "total": 109,
+        "nDCG_at_10": 1.0,
+        "P_at_10": 1.0,
+        "sold_in_top10": 0,
+        "gate_fail_in_top10": 0,
+        "non_listing_in_top10": 0,
+        "backend_used": "fts5",
+        "top10": [
+          {
+            "id": 912719,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "Mazak Variaxis 630 \u2013 5X 5 Axis \u2013 VMC, 2005",
+            "price": 59900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912073,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "Mazak VariAxis 200 VMC, 2001-5 Axis- Probe, Chip Coneyor",
+            "price": 22500.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 913149,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "Mazak Variaxis 730 CNC VMC, 2011 \u2013 5-Axis \u2013 Pallet System",
+            "price": 309900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 913234,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "Mazak VARIAXIS i-600 VMC, 2020 \u2013 CAT-40, Coolant Thru Spindle",
+            "price": 215000.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 912800,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "Mazak, Variaxis C-600, 5 Axis VMC, 2021 \u2013 Dual Pallet, 792 Spindle Cut Hours, Inspection Ready",
+            "price": 239900.0,
+            "source_site": "revelationmachinery"
+          },
+          {
+            "id": 720884,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "Mazak Variaxis 500-5X II Used CNC Vertical Machining Center For Sale - 2007",
+            "price": 24000.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 720912,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "Mazak Variaxis 500-5X II Used CNC Vertical Machining Center For Sale - 2007",
+            "price": 24000.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5078,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "2004 Mazak Variaxis 500-5X CNC Vertical Machining Center",
+            "price": 39000.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5543,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "2006 Mazak Variaxis 500-5X CNC Vertical Machining Center PARTS ONLY!! #1DD",
+            "price": 19000.0,
+            "source_site": "ebay"
+          },
+          {
+            "id": 5030,
+            "grade": 3,
+            "reason": "Mazak Variaxis",
+            "title": "Mazak Variaxis 500-5X II Used CNC Vertical Machining Center For Sale - 2007",
+            "price": 24000.0,
+            "source_site": "ebay"
+          }
+        ],
+        "candidate_count": 60,
+        "error": null
+      }
+    }
+  ],
+  "aggregate": {
+    "queries": 8,
+    "queries_with_errors": 0,
+    "mean_nDCG_at_10": 0.9778,
+    "mean_P_at_10": 0.9875,
+    "zero_result_queries": 0,
+    "sold_in_top10_total": 0,
+    "gate_fail_in_top10_total": 0,
+    "non_listing_in_top10_total": 0
+  }
+}

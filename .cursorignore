@@ -1,0 +1,16 @@
+.worktrees/
+.agents/
+.venv/
+.venv-win/
+.venv-win2/
+.venv_linux/
+node_modules/
+.foundry_manager/
+.coverage
+cycle_*/
+champions/
+metrics/
+*.jsonl
+milestone1/checkpoints/
+*.pt
+%SystemDrive%/

@@ -1,0 +1,38 @@
+{
+  "backfill_written": true,
+  "patch": "applied",
+  "backfill": {
+    "rc": 1,
+    "stdout": "",
+    "stderr": "Traceback (most recent call last):\n  File \"C:\\Users\\reese\\Projects\\Evolution Engine\\scripts\\backfill_champion_fitness.py\", line 87, in <module>\n    if __name__ == '__main__': raise SystemExit(main())\n                                                ~~~~^^\n  File \"C:\\Users\\reese\\Projects\\Evolution Engine\\scripts\\backfill_champion_fitness.py\", line 55, in main\n    jsonl = args.jsonl or discover_jsonl()\n                          ~~~~~~~~~~~~~~^^\n  File \"C:\\Users\\reese\\Projects\\Evolution Engine\\scripts\\backfill_champion_fitness.py\", line 20, in discover_jsonl\n    raise FileNotFoundError('cycle_metrics.jsonl not found')\nFileNotFoundError: cycle_metrics.jsonl not found\n"
+  },
+  "trajectory": {
+    "rc": 0,
+    "stdout": "Streaming results (regex extract)...\n  Parsed 3507 cycle rows\n  Wrote C:\\Users\\reese\\Projects\\Evolution Engine\\.agents\\progress_trajectory.jsonl\n  Wrote C:\\Users\\reese\\Projects\\Evolution Engine\\.agents\\progress_trajectory_summary.json\n  Wrote C:\\Users\\reese\\.cursor\\projects\\c-Users-reese-Projects-Evolution-Engine\\canvases\\evolution-progress-trajectory.canvas.tsx\n  EPI: 39.34 -> 70.95 (level 30)\n",
+    "stderr": ""
+  },
+  "epi": {
+    "rc": 1,
+    "stdout": "{\n  \"goal_met\": false,\n  \"window\": 5000,\n  \"target_avg\": 0.5,\n  \"sample_count\": 3507,\n  \"avg_momentum\": 0.1686,\n  \"recent_100_avg\": 5.9637,\n  \"min_momentum\": -35.94,\n  \"max_momentum\": 26.61,\n  \"latest_momentum\": -7.96,\n  \"needs_intervention\": false,\n  \"cycles_to_flush_bad_history\": 1493\n}\n",
+    "stderr": ""
+  },
+  "epi_json": {
+    "goal_met": false,
+    "window": 5000,
+    "target_avg": 0.5,
+    "sample_count": 3507,
+    "avg_momentum": 0.1686,
+    "recent_100_avg": 5.9637,
+    "min_momentum": -35.94,
+    "max_momentum": 26.61,
+    "latest_momentum": -7.96,
+    "needs_intervention": false,
+    "cycles_to_flush_bad_history": 1493
+  },
+  "deploy": {
+    "rc": 0,
+    "stdout": "\n=== pytest ===\n============================= test session starts =============================\nplatform win32 -- Python 3.13.9, pytest-9.0.0, pluggy-1.5.0\nrootdir: C:\\Users\\reese\\Projects\\Evolution Engine\nconfigfile: pyproject.toml\nplugins: anyio-4.9.0, langsmith-0.4.42, libtmux-0.47.0, asyncio-1.4.0, cov-7.0.0, mock-3.15.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 60 items\n\ntests\\unit\\test_progress_controller.py .........................         [ 41%]\ntests\\unit\\test_collapse_reseed.py ...............                       [ 66%]\ntests\\unit\\test_epi_momentum_governor.py ................                [ 93%]\ntests\\unit\\test_clean_depth_escape.py ....                               [100%]\n\n============================= 60 passed in 0.90s ==============================\nexit=0\n\n=== restart ===\nStopped daemon pid=43372\nStopped orphaned batch pid=37208\nStarted continuous_evolution_daemon.py pid=30396\nexit=0\n\n=== health ===\nloop_health ok=True at=2026-09-09T02:59:16.449621Z\n  wake_loop: wake_loop: pid 5664 ok (hb 1540s)\n  evolution_daemon: evolution_daemon: pid 30396 ok (hb 3s)\n  trajectory_watcher: trajectory_watcher: pid 30184 ok (hb 3s)\n  flatline_guard: flatline_guard import ok\nexit=0\n\n=== epi ===\n{\n  \"goal_met\": false,\n  \"window\": 5000,\n  \"target_avg\": 0.5,\n  \"sample_count\": 3507,\n  \"avg_momentum\": 0.1686,\n  \"recent_100_avg\": 5.9637,\n  \"min_momentum\": -35.94,\n  \"max_momentum\": 26.61,\n  \"latest_momentum\": -7.96,\n  \"needs_intervention\": false,\n  \"cycles_to_flush_bad_history\": 1493\n}\nexit=1\n\n",
+    "stderr": ""
+  },
+  "daemon_restarted": true
+}

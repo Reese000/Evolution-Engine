@@ -1,12 +1,12 @@
 """Compact L30 champions may shrink when CPU held-out and side curriculum hold."""
 
-import json
 import os
 
 import pytest
 
-from evolution.terminal_stagnation import heldout_l30_verify_mean
 from evolution_engine import EvolutionConfig, EvolutionEngine
+from evolution.terminal_stagnation import heldout_l30_verify_mean
+from tests.live_results import live_result_rows
 
 
 @pytest.fixture
@@ -27,10 +27,7 @@ def isolated_progress_state(tmp_path, monkeypatch):
 def test_compact_terminal_efficiency_promotion(monkeypatch, isolated_progress_state):
     monkeypatch.setenv("EE_TERMINAL_VERIFY_PROMOTE", "1")
     row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
+    for candidate in live_result_rows():
         if (
             candidate.get("final_level") != 30
             or int(candidate.get("champion_words", 0)) < 62

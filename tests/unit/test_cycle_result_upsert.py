@@ -7,9 +7,8 @@ import os
 import tempfile
 import unittest
 
-from scripts.dedupe_cycle_results import _row_rank
-
 from run_multi_cycle_loop import _result_rank, _upsert_cycle_result
+from scripts.dedupe_cycle_results import _row_rank
 
 
 class TestCycleResultRank(unittest.TestCase):

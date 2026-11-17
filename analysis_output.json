@@ -1,0 +1,316 @@
+{
+  "clusters": [
+    {
+      "name": "initialization",
+      "methods": [
+        {"name": "_init_archives", "line_start": 1623, "line_end": 1676, "logic_lines": 25, "is_wrapper": false},
+        {"name": "_init_state", "line_start": 1679, "line_end": 1822, "logic_lines": 80, "is_wrapper": false},
+        {"name": "__init__", "line_start": 1826, "line_end": 1917, "logic_lines": 50, "is_wrapper": false},
+        {"name": "apply_external_params", "line_start": 1920, "line_end": 1939, "logic_lines": 10, "is_wrapper": true},
+        {"name": "load_archive_state", "line_start": 1942, "line_end": 1983, "logic_lines": 15, "is_wrapper": true},
+        {"name": "save_archive_state", "line_start": 1985, "line_end": 2005, "logic_lines": 8, "is_wrapper": true}
+      ],
+      "total_lines": 188
+    },
+    {
+      "name": "adaptive_mutation_rate",
+      "methods": [
+        {"name": "_velocity_based_mutation_rate", "line_start": 2017, "line_end": 2041, "logic_lines": 15, "is_wrapper": true},
+        {"name": "_stall_mutation_boost_factor", "line_start": 2045, "line_end": 2065, "logic_lines": 12, "is_wrapper": true},
+        {"name": "_apply_stall_mutation_boost", "line_start": 2069, "line_end": 2081, "logic_lines": 6, "is_wrapper": true},
+        {"name": "_compute_adaptive_mutation_rate", "line_start": 2085, "line_end": 2171, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_update_fitness_velocity", "line_start": 2175, "line_end": 2191, "logic_lines": 3, "is_wrapper": true},
+        {"name": "get_generation_stats", "line_start": 2195, "line_end": 2217, "logic_lines": 12, "is_wrapper": true}
+      ],
+      "total_lines": 56
+    },
+    {
+      "name": "diagnostics_and_recommendations",
+      "methods": [
+        {"name": "_get_bonus_config", "line_start": 2229, "line_end": 2279, "logic_lines": 25, "is_wrapper": false},
+        {"name": "_get_bonus_thresholds", "line_start": 2283, "line_end": 2313, "logic_lines": 15, "is_wrapper": false},
+        {"name": "_get_structural_scaling", "line_start": 2317, "line_end": 2355, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_get_fitness_history_stats", "line_start": 2359, "line_end": 2439, "logic_lines": 40, "is_wrapper": false},
+        {"name": "_get_population_dynamics", "line_start": 2443, "line_end": 2525, "logic_lines": 45, "is_wrapper": false},
+        {"name": "_get_hof_stats", "line_start": 2529, "line_end": 2565, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_get_recommendations", "line_start": 2569, "line_end": 2641, "logic_lines": 25, "is_wrapper": false},
+        {"name": "_recommend_stall", "line_start": 2645, "line_end": 2663, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_recommend_diversity", "line_start": 2667, "line_end": 2685, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_recommend_norm", "line_start": 2689, "line_end": 2704, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_recommend_graduated", "line_start": 2707, "line_end": 2718, "logic_lines": 5, "is_wrapper": true},
+        {"name": "_recommend_qd", "line_start": 2721, "line_end": 2732, "logic_lines": 5, "is_wrapper": true},
+        {"name": "_recommend_oscillation", "line_start": 2735, "line_end": 2746, "logic_lines": 5, "is_wrapper": true},
+        {"name": "_recommend_velocity", "line_start": 2749, "line_end": 2766, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_recommend_improvement", "line_start": 2769, "line_end": 2783, "logic_lines": 6, "is_wrapper": true},
+        {"name": "_recommend_normalization_off", "line_start": 2787, "line_end": 2802, "logic_lines": 6, "is_wrapper": true},
+        {"name": "get_fitness_diagnostic_summary", "line_start": 2805, "line_end": 2907, "logic_lines": 50, "is_wrapper": false},
+        {"name": "_build_novelty_qd", "line_start": 2911, "line_end": 2933, "logic_lines": 12, "is_wrapper": true}
+      ],
+      "total_lines": 289
+    },
+    {
+      "name": "champion_management",
+      "methods": [
+        {"name": "_record_oscillation_delta", "line_start": 2937, "line_end": 2963, "logic_lines": 15, "is_wrapper": false},
+        {"name": "_oscillation_hysteresis_blocks_replacement", "line_start": 2967, "line_end": 2987, "logic_lines": 12, "is_wrapper": true},
+        {"name": "_should_replace_champion", "line_start": 2991, "line_end": 3051, "logic_lines": 12, "is_wrapper": true},
+        {"name": "_champion_is_timeout_penalized", "line_start": 3055, "line_end": 3059, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_record_champion_replacement", "line_start": 3063, "line_end": 3091, "logic_lines": 10, "is_wrapper": true},
+        {"name": "get_champion_history", "line_start": 3095, "line_end": 3111, "logic_lines": 5, "is_wrapper": true},
+        {"name": "enable_bonus_normalization", "line_start": 3115, "line_end": 3171, "logic_lines": 5, "is_wrapper": true},
+        {"name": "_find_best_challenger", "line_start": 6203, "line_end": 6263, "logic_lines": 35, "is_wrapper": false},
+        {"name": "_try_end_of_run_curriculum_push", "line_start": 6267, "line_end": 6343, "logic_lines": 45, "is_wrapper": false},
+        {"name": "_champion_verify_accepts", "line_start": 6347, "line_end": 6369, "logic_lines": 12, "is_wrapper": true},
+        {"name": "_verify_and_replace_champion", "line_start": 6373, "line_end": 6498, "logic_lines": 75, "is_wrapper": false},
+        {"name": "_update_hall_of_fame", "line_start": 6502, "line_end": 6549, "logic_lines": 25, "is_wrapper": false},
+        {"name": "_try_escape_timeout_champion", "line_start": 6552, "line_end": 6632, "logic_lines": 45, "is_wrapper": false},
+        {"name": "_update_champion", "line_start": 6636, "line_end": 6666, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_analyze_trace", "line_start": 6670, "line_end": 6682, "logic_lines": 5, "is_wrapper": true}
+      ],
+      "total_lines": 322
+    },
+    {
+      "name": "core_generation_loop",
+      "methods": [
+        {"name": "_initialize_run", "line_start": 3183, "line_end": 3249, "logic_lines": 35, "is_wrapper": false},
+        {"name": "_maybe_reseed_stuck_champion", "line_start": 3253, "line_end": 3297, "logic_lines": 25, "is_wrapper": false},
+        {"name": "_run_generation_init", "line_start": 3301, "line_end": 3334, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_run_generation_evaluate", "line_start": 3337, "line_end": 3355, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_run_generation_update", "line_start": 3359, "line_end": 3429, "logic_lines": 35, "is_wrapper": false},
+        {"name": "_run_generation_maintenance", "line_start": 3433, "line_end": 3514, "logic_lines": 40, "is_wrapper": false},
+        {"name": "_run_progress_controller_generation", "line_start": 3517, "line_end": 3572, "logic_lines": 30, "is_wrapper": false},
+        {"name": "_run_generation_meta_monitoring", "line_start": 3575, "line_end": 3609, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_run_one_generation", "line_start": 3613, "line_end": 3665, "logic_lines": 15, "is_wrapper": true},
+        {"name": "_resolve_cuda_cleanup_callback", "line_start": 3669, "line_end": 3705, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_execute_generation_loop", "line_start": 3709, "line_end": 3753, "logic_lines": 15, "is_wrapper": true},
+        {"name": "_finalize_run_summary", "line_start": 3757, "line_end": 3843, "logic_lines": 45, "is_wrapper": false},
+        {"name": "run", "line_start": 3847, "line_end": 3897, "logic_lines": 30, "is_wrapper": false}
+      ],
+      "total_lines": 340
+    },
+    {
+      "name": "evaluation",
+      "methods": [
+        {"name": "_refresh_task_instance", "line_start": 3901, "line_end": 3909, "logic_lines": 3, "is_wrapper": true},
+        {"name": "validate_program", "line_start": 3913, "line_end": 3973, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_evaluate", "line_start": 3977, "line_end": 3991, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_evaluate_batch", "line_start": 3995, "line_end": 4089, "logic_lines": 45, "is_wrapper": false},
+        {"name": "_evaluate_batch_detailed", "line_start": 4093, "line_end": 4109, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_null_eval_crash_trace", "line_start": 4113, "line_end": 4139, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_build_eval_trace_dict", "line_start": 4143, "line_end": 4181, "logic_lines": 12, "is_wrapper": true},
+        {"name": "_eval_result_to_trace", "line_start": 4185, "line_end": 4251, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_generate_secondary_tasks", "line_start": 4263, "line_end": 4291, "logic_lines": 15, "is_wrapper": false},
+        {"name": "_evaluate_secondary_tasks", "line_start": 4295, "line_end": 4361, "logic_lines": 35, "is_wrapper": false}
+      ],
+      "total_lines": 176
+    },
+    {
+      "name": "fitness_computation",
+      "methods": [
+        {"name": "_get_structural_bonus_scale", "line_start": 4373, "line_end": 4473, "logic_lines": 45, "is_wrapper": false},
+        {"name": "_score_register_match", "line_start": 4477, "line_end": 4481, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_compute_structural_bonuses", "line_start": 4485, "line_end": 4493, "logic_lines": 2, "is_wrapper": true},
+        {"name": "_compute_efficiency_score", "line_start": 4497, "line_end": 4503, "logic_lines": 2, "is_wrapper": true},
+        {"name": "_compute_multi_task_score", "line_start": 4507, "line_end": 4515, "logic_lines": 2, "is_wrapper": true},
+        {"name": "_compute_time_credit", "line_start": 4519, "line_end": 4523, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_compute_smc_bonus", "line_start": 4527, "line_end": 4531, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_log_bonus_diagnostics", "line_start": 4535, "line_end": 4539, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_apply_novelty_qd_blending", "line_start": 4543, "line_end": 4547, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_compute_fitness", "line_start": 4551, "line_end": 4559, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_refresh_eval_budget", "line_start": 4561, "line_end": 4565, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_extract_trace_info", "line_start": 4569, "line_end": 4573, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_compute_base_score", "line_start": 4577, "line_end": 4581, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_compute_all_bonuses", "line_start": 4585, "line_end": 4593, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_apply_bonuses_and_normalize", "line_start": 4597, "line_end": 4601, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_finalize_with_blending", "line_start": 4605, "line_end": 4609, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_batch_classify_programs", "line_start": 4613, "line_end": 4617, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_batch_score_registers", "line_start": 4621, "line_end": 4625, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_batch_compute_efficiency", "line_start": 4629, "line_end": 4633, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_batch_compute_structural_bonuses", "line_start": 4637, "line_end": 4649, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_batch_blend_novelty_qd", "line_start": 4653, "line_end": 4658, "logic_lines": 1, "is_wrapper": true},
+        {"name": "batch_compute_fitness", "line_start": 4661, "line_end": 4677, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_batch_get_expected", "line_start": 4681, "line_end": 4685, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_batch_apply_crash_penalties", "line_start": 4689, "line_end": 4693, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_batch_compute_base", "line_start": 4697, "line_end": 4709, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_batch_apply_bonuses", "line_start": 4713, "line_end": 4721, "logic_lines": 1, "is_wrapper": true}
+      ],
+      "total_lines": 75
+    },
+    {
+      "name": "population_generation",
+      "methods": [
+        {"name": "_generate_initial_champion", "line_start": 4725, "line_end": 4791, "logic_lines": 40, "is_wrapper": false},
+        {"name": "_trim_program", "line_start": 4795, "line_end": 4799, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_generate_diversity_injection", "line_start": 4803, "line_end": 4836, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_apply_model_guided_slots", "line_start": 4839, "line_end": 4855, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_apply_mutation", "line_start": 4859, "line_end": 4893, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_generate_challengers", "line_start": 4897, "line_end": 4937, "logic_lines": 30, "is_wrapper": false}
+      ],
+      "total_lines": 121
+    },
+    {
+      "name": "mutation_strategy_selection",
+      "methods": [
+        {"name": "_compute_population_diversity", "line_start": 4941, "line_end": 4947, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_inject_diversity", "line_start": 4951, "line_end": 4971, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_check_variance_override", "line_start": 4975, "line_end": 4979, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_check_priority_overrides", "line_start": 4983, "line_end": 4987, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_apply_cycle_phase_bias", "line_start": 4991, "line_end": 4995, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_resolve_strategy_consecutive_cap", "line_start": 4999, "line_end": 5007, "logic_lines": 4, "is_wrapper": true},
+        {"name": "_resolve_skip_strategy_after_cap", "line_start": 5011, "line_end": 5027, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_recommend_strategy_from_archive", "line_start": 5031, "line_end": 5049, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_maybe_apply_exploration_bonus", "line_start": 5053, "line_end": 5081, "logic_lines": 15, "is_wrapper": false},
+        {"name": "_apply_strategy_override_pipeline", "line_start": 5085, "line_end": 5099, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_track_consecutive_strategy", "line_start": 5103, "line_end": 5117, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_choose_mutation_strategy", "line_start": 5121, "line_end": 5153, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_apply_affinity_bias", "line_start": 5157, "line_end": 5161, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_apply_level_aware_strategy_bias", "line_start": 5165, "line_end": 5169, "logic_lines": 1, "is_wrapper": true}
+      ],
+      "total_lines": 80
+    },
+    {
+      "name": "model_guided_generation",
+      "methods": [
+        {"name": "_get_model_guided_ratio", "line_start": 5181, "line_end": 5185, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_get_model_guided_prefix", "line_start": 5189, "line_end": 5197, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_compute_model_temperature", "line_start": 5201, "line_end": 5205, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_run_model_inference", "line_start": 5209, "line_end": 5309, "logic_lines": 60, "is_wrapper": false},
+        {"name": "_replace_with_model_guided", "line_start": 5313, "line_end": 5407, "logic_lines": 65, "is_wrapper": false}
+      ],
+      "total_lines": 128
+    },
+    {
+      "name": "qd_novelty_archive",
+      "methods": [
+        {"name": "_try_qd_crossover", "line_start": 5411, "line_end": 5515, "logic_lines": 60, "is_wrapper": false},
+        {"name": "_should_skip_qd_archive_update", "line_start": 5527, "line_end": 5545, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_log_qd_descriptor_diagnostics", "line_start": 5549, "line_end": 5587, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_update_qd_archive", "line_start": 5591, "line_end": 5651, "logic_lines": 30, "is_wrapper": false},
+        {"name": "_attempt_qd_archive_champion_replace", "line_start": 5655, "line_end": 5759, "logic_lines": 60, "is_wrapper": false},
+        {"name": "_try_qd_champion_reset", "line_start": 5763, "line_end": 5833, "logic_lines": 35, "is_wrapper": false},
+        {"name": "_should_skip_novelty_archive_update", "line_start": 5845, "line_end": 5861, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_build_novelty_archive_metadata", "line_start": 5865, "line_end": 5883, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_manage_novelty_archive_capacity", "line_start": 5887, "line_end": 5905, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_update_novelty_archive", "line_start": 5909, "line_end": 5979, "logic_lines": 35, "is_wrapper": false}
+      ],
+      "total_lines": 276
+    },
+    {
+      "name": "selection_and_tournament",
+      "methods": [
+        {"name": "_compute_challenger_fitnesses", "line_start": 5983, "line_end": 6069, "logic_lines": 50, "is_wrapper": false},
+        {"name": "_tournament_select", "line_start": 6073, "line_end": 6123, "logic_lines": 30, "is_wrapper": false},
+        {"name": "_select_elite", "line_start": 6127, "line_end": 6199, "logic_lines": 45, "is_wrapper": false}
+      ],
+      "total_lines": 125
+    },
+    {
+      "name": "curriculum_and_levels",
+      "methods": [
+        {"name": "_curriculum_verify_threshold", "line_start": 6694, "line_end": 6702, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_curriculum_fitness_gate_passes", "line_start": 6706, "line_end": 6713, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_curriculum_verify_passes", "line_start": 6717, "line_end": 6719, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_curriculum_advance_preconditions_met", "line_start": 6723, "line_end": 6741, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_try_curriculum_advance", "line_start": 6745, "line_end": 6819, "logic_lines": 40, "is_wrapper": false},
+        {"name": "_try_forced_curriculum_escape", "line_start": 6823, "line_end": 6869, "logic_lines": 25, "is_wrapper": false},
+        {"name": "_anti_plateau_escalation", "line_start": 6873, "line_end": 6896, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_verify_champion", "line_start": 6899, "line_end": 6949, "logic_lines": 25, "is_wrapper": false},
+        {"name": "_find_next_enabled_level", "line_start": 6953, "line_end": 6973, "logic_lines": 12, "is_wrapper": true},
+        {"name": "_reset_curriculum_advance_state", "line_start": 6977, "line_end": 7011, "logic_lines": 20, "is_wrapper": false},
+        {"name": "_reseed_champion_for_new_level", "line_start": 7015, "line_end": 7038, "logic_lines": 15, "is_wrapper": false},
+        {"name": "_advance_curriculum", "line_start": 7041, "line_end": 7067, "logic_lines": 15, "is_wrapper": false},
+        {"name": "_record_level_circuit_outcome", "line_start": 7071, "line_end": 7079, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_check_level_circuit_breaker", "line_start": 7083, "line_end": 7105, "logic_lines": 5, "is_wrapper": true},
+        {"name": "_is_level_disabled", "line_start": 7109, "line_end": 7113, "logic_lines": 1, "is_wrapper": true},
+        {"name": "_record_cycle_level_outcome", "line_start": 7117, "line_end": 7121, "logic_lines": 1, "is_wrapper": true},
+        {"name": "get_disabled_levels", "line_start": 7125, "line_end": 7129, "logic_lines": 1, "is_wrapper": true},
+        {"name": "get_level_circuit_stats", "line_start": 7133, "line_end": 7137, "logic_lines": 1, "is_wrapper": true}
+      ],
+      "total_lines": 185
+    },
+    {
+      "name": "recurrent_feedback",
+      "methods": [
+        {"name": "_collect_recurrent_candidates", "line_start": 7149, "line_end": 7221, "logic_lines": 50, "is_wrapper": false},
+        {"name": "_compute_level_weights", "line_start": 7225, "line_end": 7325, "logic_lines": 65, "is_wrapper": false},
+        {"name": "_apply_novelty_weights", "line_start": 7329, "line_end": 7425, "logic_lines": 60, "is_wrapper": false},
+        {"name": "_write_recurrent_examples", "line_start": 7429, "line_end": 7487, "logic_lines": 35, "is_wrapper": false},
+        {"name": "_try_recurrent_feedback", "line_start": 7491, "line_end": 7573, "logic_lines": 50, "is_wrapper": false},
+        {"name": "_evict_recurrent_buffer", "line_start": 7577, "line_end": 7679, "logic_lines": 55, "is_wrapper": false}
+      ],
+      "total_lines": 315
+    },
+    {
+      "name": "strategy_archive_recording",
+      "methods": [
+        {"name": "_strategy_outcome_top_k", "line_start": 7691, "line_end": 7703, "logic_lines": 8, "is_wrapper": true},
+        {"name": "_record_strategy_outcomes", "line_start": 7707, "line_end": 7831, "logic_lines": 70, "is_wrapper": false}
+      ],
+      "total_lines": 78
+    },
+    {
+      "name": "persistence_and_logging",
+      "methods": [
+        {"name": "_save_champion", "line_start": 7843, "line_end": 7859, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_checkpoint", "line_start": 7863, "line_end": 7949, "logic_lines": 50, "is_wrapper": false},
+        {"name": "_log", "line_start": 7961, "line_end": 8019, "logic_lines": 25, "is_wrapper": false},
+        {"name": "_log_generation", "line_start": 8022, "line_end": 8042, "logic_lines": 10, "is_wrapper": true},
+        {"name": "_close_log_handle", "line_start": 8616, "line_end": 8646, "logic_lines": 10, "is_wrapper": true}
+      ],
+      "total_lines": 105
+    },
+    {
+      "name": "public_state_api",
+      "methods": [
+        {"name": "_count_backward_branches", "line_start": 8046, "line_end": 8052, "logic_lines": 1, "is_wrapper": true},
+        {"name": "get_champion_program_analysis", "line_start": 8056, "line_end": 8094, "logic_lines": 20, "is_wrapper": false},
+        {"name": "get_champion_summary", "line_start": 8098, "line_end": 8112, "logic_lines": 5, "is_wrapper": true},
+        {"name": "get_run_diagnostics", "line_start": 8116, "line_end": 8230, "logic_lines": 70, "is_wrapper": false},
+        {"name": "get_performance_metrics", "line_start": 8234, "line_end": 8262, "logic_lines": 20, "is_wrapper": false},
+        {"name": "get_archive_summary", "line_start": 8266, "line_end": 8310, "logic_lines": 25, "is_wrapper": false},
+        {"name": "get_training_summary", "line_start": 8314, "line_end": 8344, "logic_lines": 20, "is_wrapper": false},
+        {"name": "get_run_summary", "line_start": 8348, "line_end": 8364, "logic_lines": 8, "is_wrapper": true},
+        {"name": "get_evolution_state", "line_start": 8368, "line_end": 8406, "logic_lines": 25, "is_wrapper": false},
+        {"name": "get_comprehensive_state", "line_start": 8410, "line_end": 8430, "logic_lines": 12, "is_wrapper": true},
+        {"name": "log_comprehensive_diagnostics", "line_start": 8434, "line_end": 8472, "logic_lines": 25, "is_wrapper": false},
+        {"name": "log_diagnostics", "line_start": 8476, "line_end": 8514, "logic_lines": 25, "is_wrapper": false},
+        {"name": "export_state_for_analysis", "line_start": 8518, "line_end": 8586, "logic_lines": 40, "is_wrapper": false},
+        {"name": "save_state_to_file", "line_start": 8590, "line_end": 8612, "logic_lines": 10, "is_wrapper": true},
+        {"name": "load_champion", "line_start": 8658, "line_end": 8703, "logic_lines": 20, "is_wrapper": false}
+      ],
+      "total_lines": 326
+    }
+  ],
+  "extraction_candidates": [
+    {
+      "name": "DiagnosticsMixin",
+      "cluster": "diagnostics_and_recommendations",
+      "reason": "289 lines: 8 substantial methods computing fitness landscape diagnostics + 10 thin wrappers generating recommendations. Reads config/stats but has no mutation/side-effect coupling. Already isolated by section comment. Clean extraction boundary.",
+      "methods_count": 18,
+      "total_logic_lines": 289
+    },
+    {
+      "name": "RecurrentFeedbackMixin",
+      "cluster": "recurrent_feedback",
+      "reason": "315 lines: 6 substantial methods, 0 wrappers. Highly cohesive training data pipeline (candidate collection, level weighting, novelty weighting, JSONL I/O, buffer eviction). Minimal coupling to engine internals (reads _last_challengers, champion_level, config only).",
+      "methods_count": 6,
+      "total_logic_lines": 315
+    },
+    {
+      "name": "QDArchiveMixin",
+      "cluster": "qd_novelty_archive",
+      "reason": "276 lines: 7 substantial + 3 wrappers. QD crossover, MAP-Elites update, novelty archive update, champion reset from archive. Clear subsystem boundary with QD/novelty archive objects as natural dependency injection points.",
+      "methods_count": 10,
+      "total_logic_lines": 276
+    },
+    {
+      "name": "CurriculumControllerMixin",
+      "cluster": "curriculum_and_levels",
+      "reason": "185 lines: 7 substantial + 11 wrappers. Level advancement, verify gates, forced escape, circuit breaker. Already partially delegated to progress_controller; the remaining inline logic forms a cohesive curriculum management layer.",
+      "methods_count": 18,
+      "total_logic_lines": 185
+    }
+  ],
+  "wrapper_count": 102,
+  "substantial_count": 76
+}

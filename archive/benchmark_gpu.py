@@ -8,7 +8,6 @@ import gc
 import os
 import subprocess
 import sys
-import time
 
 import torch
 
@@ -19,7 +18,7 @@ if SCRIPT_DIR not in sys.path:
 if M1_DIR not in sys.path:
     sys.path.insert(0, M1_DIR)
 
-from rv32i_model import RV32IFieldTokenizer, compute_loss
+from rv32i_model import compute_loss
 from training.model_factory import load_or_create_model
 
 
@@ -31,6 +30,7 @@ def get_power_draw():
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
         return float(r.stdout.strip())
     except Exception:
@@ -45,6 +45,7 @@ def get_gpu_util():
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
         return int(r.stdout.strip())
     except Exception:
@@ -84,7 +85,7 @@ def benchmark_batch(batch_size, seq_len, n_steps=50, warmup=10, label=""):
     torch.cuda.synchronize()
 
     # Sample power before
-    power_before = get_power_draw()
+    get_power_draw()
 
     # Timed run
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(n_steps)]
@@ -93,7 +94,7 @@ def benchmark_batch(batch_size, seq_len, n_steps=50, warmup=10, label=""):
     gpu_mems = []
     powers = []
     for i in range(n_steps):
-        mem_before = torch.cuda.memory_allocated()
+        torch.cuda.memory_allocated()
 
         start_events[i].record()
         with torch.amp.autocast("cuda", enabled=True):

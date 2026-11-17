@@ -45,7 +45,7 @@ def main() -> None:
 
     if data_path and os.path.isfile(data_path):
         try:
-            with open(data_path) as f:
+            with open(data_path, encoding="utf-8") as f:
                 for line in f:
                     entry = json.loads(line.strip())
                     tokens = entry.get("tokens", [])

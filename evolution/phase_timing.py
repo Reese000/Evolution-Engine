@@ -110,6 +110,18 @@ _sub_lock = threading.Lock()
 _subphases: dict[str, float] = {}
 
 
+def _safe_subphase_snapshot() -> dict[str, float]:
+    """Sub-block seconds for the closing generation; never raises."""
+    try:
+        return {
+            k: round(v, 3)
+            for k, v in sorted(snapshot_subphases().items(), key=lambda kv: -kv[1])
+            if v >= 0.05
+        }
+    except Exception:  # noqa: BLE001 -- markers must never break evolution
+        return {}
+
+
 def reset_subphases() -> None:
     """Clear the process-wide sub-block accumulators (start of a generation)."""
     with _sub_lock:
@@ -143,6 +155,7 @@ def subphase(name: str) -> Iterator[None]:
                     _subphases[name] = _subphases.get(name, 0.0) + elapsed
             except Exception:  # noqa: BLE001 -- markers must never raise
                 pass
+
 
 
 def _warn_unknown_phase(name: str) -> None:
@@ -271,9 +284,8 @@ class PhaseTimer:
             "coverage_ratio": round(accounted / wall, 4) if wall > 0 else 1.0,
             # Diagnostic hotspot markers (see `subphase`): sub-0.05s noise
             # is dropped so a fast generation records an empty dict.
-            "subphase_seconds": {
-                k: round(v, 3) for k, v in sorted(snapshot_subphases().items(), key=lambda kv: -kv[1]) if v >= 0.05
-            },
+            # Never raises: instrumentation must not break the generation loop.
+            "subphase_seconds": _safe_subphase_snapshot(),
         }
         record: dict[str, Any] = {}
         if extra:

@@ -120,7 +120,10 @@ def _carry_forward_champion_level(
         if carried < prev:
             log(f"  Timeout champion clamp start L{prev}->L{carried} (fit=-25)")
     if carried < final_level:
-        log(f"  Hollow level clamp L{final_level}->L{carried} " f"(verify={verify:.3f}, sustained_cap=L{sustained})")
+        log(
+            f"  Hollow level clamp L{final_level}->L{carried} "
+            f"(verify={verify:.3f}, sustained_cap=L{sustained})"
+        )
         evo_result["start_level_clamped"] = True
         evo_result["start_level"] = carried
         is_timeout = float(evo_result.get("final_fitness", 0)) <= -25.0
@@ -207,7 +210,9 @@ def _collapse_reseed_level(project_root: str, level: int, verify: float) -> int:
     return max(17, lvl - 1)
 
 
-def _flag_collapse_recovery(project_root: str, reseed_level: int, *, corrupt_cycle: int | None = None) -> None:
+def _flag_collapse_recovery(
+    project_root: str, reseed_level: int, *, corrupt_cycle: int | None = None
+) -> None:
     """Recover from collapse without grafting broken high-level reference programs."""
     tick_path = os.path.join(project_root, ".agents", "tick_state.json")
     try:
@@ -279,7 +284,9 @@ def _prune_stale_tick_reseed_state(project_root: str, active_level: int) -> None
             pass
 
 
-def _maybe_apply_collapse_recovery(project_root: str, cycle: int, last_champion_level: int) -> int:
+def _maybe_apply_collapse_recovery(
+    project_root: str, cycle: int, last_champion_level: int
+) -> int:
     """Drop start level after collapse without reference graft."""
     tick_path = os.path.join(project_root, ".agents", "tick_state.json")
     try:
@@ -308,25 +315,39 @@ def _maybe_apply_collapse_recovery(project_root: str, cycle: int, last_champion_
             with open(tick_path, "w", encoding="utf-8") as f:
                 json.dump(tick, f, indent=2)
             return last_champion_level
-        log(f"  Cycle {cycle}: Collapse recovery drop " f"L{last_champion_level}->L{recovery}")
+        log(
+            f"  Cycle {cycle}: Collapse recovery drop "
+            f"L{last_champion_level}->L{recovery}"
+        )
         tick.pop("collapse_reseed", None)
         tick.pop("depth_nudge_level", None)
         with open(tick_path, "w", encoding="utf-8") as f:
             json.dump(tick, f, indent=2)
         state_path = os.path.join(project_root, ".agents", "progress_controller_state.json")
         if os.path.isfile(state_path):
-            with open(state_path, encoding="utf-8") as f:
-                state = json.load(f)
-            state["level"] = recovery
-            state["cycles_at_level"] = 0
-            with open(state_path, "w", encoding="utf-8") as f:
-                json.dump(state, f, indent=2)
+            # Locked atomic read-merge-write, shared with
+            # ProgressController.save() and terminal_stagnation
+            # ._patch_progress_state -- a plain write-in-place here could tear
+            # (or drop keys from) what those writers just committed.
+            from evolution import progress_state_io
+
+            written, err = progress_state_io.update_state(
+                state_path, {"level": recovery, "cycles_at_level": 0}
+            )
+            if err is not None:
+                raise err  # historic fallback: caller returns last_champion_level
+            if not written:
+                # Historic behaviour: a failed persist fell through to this
+                # function's except clause and returned last_champion_level.
+                raise OSError(f"failed to persist progress state {state_path}")
         return recovery
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return last_champion_level
 
 
-def _clear_stale_collapse_tick_flags(project_root: str, evo_result: dict[str, Any]) -> None:
+def _clear_stale_collapse_tick_flags(
+    project_root: str, evo_result: dict[str, Any]
+) -> None:
     """Drop rollback/reseed leftovers once L22+ champion is stable."""
     from evolution.curriculum_advance import depth_carry_verify_floor
 
@@ -365,7 +386,9 @@ def _clear_stale_collapse_tick_flags(project_root: str, evo_result: dict[str, An
         pass
 
 
-def _auto_depth_escape_start_level(project_root: str, cycle: int, last_champion_level: int) -> int:
+def _auto_depth_escape_start_level(
+    project_root: str, cycle: int, last_champion_level: int
+) -> int:
     """Bump start level when progress state shows stable depth without tick nudge."""
     from evolution.curriculum_advance import nudge_fitness_passes, nudge_verify_passes
 
@@ -467,7 +490,9 @@ def _maybe_flag_collapse_reseed(project_root: str, evo_result: dict[str, Any], c
     log(f"  Cycle {cycle}: Collapse recovery flagged L{reseed_lvl} ({reason})")
 
 
-def _maybe_flag_clean_depth_escape(project_root: str, evo_result: dict[str, Any], cycle: int) -> int | None:
+def _maybe_flag_clean_depth_escape(
+    project_root: str, evo_result: dict[str, Any], cycle: int
+) -> int | None:
     """Nudge to next level when L21+ champion is clean — escape graft trap before corruption."""
     from evolution.curriculum_advance import nudge_fitness_passes, nudge_verify_passes
     from evolution.progress_controller import ProgressController
@@ -601,7 +626,9 @@ def _evaluate_retrain_skip(
     champion_verify = float(evo_result.get("champion_verify_score", 0.0))
     from evolution.terminal_stagnation import terminal_certified_plateau
 
-    terminal_plateau = terminal_certified_plateau(int(current_level), champion_verify, float(current_fitness))
+    terminal_plateau = terminal_certified_plateau(
+        int(current_level), champion_verify, float(current_fitness)
+    )
     should_retrain = True
     retrain_result: dict[str, Any] = {"retrained": False, "reason": "skipped"}
     force_l17_retrain = False
@@ -612,8 +639,11 @@ def _evaluate_retrain_skip(
         if not ProgressController.passes_certify_verify(int(current_level), champion_verify):
             from evolution.terminal_stagnation import terminal_efficiency_at_scan_floor
 
-            scan_floor_regression = int(current_level) >= 30 and terminal_efficiency_at_scan_floor(
-                max(int(current_words), int(last_champion_words))
+            scan_floor_regression = (
+                int(current_level) >= 30
+                and terminal_efficiency_at_scan_floor(
+                    max(int(current_words), int(last_champion_words))
+                )
             )
             if scan_floor_regression:
                 should_retrain = False
@@ -667,8 +697,15 @@ def _evaluate_retrain_skip(
     cycles_since_last_retrain += 1
     force_interval = int(getattr(args, "force_retrain_interval", 0) or 0)
     # Default force_retrain_interval=3 must not override certified L30 plateau skip (40-cycle periodic only).
-    if not terminal_plateau and force_interval > 0 and cycles_since_last_retrain >= force_interval:
-        log(f"  Cycle {cycle}: Force retrain after {cycles_since_last_retrain} " f"cycles (interval={force_interval})")
+    if (
+        not terminal_plateau
+        and force_interval > 0
+        and cycles_since_last_retrain >= force_interval
+    ):
+        log(
+            f"  Cycle {cycle}: Force retrain after {cycles_since_last_retrain} "
+            f"cycles (interval={force_interval})"
+        )
         should_retrain = True
         cycles_since_last_retrain = 0
 
@@ -678,10 +715,8 @@ def _evaluate_retrain_skip(
         level_same = current_level == last_champion_level
         words_same = current_words == last_champion_words
         no_new_traces = evo_result.get("champion_traces", 0) == 0
-        champion_static = (
-            fitness_same
-            and words_same
-            and (level_same or (terminal_plateau and int(current_level) >= int(os.environ.get("EE_MAX_LEVEL", "30"))))
+        champion_static = fitness_same and words_same and (
+            level_same or (terminal_plateau and int(current_level) >= int(os.environ.get("EE_MAX_LEVEL", "30")))
         )
         # Certified L30: skip retrain even when fitness ticks up. Tiny +0.3 gains
         # were disabling skip and forcing a ~240s retrain every cycle.
@@ -698,7 +733,9 @@ def _evaluate_retrain_skip(
             skip_terminal = False
             should_retrain = True
             retrain_result = {"retrained": False, "reason": "pending", "checkpoint": checkpoint}
-        if not force_l17_retrain and (skip_terminal or (champion_static and no_new_traces)):
+        if not force_l17_retrain and (
+            skip_terminal or (champion_static and no_new_traces)
+        ):
             reason = "terminal_plateau_unchanged" if skip_terminal else "champion_unchanged"
             log(
                 f"  Cycle {cycle}: Champion unchanged (F={current_fitness:.3f} "
@@ -779,7 +816,9 @@ def _run_evolution_phase(
                 from evolution.archive_persistence import cap_strategy_archive_state
 
                 cap = int(os.environ.get("EE_TERMINAL_STRATEGY_ARCHIVE_CAP", "3200"))
-                prev_archive_state = cap_strategy_archive_state(prev_archive_state, cap) or prev_archive_state
+                prev_archive_state = (
+                    cap_strategy_archive_state(prev_archive_state, cap) or prev_archive_state
+                )
             evo_result = run_evolution(
                 cycle,
                 gen_count_override,
@@ -805,11 +844,7 @@ def _run_evolution_phase(
     prev_archive_state = _cap_terminal_archive_state(prev_archive_state, evo_result)
     prev_cycle_metrics = evo_result
     current_level = evo_result.get("final_level", 0)
-    if (
-        meta_controller is not None
-        and current_level > meta_controller.best_level
-        and hasattr(meta_controller, "snapshot_before_cycle")
-    ):
+    if meta_controller is not None and current_level > meta_controller.best_level and hasattr(meta_controller, "snapshot_before_cycle"):
         meta_controller.snapshot_before_cycle(cycle, checkpoint)
         meta_controller._log(f"Best-level snapshot: C{cycle} reached L{current_level}")
     return EvolutionPhaseResult(
@@ -948,7 +983,6 @@ def _apply_progression_tuning_policy(
     if not adjustments:
         return
     adj = adjustments[0]
-
     class _Proxy:
         pass
 
@@ -975,7 +1009,9 @@ def _apply_progression_tuning_policy(
     log(f"  Cycle {cycle}: TuningPolicy applied: {adj.parameter}={adj.value} ({adj.reason})")
 
 
-def _apply_terminal_diversity_boost(cycle: int, evo_meta_params: dict[str, Any], project_root: str) -> bool:
+def _apply_terminal_diversity_boost(
+    cycle: int, evo_meta_params: dict[str, Any], project_root: str
+) -> bool:
     """At max depth with frozen verify, explore via diversity — not reference graft repair.
 
     Returns True when cross-cycle archives should be skipped (deep terminal stall).
@@ -996,7 +1032,10 @@ def _apply_terminal_diversity_boost(cycle: int, evo_meta_params: dict[str, Any],
                 cycles_at_level = int(progress_state.get("cycles_at_level", 0))
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         pass
-    from evolution.epi_momentum_governor import clear_plateau_boost, should_suppress_terminal_diversity_boost
+    from evolution.epi_momentum_governor import (
+        clear_plateau_boost,
+        should_suppress_terminal_diversity_boost,
+    )
     from evolution.terminal_stagnation import (
         terminal_certified_plateau,
         terminal_diversity_boost_params,
@@ -1031,17 +1070,27 @@ def _apply_terminal_diversity_boost(cycle: int, evo_meta_params: dict[str, Any],
         tier = min(tier, 4)
     floors = terminal_diversity_boost_params(tier)
     mu_floor = float(floors["mutation_rate"])
-    evo_meta_params["novelty_weight"] = max(evo_meta_params.get("novelty_weight", 0.3), floors["novelty_weight"])
+    evo_meta_params["novelty_weight"] = max(
+        evo_meta_params.get("novelty_weight", 0.3), floors["novelty_weight"]
+    )
     evo_meta_params["diversity_threshold"] = max(
         evo_meta_params.get("diversity_threshold", 0.3), floors["diversity_threshold"]
     )
-    evo_meta_params["mutation_rate"] = max(evo_meta_params.get("mutation_rate", 0.3), mu_floor)
+    evo_meta_params["mutation_rate"] = max(
+        evo_meta_params.get("mutation_rate", 0.3), mu_floor
+    )
     # Scheduler + adaptive ceiling otherwise cap exploration below tier floors.
-    evo_meta_params["mutation_rate_start"] = max(evo_meta_params.get("mutation_rate_start", 0.0), mu_floor)
-    evo_meta_params["mutation_rate_end"] = max(evo_meta_params.get("mutation_rate_end", 0.0), mu_floor * 0.92)
+    evo_meta_params["mutation_rate_start"] = max(
+        evo_meta_params.get("mutation_rate_start", 0.0), mu_floor
+    )
+    evo_meta_params["mutation_rate_end"] = max(
+        evo_meta_params.get("mutation_rate_end", 0.0), mu_floor * 0.92
+    )
     at_scan_floor = stable_words > 0 and terminal_efficiency_at_scan_floor(stable_words)
     if at_scan_floor:
-        evo_meta_params["adaptive_mutation_ceil"] = max(evo_meta_params.get("adaptive_mutation_ceil", 0.0), mu_floor)
+        evo_meta_params["adaptive_mutation_ceil"] = max(
+            evo_meta_params.get("adaptive_mutation_ceil", 0.0), mu_floor
+        )
     else:
         evo_meta_params["adaptive_mutation_ceil"] = max(
             evo_meta_params.get("adaptive_mutation_ceil", 0.0), mu_floor, 0.95
@@ -1049,13 +1098,17 @@ def _apply_terminal_diversity_boost(cycle: int, evo_meta_params: dict[str, Any],
     evo_meta_params["diversity_inject_ratio"] = max(
         evo_meta_params.get("diversity_inject_ratio", 0.1), floors["diversity_inject_ratio"]
     )
-    evo_meta_params["curriculum_stall_threshold"] = min(int(evo_meta_params.get("curriculum_stall_threshold", 2)), 1)
+    evo_meta_params["curriculum_stall_threshold"] = min(
+        int(evo_meta_params.get("curriculum_stall_threshold", 2)), 1
+    )
     if tier >= 2:
         evo_meta_params["elite_ratio"] = min(evo_meta_params.get("elite_ratio", 0.1), 0.05)
         evo_meta_params["tournament_size"] = max(int(evo_meta_params.get("tournament_size", 3)), 5)
     if tier >= 5:
         evo_meta_params["crossover_rate"] = max(evo_meta_params.get("crossover_rate", 0.2), 0.45)
-        evo_meta_params["champion_crossover_prob"] = max(evo_meta_params.get("champion_crossover_prob", 0.1), 0.35)
+        evo_meta_params["champion_crossover_prob"] = max(
+            evo_meta_params.get("champion_crossover_prob", 0.1), 0.35
+        )
     skip_archives = tier >= 3
     if skip_archives:
         tick["terminal_archive_reset"] = True
@@ -1075,14 +1128,19 @@ def _apply_terminal_diversity_boost(cycle: int, evo_meta_params: dict[str, Any],
     return skip_archives
 
 
-def cap_evo_meta_params_at_scan_floor(evo_meta_params: dict[str, Any], project_root: str) -> None:
+def cap_evo_meta_params_at_scan_floor(
+    evo_meta_params: dict[str, Any], project_root: str
+) -> None:
     """Clamp meta-controller / stall tuners at held-out length floor.
 
     Tier-4 diversity floors already cap boost mutation; compound_stall and
     adaptive_mutation_ceil=0.95 can still push mr>0.85 and inflate cycle time
     without finding shorter held-out-passing bytecode.
     """
-    from evolution.terminal_stagnation import terminal_diversity_boost_params, terminal_efficiency_at_scan_floor
+    from evolution.terminal_stagnation import (
+        terminal_diversity_boost_params,
+        terminal_efficiency_at_scan_floor,
+    )
 
     state_path = os.path.join(project_root, ".agents", "progress_controller_state.json")
     try:
@@ -1232,7 +1290,9 @@ def _strip_best_checkpoint_for_evolution(cycle: int, best_ckpt_path: str, load_c
             },
             best_ckpt_path,
         )
-        log(f"  Cycle {cycle}: Stripped checkpoint for evolution ({strip_cfg['n_layers']}L/d={strip_cfg['d_model']})")
+        log(
+            f"  Cycle {cycle}: Stripped checkpoint for evolution ({strip_cfg['n_layers']}L/d={strip_cfg['d_model']})"
+        )
     except (RuntimeError, ValueError, OSError) as e:
         log(f"  Cycle {cycle}: Failed to strip checkpoint: {e}")
 
@@ -1491,7 +1551,9 @@ def _apply_checkpoint_gating_with_mc(
                 project_root,
             )
         if new_ck and os.path.isfile(new_ck):
-            checkpoint = _fallback_accept_unparsable_val_loss(cycle, new_ck, retrain_result, checkpoint, m1_checkpoints)
+            checkpoint = _fallback_accept_unparsable_val_loss(
+                cycle, new_ck, retrain_result, checkpoint, m1_checkpoints
+            )
 
     return CheckpointGatingResult(checkpoint, skip_evolution, post_retrain_boost_cycles, retrain_result)
 
@@ -1716,8 +1778,12 @@ def _update_barrier_tuner_after_cycle(
         last_champion_level = max(3, last_champion_level - 3)
         log(f"  Cycle {cycle}: F=0.000 → lowering level L{old_level}→L{last_champion_level}")
     else:
-        carried = _carry_forward_champion_level(evo_result, all_results, project_root)
-        nudged = _maybe_nudge_champion_level(cycle, project_root, evo_result, carried, progress_controller)
+        carried = _carry_forward_champion_level(
+            evo_result, all_results, project_root
+        )
+        nudged = _maybe_nudge_champion_level(
+            cycle, project_root, evo_result, carried, progress_controller
+        )
         last_champion_level = max(carried, nudged)
     last_champion_words = evo_result.get("champion_words", 0)
     should_terminate = barrier_tuner.should_terminate()
@@ -1759,7 +1825,10 @@ def _build_combined_cycle_results(
         if capped < raw_level:
             combined["final_level_spike"] = raw_level
             combined["final_level"] = capped
-            log(f"  Cycle {cycle}: Timeout level cap L{raw_level}->L{capped} " f"(start L{start_lvl}, fit={fit:.1f})")
+            log(
+                f"  Cycle {cycle}: Timeout level cap L{raw_level}->L{capped} "
+                f"(start L{start_lvl}, fit={fit:.1f})"
+            )
     log(
         f"  Cycle {cycle}: phases: evolution={evo_elapsed:.1f}s "
         f"retrain={retrain_elapsed:.1f}s total={total_elapsed:.1f}s"
@@ -2105,7 +2174,9 @@ def execute_cycles(ctx) -> None:
 
         _prune_stale_tick_reseed_state(PROJECT_ROOT, last_champion_level)
 
-        last_champion_level = _maybe_apply_collapse_recovery(PROJECT_ROOT, cycle, last_champion_level)
+        last_champion_level = _maybe_apply_collapse_recovery(
+            PROJECT_ROOT, cycle, last_champion_level
+        )
 
         try:
             from evolution.champion_carry_forward import load_carry_forward_start_level
@@ -2113,10 +2184,15 @@ def execute_cycles(ctx) -> None:
             sustained = _sustained_level_cap(PROJECT_ROOT, all_results)
             store_level = load_carry_forward_start_level(PROJECT_ROOT, sustained)
             if store_level > last_champion_level:
-                log(f"  Cycle {cycle}: Carry-forward start boost " f"L{last_champion_level}->L{store_level}")
+                log(
+                    f"  Cycle {cycle}: Carry-forward start boost "
+                    f"L{last_champion_level}->L{store_level}"
+                )
                 last_champion_level = store_level
                 if ctx.progress_controller is not None:
-                    ctx.progress_controller.state.level = max(store_level, ctx.progress_controller.state.level)
+                    ctx.progress_controller.state.level = max(
+                        store_level, ctx.progress_controller.state.level
+                    )
                     ctx.progress_controller.state.cycles_at_level = max(
                         1, ctx.progress_controller.state.cycles_at_level
                     )
@@ -2124,19 +2200,23 @@ def execute_cycles(ctx) -> None:
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass
 
-        last_champion_level = _auto_depth_escape_start_level(PROJECT_ROOT, cycle, last_champion_level)
+        last_champion_level = _auto_depth_escape_start_level(
+            PROJECT_ROOT, cycle, last_champion_level
+        )
 
         tick_path = os.path.join(PROJECT_ROOT, ".agents", "tick_state.json")
         force_reseed = False
         try:
             with open(tick_path, encoding="utf-8") as f:
                 tick = json.load(f)
-            force_reseed = bool(tick.get("force_reference_champion") or tick.get("force_champion_reseed"))
+            force_reseed = bool(
+                tick.get("force_reference_champion") or tick.get("force_champion_reseed")
+            )
             if force_reseed:
                 os.environ["EE_FORCE_REFERENCE_CHAMPION"] = "1"
-            if (tick.get("force_register_repair") or tick.get("force_champion_reseed")) and not tick.get(
-                "terminal_diversity_boost"
-            ):
+            if (
+                tick.get("force_register_repair") or tick.get("force_champion_reseed")
+            ) and not tick.get("terminal_diversity_boost"):
                 os.environ["EE_REGISTER_REPAIR_BOOST"] = "1"
             if force_reseed and tick.pop("collapse_reseed", None):
                 try:
@@ -2168,8 +2248,13 @@ def execute_cycles(ctx) -> None:
                     from evolution.curriculum_advance import nudge_verify_passes
 
                     nudge_level = max(last_champion_level, depth_nudge - 1)
-                    if pc_cycles >= min_depth and nudge_verify_passes(nudge_level, pc_verify, pc_cycles):
-                        log(f"  Cycle {cycle}: Depth nudge start level L{depth_nudge} " f"(keep champion)")
+                    if pc_cycles >= min_depth and nudge_verify_passes(
+                        nudge_level, pc_verify, pc_cycles
+                    ):
+                        log(
+                            f"  Cycle {cycle}: Depth nudge start level L{depth_nudge} "
+                            f"(keep champion)"
+                        )
                         last_champion_level = depth_nudge
                     else:
                         log(
@@ -2201,7 +2286,10 @@ def execute_cycles(ctx) -> None:
             _prev_fit = float(prev_cycle_metrics.get("final_fitness", 0.0))
             archive_for_cycle = None
             if terminal_certified_plateau(_prev_lvl, _prev_verify, _prev_fit):
-                log(f"  Cycle {cycle}: Skipping archive restore " f"(certified L{_prev_lvl} terminal fast path)")
+                log(
+                    f"  Cycle {cycle}: Skipping archive restore "
+                    f"(certified L{_prev_lvl} terminal fast path)"
+                )
             else:
                 log(f"  Cycle {cycle}: Skipping QD archive restore (L21+ depth guard)")
         elif (
@@ -2365,7 +2453,9 @@ def execute_cycles(ctx) -> None:
 
         else:
             carried = _carry_forward_champion_level(evo_result, all_results, PROJECT_ROOT)
-            nudged = _maybe_nudge_champion_level(cycle, PROJECT_ROOT, evo_result, carried, ctx.progress_controller)
+            nudged = _maybe_nudge_champion_level(
+                cycle, PROJECT_ROOT, evo_result, carried, ctx.progress_controller
+            )
             last_champion_level = max(carried, nudged)
 
         if should_terminate:
@@ -2396,7 +2486,10 @@ def execute_cycles(ctx) -> None:
                 fl_report = assess_flatline(PROJECT_ROOT)
                 if fl_report.halted:
                     apply_flatline_halt(PROJECT_ROOT, fl_report)
-                    log(f"FLATLINE advisory at cycle {cycle}: " f"{'; '.join(fl_report.reasons)}")
+                    log(
+                        f"FLATLINE advisory at cycle {cycle}: "
+                        f"{'; '.join(fl_report.reasons)}"
+                    )
             except Exception as exc:  # noqa: BLE001
                 log(f"Flatline guard skipped: {exc!r}")
 

@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -235,7 +235,7 @@ class WarmStartTrainer:
                 token_ids = self.tokenizer.encode_trace(
                     [{"name": "ADDI", "rd": 1, "rs1": 0, "imm": 1} for _ in range(1)]
                 )
-            except Exception:
+            except (ValueError, TypeError, KeyError):
                 # Fallback: just use sequential token IDs for testing
                 token_ids = [4, 51, 0, 0, 0, 0, 0, 0, 1]
 

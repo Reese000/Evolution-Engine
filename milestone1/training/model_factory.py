@@ -30,7 +30,6 @@ class CheckpointMismatchError(Exception):
     """
 
 
-
 # ── Model size configs ──────────────────────────────────────────────────────
 MODEL_SIZE_CONFIGS: dict[str, dict] = {
     "small": {"d_model": 256, "n_layers": 6, "n_heads": 8, "d_ff": 683},
@@ -60,7 +59,7 @@ def from_config(config: dict, device: torch.device | None = None) -> torch.nn.Mo
     Returns:
         Instantiated RV32ITransformer on the target device
     """
-    from rv32i_model import RV32IFieldTokenizer, RV32ITransformer, RV32IVocab
+    from rv32i_model import RV32ITransformer, RV32IVocab
 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -3,17 +3,16 @@
 Extracted from EvolutionEngine in evolution_engine.py.
 Uses mixin pattern: all methods access self.* from the host EvolutionEngine.
 """
-
 from __future__ import annotations
 
 import heapq
-import importlib.util
 import os
 
+import importlib.util
 _HAS_QD = importlib.util.find_spec("qd_archive") is not None
 
-from evolution.shared import _CRASH_STATUSES  # noqa: E402
 from evolution.terminal_stagnation import L30_COMPACT_MAX_WORDS
+from evolution.shared import _CRASH_STATUSES  # noqa: E402
 from mutation_proposer import trim_dead_code  # noqa: E402
 from tasks_rv32i import LEVELS  # noqa: E402
 
@@ -52,6 +51,7 @@ class SelectionMixin:
             return 0.0
 
     def _compute_challenger_fitnesses(self, challengers, results, stage1_budget, raw_only):
+
         """Compute fitness for all challengers. Returns (scored, fitness_cache)."""
 
         n_challengers = len(challengers)
@@ -71,7 +71,9 @@ class SelectionMixin:
         try:
 
             batch_fitnesses, _ = self.batch_compute_fitness(
+
                 challengers, results, eval_budget=stage1_budget, raw_only=raw_only
+
             )
 
             for idx in range(n_challengers):
@@ -120,8 +122,15 @@ class SelectionMixin:
 
         return scored, fitness_cache
 
+
+
+
+
     def _tournament_select(self, scored, elite_size, n_scored):
+
         """Fill remaining elite slots via adaptive tournament selection."""
+
+
 
         rng = self.rng
 
@@ -169,10 +178,17 @@ class SelectionMixin:
 
             yield _scored_get(best_i), best_i
 
+
+
+
+
     def _select_elite(self, challengers, results):
+
         """Select elite challengers for detailed evaluation."""
 
         import heapq
+
+
 
         stage1_budget = self.config.eval_budget // 2
 
@@ -184,7 +200,10 @@ class SelectionMixin:
 
         self._last_challenger_fitnesses = fitness_cache
 
-        from evolution.terminal_stagnation import terminal_verify_promote_active, terminal_verify_selection_bonus
+        from evolution.terminal_stagnation import (
+            terminal_verify_promote_active,
+            terminal_verify_selection_bonus,
+        )
 
         if terminal_verify_promote_active() and self.champion_level >= self.config.max_level:
             max_pop_verify = 0.0
@@ -234,7 +253,9 @@ class SelectionMixin:
         if self.champion is not None and self.champion_trace is not None:
 
             champ_fits, _ = self.batch_compute_fitness(
+
                 [self.champion], [self.champion_trace], eval_budget=stage1_budget, raw_only=raw_only
+
             )
 
             self._champion_stage1_fitness = champ_fits[0]
@@ -245,8 +266,7 @@ class SelectionMixin:
 
         elite_size = max(1, int(self.config.population_size * self.config.elite_ratio))
 
-        from evolution.terminal_stagnation import terminal_elite_heap_key
-        from evolution.terminal_stagnation import terminal_verify_promote_active as _tvp
+        from evolution.terminal_stagnation import terminal_elite_heap_key, terminal_verify_promote_active as _tvp
 
         if _tvp() and self.champion_level >= self.config.max_level:
             top_k = heapq.nsmallest(elite_size, scored, key=lambda x: terminal_elite_heap_key(x[0], x[2]))
@@ -268,9 +288,13 @@ class SelectionMixin:
         for (_, _, win_prog, _), best_i in self._tournament_select(scored, elite_size, n_scored):
 
             fp = (
+
                 (len(win_prog) << 32)
+
                 ^ (win_prog[0] if win_prog else 0)
+
                 ^ ((win_prog[-1] << 16) if len(win_prog) > 1 else 0)
+
             )
 
             if fp not in seen_fps and best_i not in seen_indices:
@@ -285,7 +309,9 @@ class SelectionMixin:
 
                 elite_indices.append(best_i)
 
-        elites, elite_fits, elite_indices = self._ensure_semantic_compress_elite(elites, elite_fits, elite_indices)
+        elites, elite_fits, elite_indices = self._ensure_semantic_compress_elite(
+            elites, elite_fits, elite_indices
+        )
         return elites, elite_fits, elite_indices
 
     def _ensure_semantic_compress_elite(self, elites, elite_fits, elite_indices):
@@ -328,6 +354,10 @@ class SelectionMixin:
             elite_indices.append(-2)
         return elites, elite_fits, elite_indices
 
+
+
+
+
     def _scan_population_verify_candidates(
         self,
         champ_verify: float,
@@ -337,8 +367,8 @@ class SelectionMixin:
         from evolution.terminal_stagnation import (
             effective_verify_margin,
             terminal_verify_promote_active,
-            update_verify_best_candidate,
             verify_led_candidate_eligible,
+            update_verify_best_candidate,
         )
 
         challengers = getattr(self, "_last_challengers", None)
@@ -360,9 +390,15 @@ class SelectionMixin:
             ):
                 continue
             stage1_fit = (
-                fitness_cache[idx] if fitness_cache and idx < len(fitness_cache) else self._compute_fitness(prog, trace)
+                fitness_cache[idx]
+                if fitness_cache and idx < len(fitness_cache)
+                else self._compute_fitness(prog, trace)
             )
-            if promote and (status in _CRASH_STATUSES or status == "timeout" or stage1_fit <= -10.0):
+            if promote and (
+                status in _CRASH_STATUSES
+                or status == "timeout"
+                or stage1_fit <= -10.0
+            ):
                 trace = self._evaluate(prog)
                 status = trace.get("status", "")
                 cand_verify = self._verify_score_from_trace(trace)
@@ -378,11 +414,9 @@ class SelectionMixin:
             from evolution.fitness_helpers import selection_fitness
 
             fitness = selection_fitness(self, prog, trace, verify_score=cand_verify)
-            champ_fit = (
-                selection_fitness(self, self.champion, self.champion_trace or trace, verify_score=champ_verify)
-                if self.champion is not None
-                else self.champion_fitness
-            )
+            champ_fit = selection_fitness(
+                self, self.champion, self.champion_trace or trace, verify_score=champ_verify
+            ) if self.champion is not None else self.champion_fitness
             if self.champion is None:
                 continue
             verify_best = update_verify_best_candidate(
@@ -400,7 +434,9 @@ class SelectionMixin:
             )
         return verify_best
 
+
     def _find_best_challenger(self, elite, detailed_results, stage1_fitnesses):
+
         """Find the best challenger that beats the champion. Returns (best_fitness, best_program, best_trace, best_raw_score, improved)."""
 
         best_program = None
@@ -433,7 +469,11 @@ class SelectionMixin:
             live = float(self._verify_score_from_trace(self.champion_trace))
             if live > 0.0:
                 champ_verify = live
-        if verify_promote and self.champion is not None and self.champion_trace is not None:
+        if (
+            verify_promote
+            and self.champion is not None
+            and self.champion_trace is not None
+        ):
             best_fitness = float(
                 selection_fitness(
                     self,
@@ -489,11 +529,9 @@ class SelectionMixin:
 
             if verify_promote:
                 cand_verify = self._verify_score_from_trace(trace)
-                champ_fit = (
-                    selection_fitness(self, self.champion, self.champion_trace or trace, verify_score=champ_verify)
-                    if self.champion is not None
-                    else self.champion_fitness
-                )
+                champ_fit = selection_fitness(
+                    self, self.champion, self.champion_trace or trace, verify_score=champ_verify
+                ) if self.champion is not None else self.champion_fitness
                 if self.champion is not None:
                     verify_best = update_verify_best_candidate(
                         self,
@@ -535,7 +573,11 @@ class SelectionMixin:
 
                     improved = True
 
-        if verify_promote and champ_verify >= 0.99 - 1e-6 and self.champion is not None:
+        if (
+            verify_promote
+            and champ_verify >= 0.99 - 1e-6
+            and self.champion is not None
+        ):
             from evolution.terminal_stagnation import (
                 inherit_verify_if_semantic_clone,
                 saturated_shorter_capability_swap_ok,
@@ -545,7 +587,9 @@ class SelectionMixin:
             champ_len = len(self.champion)
             champ_trace = self.champion_trace
             compact_key = (
-                tuple(semantic_compress(list(self.champion))) if champ_len > L30_COMPACT_MAX_WORDS else tuple()
+                tuple(semantic_compress(list(self.champion)))
+                if champ_len > L30_COMPACT_MAX_WORDS
+                else tuple()
             )
             for prog, trace in zip(elite, detailed_results, strict=False):
                 if prog and tuple(prog) == tuple(self.champion):
@@ -559,7 +603,9 @@ class SelectionMixin:
                 is_compress = tuple(prog) == compact_key and len(prog) >= 12
                 if is_compress and champ_len <= L30_COMPACT_MAX_WORDS:
                     continue
-                cv = inherit_verify_if_semantic_clone(champ_len, len(prog), champ_trace, trace, cv, champ_verify)
+                cv = inherit_verify_if_semantic_clone(
+                    champ_len, len(prog), champ_trace, trace, cv, champ_verify
+                )
                 if is_compress:
                     cv = max(cv, champ_verify)
                 if is_compress:
@@ -603,18 +649,23 @@ class SelectionMixin:
                 if self.champion is not None
                 else float(self.champion_fitness)
             )
-            beats_champ = self.champion is not None and verify_promotion_beats_champion(
-                self,
-                self.champion,
-                self.champion_trace or verify_best[3],
-                verify_best[2],
-                verify_best[3],
-                champ_fit,
-                verify_best[1],
-                champion_verify=champ_verify,
-                candidate_verify=verify_best[0],
+            beats_champ = (
+                self.champion is not None
+                and verify_promotion_beats_champion(
+                    self,
+                    self.champion,
+                    self.champion_trace or verify_best[3],
+                    verify_best[2],
+                    verify_best[3],
+                    champ_fit,
+                    verify_best[1],
+                    champion_verify=champ_verify,
+                    candidate_verify=verify_best[0],
+                )
             )
-            apply_verify_best = beats_champ and (not improved or verify_best[1] + 1e-6 >= best_fitness)
+            apply_verify_best = beats_champ and (
+                not improved or verify_best[1] + 1e-6 >= best_fitness
+            )
             if apply_verify_best:
                 best_rank = verify_best[0]
                 best_fitness = verify_best[1]
@@ -624,10 +675,16 @@ class SelectionMixin:
                 improved = True
                 verify_best_applied = True
 
-        from evolution.terminal_stagnation import cached_best_compact_l30_fill, terminal_efficiency_at_scan_floor
+        from evolution.terminal_stagnation import (
+            cached_best_compact_l30_fill,
+            terminal_efficiency_at_scan_floor,
+        )
 
         want = None
-        at_scan_floor = self.champion is not None and terminal_efficiency_at_scan_floor(len(self.champion))
+        at_scan_floor = (
+            self.champion is not None
+            and terminal_efficiency_at_scan_floor(len(self.champion))
+        )
         if self.champion and not verify_best_applied and not at_scan_floor:
             cached = cached_best_compact_l30_fill(tuple(int(x) for x in self.champion))
             want = list(cached) if cached else None
@@ -675,8 +732,13 @@ class SelectionMixin:
             cv = float(self._verify_score_from_trace(best_trace) if best_trace else 0.0)
             from evolution.terminal_stagnation import compact_curriculum_beats
 
-            curriculum_loss = compact_curriculum_beats(list(best_program), list(self.champion))
-            if (cv <= champ_verify + 1e-6 and shorter_heldout + 1e-6 < champ_heldout) or (
+            curriculum_loss = compact_curriculum_beats(
+                list(best_program), list(self.champion)
+            )
+            if (
+                cv <= champ_verify + 1e-6
+                and shorter_heldout + 1e-6 < champ_heldout
+            ) or (
                 shorter_heldout + 1e-6 >= champ_heldout and curriculum_loss
             ):
                 improved = False
@@ -684,7 +746,12 @@ class SelectionMixin:
 
         return best_fitness, best_program, best_trace, best_raw_score, improved
 
+
+
+
+
     def _try_end_of_run_curriculum_push(self) -> bool:
+
         """End-of-run advance: chain level-ups while verify gates pass (parabolic curriculum)."""
 
         if self.champion_level >= min(len(LEVELS) - 1, self.config.max_level):
@@ -705,7 +772,11 @@ class SelectionMixin:
 
             for step in range(max_steps):
 
-                self.generations_stalled = max(self.config.curriculum_stall_threshold, self.generations_stalled)
+                self.generations_stalled = max(
+
+                    self.config.curriculum_stall_threshold, self.generations_stalled
+
+                )
 
                 _pre_verify, _pre_score = self._verify_champion()
 
@@ -714,9 +785,13 @@ class SelectionMixin:
                 if not ProgressController.passes_certify_verify(self.champion_level, _pre_score):
 
                     self._log(
+
                         f"[AntiPlateau] End-of-run chain halted at L{self.champion_level}: "
+
                         f"verify {_pre_score:.3f} < certify bar "
+
                         f"{ProgressController.certify_verify_threshold(self.champion_level):.3f}"
+
                     )
 
                     break
@@ -730,13 +805,20 @@ class SelectionMixin:
                 advanced_any = True
 
                 self._log(
+
                     f"[AntiPlateau] End-of-run advance step {step + 1} -> L{self.champion_level} "
+
                     f"(F={self.champion_fitness:.1f}, verify={getattr(self, '_champion_verify_score', 0):.2f})"
+
                 )
 
                 if self.champion_fitness < min_fitness:
 
-                    self._log(f"[AntiPlateau] Chain halted: fitness {self.champion_fitness:.1f} < {min_fitness}")
+                    self._log(
+
+                        f"[AntiPlateau] Chain halted: fitness {self.champion_fitness:.1f} < {min_fitness}"
+
+                    )
 
                     break
 
@@ -745,6 +827,10 @@ class SelectionMixin:
             self.generations_stalled = saved_stall
 
         return advanced_any
+
+
+
+
 
     def _champion_verify_accepts(self, verify_score: float) -> bool:
 
@@ -759,29 +845,39 @@ class SelectionMixin:
             return True
 
         threshold = _curriculum_verify_threshold_fn(
+
             self.champion_level,
+
             max(self.generations_stalled, self.config.curriculum_stall_threshold),
+
             self.config.curriculum_stall_threshold,
+
         )
 
         return verify_score >= threshold
 
+
+
+
+
     def _verify_and_replace_champion(self, best_program, best_trace, best_raw_score, best_fitness):
+
         """Verify challenger and replace champion if verified. Returns True if replaced."""
 
         _old_champion = self.champion
         _old_champion_trace = self.champion_trace
-        current_verify = (
-            float(self._verify_score_from_trace(_old_champion_trace)) if _old_champion_trace is not None else 0.0
-        )
+        current_verify = float(self._verify_score_from_trace(_old_champion_trace)) if _old_champion_trace is not None else 0.0
         champ_words = len(_old_champion) if _old_champion else 0
         self.champion = list(best_program)
         self.champion_trace = best_trace
         verified, verify_score = self._verify_champion()
 
-        from evolution.terminal_stagnation import inherit_verify_if_semantic_clone, l30_easy_fill_variants
+        from evolution.terminal_stagnation import (
+            inherit_verify_if_semantic_clone,
+            l30_easy_fill_variants,
+            traces_observably_equal,
+        )
         from evolution.terminal_stagnation import semantic_compress as _semantic_compress
-        from evolution.terminal_stagnation import traces_observably_equal
 
         fills = l30_easy_fill_variants(list(_old_champion)) if _old_champion else []
         fill_keys = {tuple(item) for item in fills}
@@ -819,8 +915,12 @@ class SelectionMixin:
 
         terminal_promote = bool(semantic_clone or easy_fill)
         if self.champion_level >= getattr(self.config, "max_level", 30):
+            from evolution.terminal_stagnation import (
+                terminal_verify_promote_active,
+                verify_promotion_beats_champion,
+            )
+
             from evolution.fitness_helpers import selection_fitness
-            from evolution.terminal_stagnation import terminal_verify_promote_active, verify_promotion_beats_champion
 
             champ_fit = (
                 float(
@@ -835,7 +935,9 @@ class SelectionMixin:
                 else float(getattr(self, "champion_fitness", 0.0))
             )
             certified_length_swap = (
-                current_verify >= 0.99 - 1e-6 and len(best_program) < champ_words and best_fitness > champ_fit + 1e-6
+                current_verify >= 0.99 - 1e-6
+                and len(best_program) < champ_words
+                and best_fitness > champ_fit + 1e-6
             )
             if terminal_verify_promote_active() and (
                 certified_length_swap
@@ -855,7 +957,10 @@ class SelectionMixin:
                 )
             ):
                 terminal_promote = True
-                self._log(f"[Champion] Terminal verify-led swap " f"{current_verify:.3f} -> {float(verify_score):.3f}")
+                self._log(
+                    f"[Champion] Terminal verify-led swap "
+                    f"{current_verify:.3f} -> {float(verify_score):.3f}"
+                )
 
         heldout_gain = False
         if (
@@ -869,21 +974,36 @@ class SelectionMixin:
             cand_heldout = heldout_l30_verify_mean(list(best_program))
             if cand_heldout + 1e-6 < champ_heldout:
                 self._log(
-                    f"[Champion] Held-out L30 protect: challenger " f"{cand_heldout:.3f} < champ {champ_heldout:.3f}"
+                    f"[Champion] Held-out L30 protect: challenger "
+                    f"{cand_heldout:.3f} < champ {champ_heldout:.3f}"
                 )
                 return _reject()
             heldout_gain = cand_heldout >= champ_heldout + 0.01
-            if not heldout_gain and cand_heldout + 1e-6 >= champ_heldout:
+            if (
+                not heldout_gain
+                and cand_heldout + 1e-6 >= champ_heldout
+            ):
                 from evolution.terminal_stagnation import compact_curriculum_beats
 
-                curriculum_gain = compact_curriculum_beats(list(_old_champion), list(best_program))
+                curriculum_gain = compact_curriculum_beats(
+                    list(_old_champion), list(best_program)
+                )
                 if curriculum_gain and len(best_program) <= champ_words:
                     heldout_gain = True
-            if not heldout_gain and cand_heldout + 1e-6 >= champ_heldout and len(best_program) == champ_words:
+            if (
+                not heldout_gain
+                and cand_heldout + 1e-6 >= champ_heldout
+                and len(best_program) == champ_words
+            ):
                 from evolution.terminal_stagnation import get_scan_floor_gate
 
-                if not get_scan_floor_gate(list(_old_champion)).qualifies(list(best_program)):
-                    self._log("[Champion] Compact side-curriculum protect: " "same-length challenger regresses L8-L16")
+                if not get_scan_floor_gate(list(_old_champion)).qualifies(
+                    list(best_program)
+                ):
+                    self._log(
+                        "[Champion] Compact side-curriculum protect: "
+                        "same-length challenger regresses L8-L16"
+                    )
                     return _reject()
 
         if (
@@ -901,7 +1021,10 @@ class SelectionMixin:
             return _reject()
         from evolution.champion_bloat_guard import certified_champion_pinned, champion_bloat_blocks
 
-        if not heldout_gain and certified_champion_pinned(self.champion_level, champ_words, current_verify):
+        if (
+            not heldout_gain
+            and certified_champion_pinned(self.champion_level, champ_words, current_verify)
+        ):
             if float(verify_score) <= current_verify + 0.005:
                 from evolution.fitness_helpers import selection_fitness
 
@@ -913,21 +1036,24 @@ class SelectionMixin:
                         verify_score=float(verify_score),
                     )
                 )
-                champ_fit = (
-                    float(
-                        selection_fitness(
-                            self,
-                            _old_champion,
-                            _old_champion_trace or best_trace,
-                            verify_score=current_verify,
-                        )
+                champ_fit = float(
+                    selection_fitness(
+                        self,
+                        _old_champion,
+                        _old_champion_trace or best_trace,
+                        verify_score=current_verify,
                     )
-                    if _old_champion is not None
-                    else float(best_fitness)
+                ) if _old_champion is not None else float(best_fitness)
+                from evolution.terminal_stagnation import (
+                    scan_floor_min_raw_gain,
+                    verify_promotion_beats_champion,
                 )
-                from evolution.terminal_stagnation import scan_floor_min_raw_gain, verify_promotion_beats_champion
 
-                min_gain = scan_floor_min_raw_gain(champ_words) if current_verify >= 0.99 - 1e-6 else 1.0
+                min_gain = (
+                    scan_floor_min_raw_gain(champ_words)
+                    if current_verify >= 0.99 - 1e-6
+                    else 1.0
+                )
 
                 length_efficiency_swap = False
                 if (
@@ -953,7 +1079,11 @@ class SelectionMixin:
                     )
                     return _reject()
 
-        if not terminal_promote and current_verify >= 0.99 and float(verify_score) < 0.99 - 1e-6:
+        if (
+            not terminal_promote
+            and current_verify >= 0.99
+            and float(verify_score) < 0.99 - 1e-6
+        ):
             self._log(
                 f"[Champion] Certified verify blocked: challenger {float(verify_score):.3f} "
                 f"< champion {current_verify:.3f}"
@@ -968,20 +1098,22 @@ class SelectionMixin:
         ):
             from evolution.fitness_helpers import selection_fitness
 
-            cand_fit = float(selection_fitness(self, best_program, best_trace, verify_score=float(verify_score)))
-            champ_fit = (
-                float(
-                    selection_fitness(
-                        self,
-                        _old_champion,
-                        _old_champion_trace or best_trace,
-                        verify_score=current_verify,
-                    )
-                )
-                if _old_champion is not None
-                else float(best_fitness)
+            cand_fit = float(
+                selection_fitness(self, best_program, best_trace, verify_score=float(verify_score))
             )
-            if not terminal_promote and self.champion_level >= 29 and champ_words >= 60:
+            champ_fit = float(
+                selection_fitness(
+                    self,
+                    _old_champion,
+                    _old_champion_trace or best_trace,
+                    verify_score=current_verify,
+                )
+            ) if _old_champion is not None else float(best_fitness)
+            if (
+                not terminal_promote
+                and self.champion_level >= 29
+                and champ_words >= 60
+            ):
                 self._log(
                     f"[Champion] Saturated L{self.champion_level} length pin: "
                     f"{len(best_program)}w > {champ_words}w at verify=1.0"
@@ -994,16 +1126,26 @@ class SelectionMixin:
                 )
                 return _reject()
 
-        if not terminal_promote and self.champion_level >= 20 and verify_score < current_verify - 0.005:
+        if (
+            not terminal_promote
+            and self.champion_level >= 20
+            and verify_score < current_verify - 0.005
+        ):
             self._log(
                 f"[Champion] L{self.champion_level} blocked: challenger verify "
                 f"{verify_score:.3f} < champion {current_verify:.3f}"
             )
             return _reject()
 
-        if not terminal_promote and self.champion_level >= 17 and not verified and verify_score < current_verify:
+        if (
+            not terminal_promote
+            and self.champion_level >= 17
+            and not verified
+            and verify_score < current_verify
+        ):
             self._log(
-                f"[Champion] L17+ blocked: challenger verify {verify_score:.3f} " f"< champion {current_verify:.3f}"
+                f"[Champion] L17+ blocked: challenger verify {verify_score:.3f} "
+                f"< champion {current_verify:.3f}"
             )
             return _reject()
 
@@ -1023,7 +1165,12 @@ class SelectionMixin:
             and champ_words >= 60
         ):
             fill_ok = False
-        if bloat_reason is not None and not heldout_gain and not fill_ok and not terminal_promote:
+        if (
+            bloat_reason is not None
+            and not heldout_gain
+            and not fill_ok
+            and not terminal_promote
+        ):
             self._log(
                 f"[Champion] L{self.champion_level} bloat blocked: {bloat_reason} "
                 f"(verify {verify_score:.3f} vs {current_verify:.3f})"
@@ -1035,17 +1182,18 @@ class SelectionMixin:
             if self._champion_verify_accepts(verify_score):
 
                 self._log(
+
                     f"[Champion] Partial verify: challenger {verify_score:.2f} "
+
                     f">= threshold {_curriculum_verify_threshold_fn(self.champion_level, max(self.generations_stalled, self.config.curriculum_stall_threshold), self.config.curriculum_stall_threshold):.3f}. Allowing replacement."
+
                 )
 
                 self._champion_partial_verify = verify_score
 
             else:
 
-                self._log(
-                    f"[Champion] BLOCKED (PM Rule #19): challenger verify failed ({verify_score:.2f} < threshold)."
-                )
+                self._log(f"[Champion] BLOCKED (PM Rule #19): challenger verify failed ({verify_score:.2f} < threshold).")
 
                 self._champion_verified = False
 
@@ -1057,31 +1205,45 @@ class SelectionMixin:
 
         elif escape_timeout:
 
-            self._log(f"[Champion] Timeout escape: fitness {self.champion_fitness:.1f} -> {best_fitness:.1f}")
+            self._log(
+
+                f"[Champion] Timeout escape: fitness {self.champion_fitness:.1f} -> {best_fitness:.1f}"
+
+            )
 
         qd = getattr(self, "qd_archive", None)
 
         if (
+
             qd is not None
+
             and _HAS_QD
+
             and _old_champion is not None
+
             and _old_champion_trace is not None
+
             and not self._champion_changed_since_last_qd
+
         ):
 
             try:
 
                 from evolution_engine import compute_qd_axes  # lazy to avoid circular import
-
                 old_desc = compute_qd_axes(_old_champion, _old_champion_trace)
 
                 if old_desc is not None:
 
                     qd.add_solution(
+
                         descriptor=old_desc,
+
                         fitness=self.champion_fitness,
+
                         program=_old_champion,
+
                         trace=_old_champion_trace,
+
                     )
 
             except (TypeError, ValueError, RuntimeError):
@@ -1149,14 +1311,21 @@ class SelectionMixin:
 
                 from evolution.champion_carry_forward import persist_carry_forward_from_engine
 
-                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                project_root = os.path.dirname(
+                    os.path.dirname(os.path.abspath(__file__))
+                )
                 persist_carry_forward_from_engine(project_root, self)
             except (OSError, TypeError, ValueError, AttributeError):
                 pass
 
         return True
 
+
+
+
+
     def _update_hall_of_fame(self, elite, stage1_fitnesses):
+
         """Update Hall of Fame with elite programs."""
 
         if not stage1_fitnesses or not elite:
@@ -1203,7 +1372,12 @@ class SelectionMixin:
 
                 hof.add(prog, stage1_fitnesses[idx], level, generation=gen)
 
+
+
+
+
     def _try_escape_timeout_champion(self, elite, detailed_results) -> bool:
+
         """When champion is stuck at -25, inject HOF or best elite that improves fitness."""
 
         best_prog = None
@@ -1241,8 +1415,11 @@ class SelectionMixin:
                 best_raw = getattr(self, "_raw_task_score", 0.0)
 
         for hof_prog in (
+
             self._hall_of_fame.get_best(level=self.champion_level),
+
             self._hall_of_fame.get_best(),
+
         ):
 
             if hof_prog is None:
@@ -1281,6 +1458,10 @@ class SelectionMixin:
 
         return self._verify_and_replace_champion(best_prog, best_trace, best_raw, best_fit)
 
+
+
+
+
     def _try_repair_terminal_champion_verify(self) -> bool:
         """Apply trace-guided register repair when terminal champion verify < 1.0."""
         level = int(self.champion_level)
@@ -1315,38 +1496,47 @@ class SelectionMixin:
             if cand_verify <= best_verify + 1e-6:
                 continue
             cand_fit = float(selection_fitness(self, variant, cand_trace, verify_score=cand_verify))
-            if cand_verify > best_verify or (cand_verify >= 0.99 - 1e-6 and cand_fit > best_fit):
+            if cand_verify > best_verify or (
+                cand_verify >= 0.99 - 1e-6 and cand_fit > best_fit
+            ):
                 best_verify = cand_verify
                 best_fit = cand_fit
                 best_prog = variant
                 best_trace = cand_trace
         if best_prog is None:
             return False
-        self._log(f"[Champion] trace-guided repair {verify:.3f} -> {best_verify:.3f}")
-        return self._verify_and_replace_champion(best_prog, best_trace, getattr(self, "_raw_task_score", 0.0), best_fit)
+        self._log(
+            f"[Champion] trace-guided repair {verify:.3f} -> {best_verify:.3f}"
+        )
+        return self._verify_and_replace_champion(
+            best_prog, best_trace, getattr(self, "_raw_task_score", 0.0), best_fit
+        )
 
     def _maybe_promote_terminal_efficiency_champion(self) -> bool:
         """Promote a shorter fully-verified program at certified L30."""
         max_level = int(getattr(self.config, "max_level", 30))
         if self.champion_level < max_level or self.champion is None:
-            self._log(f"[Champion] Terminal efficiency skip: " f"L{self.champion_level}<{max_level} or no champion")
+            self._log(
+                f"[Champion] Terminal efficiency skip: "
+                f"L{self.champion_level}<{max_level} or no champion"
+            )
             return False
         from evolution.terminal_stagnation import (
             compact_curriculum_side_score,
             heldout_l30_verify_mean,
+            saturated_shorter_swap_ok,
+            terminal_efficiency_drop_span,
+            terminal_efficiency_eval_budget,
+            verify_promotion_beats_champion,
             record_terminal_efficiency_promote,
             record_terminal_efficiency_scan_floor,
             record_terminal_efficiency_stable,
-            saturated_shorter_swap_ok,
             terminal_efficiency_at_scan_floor,
-            terminal_efficiency_drop_span,
-            terminal_efficiency_eval_budget,
             terminal_efficiency_last_promote_cycle,
             terminal_efficiency_promote_cooldown_cycles,
             terminal_efficiency_promote_quiescent,
             terminal_efficiency_variants,
             terminal_verify_promote_active,
-            verify_promotion_beats_champion,
         )
 
         if not terminal_verify_promote_active():
@@ -1363,7 +1553,12 @@ class SelectionMixin:
             int(getattr(self, "_terminal_efficiency_promote_cycle", 0)),
             terminal_efficiency_last_promote_cycle(),
         )
-        if cooldown > 0 and last_promote > 0 and cycle_no > last_promote and (cycle_no - last_promote) < cooldown:
+        if (
+            cooldown > 0
+            and last_promote > 0
+            and cycle_no > last_promote
+            and (cycle_no - last_promote) < cooldown
+        ):
             from evolution.mutation_helpers import scan_floor_capability_growth_allowed
 
             if not scan_floor_capability_growth_allowed(champ_words):
@@ -1384,19 +1579,25 @@ class SelectionMixin:
             champ_verify = max(float(self._verify_score_from_trace(trace)), stored_verify)
             from evolution.terminal_stagnation import terminal_efficiency_promote_skip_quiescent
 
-            if terminal_efficiency_promote_skip_quiescent(cycle_no, champ_words, champ_verify):
+            if terminal_efficiency_promote_skip_quiescent(
+                cycle_no, champ_words, champ_verify
+            ):
                 self._log(
                     f"[Champion] Terminal efficiency skip: stable {champ_words}w "
                     f"at verify>={champ_verify:.3f} (periodic rescan)"
                 )
                 return False
             if champ_verify < 0.99 - 1e-6:
-                self._log(f"[Champion] Terminal efficiency skip: verify {champ_verify:.3f} < 0.99")
+                self._log(
+                    f"[Champion] Terminal efficiency skip: verify {champ_verify:.3f} < 0.99"
+                )
                 return False
             if float(self._verify_score_from_trace(trace)) < 0.99 - 1e-6:
                 trace = self._evaluate(self.champion)
 
-            champ_fit = float(selection_fitness(self, self.champion, trace, verify_score=champ_verify))
+            champ_fit = float(
+                selection_fitness(self, self.champion, trace, verify_score=champ_verify)
+            )
             certified_floor = float(getattr(self, "champion_fitness", 0.0))
             if certified_floor > champ_fit + 1e-6:
                 champ_fit = certified_floor
@@ -1480,7 +1681,9 @@ class SelectionMixin:
                     )
                 )
                 certified_swap = (
-                    champ_verify >= 0.99 - 1e-6 and len(variant) < champ_words and cand_fit > champ_fit + 1e-6
+                    champ_verify >= 0.99 - 1e-6
+                    and len(variant) < champ_words
+                    and cand_fit > champ_fit + 1e-6
                 )
                 beats = verify_promotion_beats_champion(
                     self,
@@ -1509,7 +1712,11 @@ class SelectionMixin:
                 take = best_prog is None
                 if not take and cand_raw > best_raw + 1e-6:
                     take = True
-                elif not take and abs(cand_raw - best_raw) <= 1e-6 and len(variant) < len(best_prog):
+                elif (
+                    not take
+                    and abs(cand_raw - best_raw) <= 1e-6
+                    and len(variant) < len(best_prog)
+                ):
                     take = True
                 elif (
                     not take
@@ -1548,7 +1755,10 @@ class SelectionMixin:
                         seen_growth.add(key)
                         if not scan_floor_growth_completion_qualifies(self.champion, src):
                             continue
-                        if float(compact_l30_promotion_raw_fitness(list(src))) <= champ_pr + min_gain - 1e-6:
+                        if (
+                            float(compact_l30_promotion_raw_fitness(list(src)))
+                            <= champ_pr + min_gain - 1e-6
+                        ):
                             continue
                         growth_cands.append(list(src))
                     growth_cands.sort(
@@ -1593,7 +1803,11 @@ class SelectionMixin:
                         take = best_prog is None
                         if not take and cand_raw > best_raw + 1e-6:
                             take = True
-                        elif not take and abs(cand_raw - best_raw) <= 1e-6 and len(variant) < len(best_prog):
+                        elif (
+                            not take
+                            and abs(cand_raw - best_raw) <= 1e-6
+                            and len(variant) < len(best_prog)
+                        ):
                             take = True
                         elif (
                             not take
@@ -1609,7 +1823,9 @@ class SelectionMixin:
                             best_trace = cand_trace
             if best_prog is None:
                 if compact_promote and champ_heldout is not None:
-                    record_terminal_efficiency_scan_floor(cycle_no, champ_words, float(champ_heldout))
+                    record_terminal_efficiency_scan_floor(
+                        cycle_no, champ_words, float(champ_heldout)
+                    )
                 self._log(
                     f"[Champion] Terminal efficiency: no qualifying variant "
                     f"(candidates={len(variants)}, champ={champ_words}w, verify={champ_verify:.3f})"
@@ -1626,8 +1842,12 @@ class SelectionMixin:
                 self._terminal_efficiency_promote_cycle = cycle_no
                 record_terminal_efficiency_promote(cycle_no)
                 new_words = len(self.champion)
-                new_heldout = float(heldout_l30_verify_mean(list(self.champion), 32))
-                record_terminal_efficiency_scan_floor(cycle_no, new_words, new_heldout)
+                new_heldout = float(
+                    heldout_l30_verify_mean(list(self.champion), 32)
+                )
+                record_terminal_efficiency_scan_floor(
+                    cycle_no, new_words, new_heldout
+                )
                 self._cached_compact_champ_key = None
             return promoted
 
@@ -1658,10 +1878,18 @@ class SelectionMixin:
                 verify_score=champ_verify,
             )
         )
-        if max_pop >= 0.99 - 1e-6 and fitness < champ_fit * 0.85 and len(prog) >= len(self.champion):
+        if (
+            max_pop >= 0.99 - 1e-6
+            and fitness < champ_fit * 0.85
+            and len(prog) >= len(self.champion)
+        ):
             return False
-        self._log(f"[Champion] max_pop verify promote {champ_verify:.3f} -> {max_pop:.3f}")
-        return self._verify_and_replace_champion(prog, trace, getattr(self, "_raw_task_score", 0.0), fitness)
+        self._log(
+            f"[Champion] max_pop verify promote {champ_verify:.3f} -> {max_pop:.3f}"
+        )
+        return self._verify_and_replace_champion(
+            prog, trace, getattr(self, "_raw_task_score", 0.0), fitness
+        )
 
     def _maybe_restore_best_certified_champion(self) -> bool:
         """Restore the newest fully-verified champion when current regressed."""
@@ -1678,17 +1906,23 @@ class SelectionMixin:
 
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         results = os.path.join(root, "multi_cycle_results.jsonl")
-        clean = find_best_certified_champion(results, level, min_verify=0.99, min_fitness=100.0)
+        clean = find_best_certified_champion(
+            results, level, min_verify=0.99, min_fitness=100.0
+        )
         if not clean:
             return False
-        clean_prog = [int(x, 16) if isinstance(x, str) else int(x) for x in clean["champion_program"]]
+        clean_prog = [
+            int(x, 16) if isinstance(x, str) else int(x) for x in clean["champion_program"]
+        ]
         with terminal_certified_fitness_context(self):
             cur_trace = self.champion_trace or self._evaluate(self.champion)
             cur_verify = max(
                 float(self._verify_score_from_trace(cur_trace)),
                 float(getattr(self, "_champion_verify_score", 0.0)),
             )
-            cur_fit = float(selection_fitness(self, self.champion, cur_trace, verify_score=cur_verify))
+            cur_fit = float(
+                selection_fitness(self, self.champion, cur_trace, verify_score=cur_verify)
+            )
             clean_trace = self._evaluate(clean_prog)
             clean_verify = float(self._verify_score_from_trace(clean_trace))
             logged_verify = float(clean.get("champion_verify_score", 0.0))
@@ -1710,18 +1944,21 @@ class SelectionMixin:
         if not stub_replace:
             if cur_verify >= 0.99 - 1e-6 and len(self.champion) < len(clean_prog) and len(self.champion) >= 12:
                 return False
-            if cur_verify >= 0.99 - 1e-6 and cur_fit >= clean_fit - 1.0 and len(self.champion) <= len(clean_prog):
+            if (
+                cur_verify >= 0.99 - 1e-6
+                and cur_fit >= clean_fit - 1.0
+                and len(self.champion) <= len(clean_prog)
+            ):
                 return False
-        restore = (
-            stub_replace
-            or clean_fit > cur_fit + 1.0
-            or (level >= max_level - 1 and cur_fit < 150.0 and clean_fit >= 200.0)
-            or (
-                not stub_replace
-                and cur_verify >= 0.99 - 1e-6
-                and len(self.champion) > len(clean_prog)
-                and clean_fit >= cur_fit * 0.9
-            )
+        restore = stub_replace or clean_fit > cur_fit + 1.0 or (
+            level >= max_level - 1
+            and cur_fit < 150.0
+            and clean_fit >= 200.0
+        ) or (
+            not stub_replace
+            and cur_verify >= 0.99 - 1e-6
+            and len(self.champion) > len(clean_prog)
+            and clean_fit >= cur_fit * 0.9
         )
         if not restore:
             return False
@@ -1739,17 +1976,22 @@ class SelectionMixin:
         return True
 
     def _update_champion(self, elite, detailed_results, stage1_fitnesses=None):
+
         """Update champion if any elite challenger has higher fitness."""
 
         best_fitness, best_program, best_trace, best_raw_score, improved = self._find_best_challenger(
+
             elite, detailed_results, stage1_fitnesses
+
         )
 
         if improved and best_program is not None:
 
             prev_words = len(self.champion) if self.champion is not None else 0
             prev_fit = float(self.champion_fitness)
-            replaced = self._verify_and_replace_champion(best_program, best_trace, best_raw_score, best_fitness)
+            replaced = self._verify_and_replace_champion(
+                best_program, best_trace, best_raw_score, best_fitness
+            )
             improved = bool(replaced)
 
         elif self._champion_is_timeout_penalized():

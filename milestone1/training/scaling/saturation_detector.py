@@ -3,10 +3,9 @@
 Phase 1: Analyzes training trends to determine if the model has
 reached a plateau and should be scaled to a larger architecture.
 
-Uses scipy.stats.linregress for slope-based trend analysis.
+Uses least-squares linear regression for slope-based trend analysis.
 """
 
-from typing import Optional
 
 import numpy as np
 
@@ -90,7 +89,7 @@ class SaturationDetector:
             relative_slope = abs(slope) / mean_abs_fitness
             return relative_slope < self.FITNESS_SLOPE_THRESHOLD
 
-        except Exception:
+        except (ValueError, TypeError, ZeroDivisionError):
             return False
 
     def _check_val_loss_plateau(self, val_loss_history: list) -> bool:
@@ -117,7 +116,7 @@ class SaturationDetector:
             # If slope is above threshold, loss is not decreasing
             return slope > self.VAL_LOSS_SLOPE_THRESHOLD
 
-        except Exception:
+        except (ValueError, TypeError, ZeroDivisionError):
             return False
 
     def _check_curriculum_saturated(self, max_level_history: list) -> bool:
@@ -143,40 +142,40 @@ class SaturationDetector:
 
 
 def _linregress(x, y):
-    """Wrapper around scipy.stats.linregress with numpy fallback.
+    """Least-squares linear regression via numpy (no scipy).
+
+    scipy.stats.linregress can abort the interpreter on Windows/MKL with
+    flat or near-constant series; numpy least-squares is sufficient here.
 
     Returns:
         slope, intercept, r_value, p_value, std_err
     """
-    try:
-        from scipy.stats import linregress
+    from collections import namedtuple
 
-        return linregress(x, y)
-    except ImportError:
-        # Fallback: compute slope via least-squares with numpy
-        from collections import namedtuple
-
-        import numpy as np
-
-        LinregressResult = namedtuple("LinregressResult", ["slope", "intercept", "rvalue", "pvalue", "stderr"])
-        x = np.asarray(x, dtype=float)
-        y = np.asarray(y, dtype=float)
-        n = len(x)
-        if n < 2:
-            return LinregressResult(slope=0, intercept=0, rvalue=0, pvalue=1, stderr=0)
-        sum_x = np.sum(x)
-        sum_y = np.sum(y)
-        sum_xy = np.sum(x * y)
-        sum_x2 = np.sum(x**2)
-        denom = n * sum_x2 - sum_x**2
-        if abs(denom) < 1e-15:
-            slope = 0.0
-        else:
-            slope = (n * sum_xy - sum_x * sum_y) / denom
-        intercept = (sum_y - slope * sum_x) / n
-        # Compute r_value
-        y_pred = slope * x + intercept
-        ss_res = np.sum((y - y_pred) ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-        r_value = float(np.sqrt(1 - ss_res / ss_tot)) if ss_tot > 0 else 0.0
-        return LinregressResult(slope=float(slope), intercept=float(intercept), rvalue=r_value, pvalue=0.0, stderr=0.0)
+    LinregressResult = namedtuple("LinregressResult", ["slope", "intercept", "rvalue", "pvalue", "stderr"])
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(x)
+    if n < 2:
+        return LinregressResult(slope=0, intercept=0, rvalue=0, pvalue=1, stderr=0)
+    sum_x = np.sum(x)
+    sum_y = np.sum(y)
+    sum_xy = np.sum(x * y)
+    sum_x2 = np.sum(x**2)
+    denom = n * sum_x2 - sum_x**2
+    if abs(denom) < 1e-15:
+        slope = 0.0
+    else:
+        slope = (n * sum_xy - sum_x * sum_y) / denom
+    intercept = (sum_y - slope * sum_x) / n
+    y_pred = slope * x + intercept
+    ss_res = np.sum((y - y_pred) ** 2)
+    ss_tot = np.sum((y - np.mean(y)) ** 2)
+    r_value = float(np.sqrt(1 - ss_res / ss_tot)) if ss_tot > 0 else 0.0
+    return LinregressResult(
+        slope=float(slope),
+        intercept=float(intercept),
+        rvalue=r_value,
+        pvalue=0.0,
+        stderr=0.0,
+    )

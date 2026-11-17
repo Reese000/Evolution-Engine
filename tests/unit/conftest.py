@@ -1,5 +1,4 @@
 """Shared isolation fixtures for unit tests."""
-
 import pytest
 
 
@@ -56,4 +55,8 @@ def _isolate_coldstart_disk_caches(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "evolution.mutation_helpers.projection_seeds_cache_path",
         lambda: str(tmp_path / "scan_floor_projection_seeds_cache.json"),
+    )
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_growth_pool_cache_path",
+        lambda: str(tmp_path / "scan_floor_growth_pool_cache.json"),
     )

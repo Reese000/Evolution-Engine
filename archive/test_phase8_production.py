@@ -12,7 +12,6 @@ Validates:
 import gzip
 import logging
 import os
-import sys
 import tempfile
 import time
 import unittest
@@ -20,6 +19,7 @@ from pathlib import Path
 
 try:
     import log_rotation
+
     _has_log_rotation = True
 except ImportError:
     _has_log_rotation = False

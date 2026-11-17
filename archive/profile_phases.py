@@ -5,14 +5,14 @@ wall-time + GPU metrics per phase.
 
 Usage:
     python profile_phases.py [--cycle N] [--gens 10] [--batch-size 8]
-    
+
 Measures:
     1. Evolution phase (engine.run) — generation + VM-farm evaluation
     2. Data loading (retrain: traces + augmentation + packing)
     3. Retrain training (forward + backward passes)
     4. Validation (inference only)
     5. Checkpoint save
-    
+
 Reports wall-time, GPU memory peak, estimated tokens/sec, and phase fraction.
 """
 
@@ -108,7 +108,7 @@ def profile_retrain_phases(cycle: int, config: dict) -> dict:
     """Profile the retrain subprocess by instrumenting the training loop phases."""
     import json as _json
 
-    from data.augmentation import inject_reference_solutions, inject_synthetic_data, register_rename_augment
+    from data.augmentation import register_rename_augment
     from data.loading import apply_level_cap, load_champion_traces, rebalance_level_weights
     from data.packing import pad_or_pack_sequences
     from rv32i_mask import decode as rv32i_decode
@@ -154,6 +154,7 @@ def profile_retrain_phases(cycle: int, config: dict) -> dict:
                 text=True,
                 timeout=120,
                 cwd=SCRIPT_DIR,
+                check=False,
             )
             if result.returncode == 0 and result.stdout.strip():
                 # Find JSON in stdout (may have stderr mixed in)
@@ -225,8 +226,8 @@ def profile_retrain_phases(cycle: int, config: dict) -> dict:
     for epoch in range(max_epochs):
         with PhaseTimer(f"train_epoch_{epoch}") as t:
             adjust_dropout(model, epoch, max_epochs)
-            teacher_prob = max(0.3, 1.0 - (epoch / max_epochs) * 0.7)
-            noise_std = 0.02 * max(0.0, 1.0 - epoch / max_epochs)
+            max(0.3, 1.0 - (epoch / max_epochs) * 0.7)
+            0.02 * max(0.0, 1.0 - epoch / max_epochs)
             model.train()
             epoch_tokens = 0
 

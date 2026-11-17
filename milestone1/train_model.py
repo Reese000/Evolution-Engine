@@ -9,7 +9,6 @@ All public symbols are re-exported here so that:
 
 from __future__ import annotations
 
-import os
 import sys
 
 # Ensure project paths are on sys.path so subpackages resolve.

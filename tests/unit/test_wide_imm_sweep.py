@@ -1,9 +1,10 @@
 """Tests for deterministic wide-imm sweep at scan floor."""
 
-import json
 import os
 
 import pytest
+
+from tests.live_results import live_champion_program
 
 
 def test_wide_imm_sweep_rotates_with_cycles_at_level(tmp_path, monkeypatch):
@@ -16,15 +17,7 @@ def test_wide_imm_sweep_rotates_with_cycles_at_level(tmp_path, monkeypatch):
 
     if not os.path.isfile("multi_cycle_results.jsonl"):
         pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()

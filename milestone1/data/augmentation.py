@@ -147,7 +147,7 @@ def inject_synthetic_data(
             sample_weights.append(synth_weight)
         print(f"[Train] Synthetic data: +{len(synthetic_seqs)} sequences (weight={synth_weight})")
         del synth_gen, synthetic_seqs
-    except Exception as e:
+    except (RuntimeError, ValueError, KeyError) as e:
         print(f"[Train] Synthetic data generation failed: {e}")
 
 
@@ -257,7 +257,7 @@ def inject_reference_solutions(
                                             sequences.append(torch.tensor(ref_tokens, dtype=torch.long))
                                             sample_weights.append(0.8)  # synthetic: slightly lower weight
                                         ref_injected += 1
-                    except Exception:
+                    except (ValueError, KeyError, TypeError):
                         continue
                     continue
                 ref_tokens = tokenizer.encode_trace(ref_dicts)
@@ -267,7 +267,7 @@ def inject_reference_solutions(
                         sequences.append(torch.tensor(ref_tokens, dtype=torch.long))
                         sample_weights.append(1.0)  # reference solutions are highest quality
                     ref_injected += 1
-            except Exception:
+            except (ValueError, KeyError, TypeError):
                 continue
     except ImportError:
         pass

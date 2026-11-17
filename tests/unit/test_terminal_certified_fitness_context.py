@@ -27,8 +27,8 @@ def test_terminal_certified_fitness_context_restores_novelty_weight():
 def test_diversity_boost_promote_persists_shorter_champion(monkeypatch):
     """Regression: tier-7 diversity boost must not block 68w breakthrough."""
     monkeypatch.setenv("EE_TERMINAL_VERIFY_PROMOTE", "1")
-    from run_multi_cycle import PROJECT_ROOT, run_evolution
     from run_multi_cycle_loop import _apply_terminal_diversity_boost
+    from run_multi_cycle import run_evolution, PROJECT_ROOT
 
     evo: dict = {}
     _apply_terminal_diversity_boost(1, evo, PROJECT_ROOT)

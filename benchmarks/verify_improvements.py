@@ -8,18 +8,14 @@ Runs a short 5-generation evolution cycle and reports:
 3. Tournament selection with elitism (top 10% preserved)
 4. Fitness and champion quality metrics
 """
-import json
-import os
 import sys
 import time
-from pathlib import Path
 
 # Ensure project root is on path
 from paths import ensure_project_on_path
 
 ensure_project_on_path()
 
-from config import Config
 
 # ── Import project modules ──────────────────────────────────────────────
 from evolution_engine import EvolutionConfig, EvolutionEngine
@@ -163,7 +159,7 @@ def verify_elitism_selection():
         stall_threshold=10,
     )
 
-    engine = EvolutionEngine(cfg)
+    EvolutionEngine(cfg)
 
     # Verify elite_size calculation
     elite_size = max(1, int(cfg.population_size * cfg.elite_ratio))
@@ -206,7 +202,7 @@ def run_short_cycle():
     # Ensure we have tasks
     from tasks_rv32i import Level0, Level1, Level2
 
-    tasks = [Level0(), Level1(), Level2()]
+    [Level0(), Level1(), Level2()]
 
     engine = EvolutionEngine(cfg)
 
@@ -214,7 +210,7 @@ def run_short_cycle():
 
     try:
         result = engine.run()
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:
         print(f"  ⚠ Evolution run error: {e}")
         print("  (This is expected in non-GPU environments without full model setup)")
         return False
@@ -250,7 +246,7 @@ def main():
     print("\n5. Short evolution cycle (non-GPU may skip):")
     try:
         run_short_cycle()
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:
         print(f"  ⚠ Skipped full evolution: {e}")
         print("  (Full evolution requires GPU/torch for model-guided completion)")
         all_passed &= True  # Don't fail on full-evolution skip

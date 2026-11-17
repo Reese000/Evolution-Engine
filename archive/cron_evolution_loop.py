@@ -5,10 +5,8 @@ Checks for stale processes first, then saturation. If either is active,
 prints message and exits silently. If clear, runs 10 cycles, checks
 saturation again. If saturation triggers mid-loop, stops and exits silently.
 """
-import os
 import subprocess
 import sys
-import time
 
 PROJECT = r"C:\Users\reese\Projects\Evolution Engine"
 
@@ -34,6 +32,7 @@ def check_loop_running():
             capture_output=True,
             text=True,
             timeout=15,
+            check=False,
         )
         count = int(result.stdout.strip())
         if count > 0:
@@ -129,6 +128,7 @@ result = subprocess.run(
     capture_output=True,
     text=True,
     timeout=1200,
+    check=False,
 )
 
 output = result.stdout + result.stderr

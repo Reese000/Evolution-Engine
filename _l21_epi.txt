@@ -1,0 +1,13 @@
+{
+  "goal_met": false,
+  "window": 1000,
+  "target_avg": 0.5,
+  "sample_count": 1000,
+  "avg_momentum": 0.0774,
+  "recent_100_avg": -0.9483,
+  "min_momentum": -16.88,
+  "max_momentum": 12.87,
+  "latest_momentum": -1.9,
+  "needs_intervention": true,
+  "cycles_to_flush_bad_history": 0
+}

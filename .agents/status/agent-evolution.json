@@ -1,21 +1,55 @@
 {
-  "agent": "agent-evolution",
-  "status": "idle",
-  "task": "phase8-continuation",
-  "started": "2026-07-09",
-  "completed": "2026-07-09",
-  "progress": "Phase 8 continuation complete: Created 42 new integration tests across 3 new test files for champion_archive, checkpoint_manager, and progression_tracker. Code quality pass verified structured logging, docstrings, and centralized path resolution. Updated README.md (test count 238→1400+) and lessons_learned.md. All 1373 tests passing across 42 test files. Git committed with conventional messages.",
-  "changes": [
-    "tests/test_champion_archive_integration.py: New — 12 tests covering archive lifecycle, sampling, export",
-    "tests/test_checkpoint_manager_integration.py: New — 8 tests covering save/load, mismatch, backup, atomic writes",
-    "tests/test_progression_tracker_integration.py: New — 22 tests covering metrics, trends, stagnation, tuning policy, actuator",
-    "README.md: Updated test count, project structure, tests listing",
-    "lessons_learned.md: Added Phase 8 continuation entry",
-    ".agents/status/agent-evolution.json: Updated status"
+  "status": "blocked",
+  "updated_at": "2026-09-30T19:07:00Z",
+  "current_task": "t_cf7f250d cold-start cache hydration -> BLOCKED on acceptance gate (needs t_d1ce653c warm-cycle fix)",
+  "last_cycle": 7601,
+  "last_cycle_elapsed_s": 1677.9,
+  "champion_promotion_raw": 325.8257,
+  "champion_words": 27,
+  "promotion_gate": 325.836,
+  "t_af23e5b3_root_cause": "Gen 0 and gen 29 (scan-floor inject generations) rebuild the terminal probe pool and growth pool. ScanFloorGateBaseline.qualifies (evolution/terminal_stagnation.py:1414) scores each candidate with heldout_l30_verify_mean(variant, 32) + 9x curriculum_verify_mean(variant, level) = up to 104 _execute_vm calls per program, over ~6-9k distinct programs per rebuild. The scoring memos (lru_cache(maxsize=1024) on _curriculum_verify_mean_cached/_heldout_l30_verify_mean_cached plus a 2048-key window in .agents/vm_score_disk_cache.json) were smaller than that working set, so every rebuild re-scored programs an earlier cycle had already paid for.",
+  "t_af23e5b3_evidence": "offline cold build pre-fix: select_terminal_probes_for_batch 168.96s / 612809 _execute_vm calls, collect_scan_floor_growth_crossover_fills 41.74s / 65784 calls; gen0 pre-fix C7596=676.6s (vm 564.1s / 938472 calls), C7598=445.4s; gen29 pre-fix C7596=515.1s / C7597=379.9s / C7598=512.4s; markers: [PhaseSub] lines in cycle_*/logs/evolution.log and subphase_seconds in generation_phase_timing.jsonl.",
+  "t_af23e5b3_fix": "evolution/terminal_stagnation.py: scoring LRU 1024 -> EE_SCAN_FLOOR_SCORE_CACHE (default 262144); _curriculum_verify_mean_cached now also memoized via the existing _vm_score_disk store (section curriculum_verify); disk window for heldout_l30/curriculum_verify 2048 -> EE_VM_SCORE_DISK_CAP (default 65536); _vm_score_disk_put mutates the bucket in place (copy-per-put would have made a larger window O(n^2)); disk store versioned by sha256 of tasks_rv32i.py + gpu_vm_farm.py + evolution/terminal_stagnation.py and flushed atomically (tmp + os.replace, never raises).",
+  "t_af23e5b3_measurements_s": "pre-fix C7596=1619.0, C7597=795.9, C7598=1279.0; post-fix C7599=676.2, C7600=786.5, C7601=1677.9; post-fix gen0 C7599=181.0, C7601=1280.4, C7602=79.4. C7601 re-scored (563889 VM calls / 1280s) because memo windows were still below working set - capacity bumped after that measurement, effective on next daemon restart; a 643s pytest run overlapped C7601 (2.06ms/VM call vs 0.6ms baseline).",
+  "t_af23e5b3_next_hotspot": "gen29 model_guided_slots = 270.4s (C7599) / 221.8s (C7601): 4x PrefixGenerator CPU inference at evolution_engine.py:6831-6877 - constant per-cycle cost, tracked as a follow-up card.",
+  "t_af23e5b3_gates_tests": "should_rescan and every eval gate untouched (only memo retention changed; values are deterministic in (program, level, n_seeds)). pytest tests/unit/test_archive_scan_floor_probes.py tests/unit/test_vm_score_disk_cache.py -> 85 passed, 2 skipped; an earlier MemoryError under load was flaky (passes in isolation and on re-run).",
+  "post_deploy_cycle_timings_s": {
+    "restart_a_2026-09-30T12:53:16Z_pid48376": {
+      "7596": 1618.96,
+      "7597": 795.88,
+      "7598": 1278.96,
+      "under_300s": "0/3 (gate needs >=2/3)",
+      "compression_rescans": 0,
+      "rank_miss_mtime": "2026-09-24T10:10:23Z (untouched)"
+    }
+  },
+  "notes": "Daemon dead since 2026-09-24T12:38:08Z -> restarted 12:53:16Z (pid 48376, re-measure window) and 13:57:18Z (pid 40816, growth-pool warm-up fix). Cold gen0 676.6s vs warm 113.8s (PhaseSub: generate_challengers); warm cycles still 796-1279s, so the 300s gate is limited by warm-cycle cost, not cold start alone.",
+  "t_a6c7a898_summary": "archive sidecar prune kept the OLDEST 10 and deleted live sidecars: EE_ARCHIVE_SIDECAR_MAX_CYCLE=7000 was below the live cycle (7604), so _reference_sidecar_cycle refused to trust latest.json and purge_fixture_archive_sidecars deleted every live sidecar while its return value was discarded (restart printed '0 archive sidecars removed'). Fixed: reference = latest.json cycle (uncapped) else newest on disk; fixture = cycle > ref+SIDECAR_FIXTURE_MARGIN(50) only; newest-N by parsed cycle number; single shared planner drives both --dry-run and the real delete so the count is always actual deletions. Same stale cap fixed in evolution/archive_persistence.py (then _richest_real_sidecar, renamed _best_real_sidecar by the t_a8dc2932 follow-up) (recovery could not see any cycle > 7000) plus corrupt-latest.json hardening.",
+  "t_a6c7a898_changed_files": [
+    "scripts/prune_agent_artifacts.py (UNTRACKED dir - scripts/ is not in git)",
+    "evolution/archive_persistence.py",
+    "tests/unit/test_prune_agent_artifacts.py",
+    "tests/unit/test_archive_persistence.py"
   ],
-  "test_results": {
-    "total": 1373,
-    "passed": 1373,
-    "failed": 0
-  }
+  "t_a6c7a898_evidence": "reproduction: 5 red tests on pre-fix code (removed=0 while 8 live sidecars vanished, dry-run predicted 8 vs real 0). after fix: 19 passed; ruff format --check + ruff check clean on all 4 files; full suite 9925 passed / 29 failed / 80 skipped (all 29 reproduced at HEAD in a detached worktree baseline, zero reference my modules). live: dry-run 2 -> removed 2, then dry-run 3 -> removed 3, re-run 0/0 idempotent, live sidecars 7603-7607 retained, latest.json -> cycle_07607 present. old-vs-new probe on recovery fallback: HEAD records=None -> fixed records=1500. reviewers: round1 CHANGES-REQUIRED (7 findings, all addressed), round2 APPROVED 7/7 + 3 NITs (all addressed).",
+  "t_a6c7a898_followups": [
+    "t_c954f119 scripts/ dir untracked (daemon + prune script not in git)",
+    "t_a8dc2932 resume fallback ranks by records not recency (stale restore risk)"
+  ],
+  "t_c954f119_summary": "scripts/ promoted from fully untracked to tracked: 27 files STAGED (not committed - acceptance needs explicit user approval), git ls-files scripts/ 0 -> 27 (22 .py + 3 .ps1 + 1 .bat + new scripts/.gitignore), git status --porcelain scripts/ no longer shows '?? scripts/'. Split: 26 production/ops kept (daemon, prune, restart/start/wake, deploy_now.bat, verify/monitor/trajectory scripts, 3 patch_* one-shots) vs 14 excluded encoded as rules in scripts/.gitignore (10 _*.py probes/diagnostics, 1 .bak, 2 zero-byte files, and patch_verifier_projection.py which reads an excluded STALE body and would revert verify_epi_momentum_goal.py).",
+  "t_c954f119_changed_files": [
+    "scripts/.gitignore (NEW, staged)",
+    "21 kept scripts/*.py ruff-formatted + 10 hand lint fixes (SIM115x3, PLW1510x3, BLE001, S110, SIM103, FLY002, I001x4)",
+    "index only otherwise - no tracked file outside scripts/ was touched"
+  ],
+  "t_c954f119_evidence": "before: git status --porcelain scripts/ = '?? scripts/', git ls-files = 0, ruff format --check dirty on 21/23 kept .py, ruff check 14 errors in kept set. after (2026-09-30 20:50 EDT, HEAD 740bb2d): 27 'A ' / 0 '??'; ruff format --check '22 files already formatted' rc=0; ruff check 'All checks passed!' rc=0 (incl. explicit run on prune_agent_artifacts.py + continuous_evolution_daemon.py); CI-equivalent run on INDEX content (git checkout-index) format+check+py_compile all rc=0; full suite 27 failed / 9958 passed / 80 skipped vs parent baseline 29/9933/80 -> NEW FAILURES = 0 (the 2 that stopped failing are gpu_vm_farm.py quality gates, gpu_vm_farm.py edited by another agent 18:50). test_daemon_flatline_gate flatline failure proven pre-existing by A/B probe (backup vs formatted daemon both False; assess_flatline says 'insufficient history (0 < 30)'); it is line 653 of the 13:11 baseline. reviews: round1 CHANGES-REQUIRED (1 MAJOR: kept patch_verifier_projection.py depended on excluded stale body) -> fixed; round2 APPROVED after re-verifying coherence both directions (474 tracked files scanned), gates on worktree AND index content, and the failure-set comparison.",
+  "t_c954f119_state": "STAGED, AWAITING USER APPROVAL TO COMMIT. Proposed: git commit -m '[t_c954f119] Track scripts/: daemon + prune + restart and 24 production ops scripts (ruff-clean)'. Shared-index risk: a sibling's pathless 'git commit' would sweep these in and a 'git reset' would unstage them. Artifacts: .../cache/scratch/EVIDENCE_t_c954f119.md, changeset_c954.diff, scripts_backup_c954/ (pre-edit backup), mine27_ids.txt + b29.norm/m27.norm (failure-set comparison). Disclosed: repo-wide ruff was already red before this change (373 -> 343 errors, 0 in scripts/; format --check 336 -> 303 files) so CI lint stays red for pre-existing reasons; no .ps1/.bat parse test; no literal clone+CI end-to-end (index-content proxy).",
+  "t_a8dc2932_summary": "resume fallback ranked sidecars by RECORD COUNT, not recency: with latest.json dangling, _richest_real_sidecar returned the richest sidecar within ref+50, so a 16-day-old uncapped cycle_06999 (4890 records) beat a healthy live terminal-capped cycle_07604 (1500 records). Fixed with card direction 1 in evolution/archive_persistence.py::_best_real_sidecar (renamed from _richest_real_sidecar): track 1 = NEWEST sidecar whose record count clears EE_ARCHIVE_SIDECAR_MIN_RECORDS, track 2 = richest sidecar only when nothing on disk clears the floor; the ref+50 fixture ceiling is unchanged. Every sidecar read now funnels through _read_sidecar_file (missing/unreadable/non-object -> None), so a sidecar holding a JSON array can no longer crash resume (AttributeError out of _strategy_count) nor escape as a list into cap_strategy_archive_state; a MISSING latest.json now falls back to disk instead of restoring nothing; malformed EE_ARCHIVE_SIDECAR_* env ints fall back to their defaults.",
+  "t_a8dc2932_changed_files": [
+    "evolution/archive_persistence.py",
+    "tests/unit/test_archive_persistence.py",
+    "lessons_learned.md (new 2026-09-30 entry + rename note in the earlier entry)",
+    ".agents/status/agent-evolution.json (my t_a8dc2932_* keys + stale-name fix in t_a6c7a898_summary)"
+  ],
+  "t_a8dc2932_evidence": "RED vs the exact as-received file (rebuilt as git show HEAD:evolution/archive_persistence.py + the parent's saved t_a6c7a898_tracked.diff; 6589 bytes / 174 lines = the session-start read), probe t_a8dc2932_before_after_probe.py: incident (dangling latest + rich OLD + live) OLD 4890 tag=old -> NEW 1500 tag=live; missing latest.json OLD None -> NEW live 1500; latest.json target is an array OLD CRASH AttributeError: 'list' object has no attribute 'get' -> NEW live; explicit cycle-N array OLD list escapes -> NEW live; load_archive_from_result inline and sidecar_path arrays OLD list escapes -> NEW live; corrupt latest.json + rich OLD OLD 4890 -> NEW live. PINS unchanged by design: sub-floor live 300 vs old 4890 -> 4890 on both; all candidates sub-floor -> richest 300 on both. MEASURED TRADEOFF (review finding 2): corrupt latest.json + a thin fixture planted far ahead -> OLD live 1500, NEW fixture-thin 600; accepted and documented in the _best_real_sidecar docstring (needs a corrupt latest.json AND a fixture in production at once; a BIG fixture beats both rankers anyway; prune_agent_artifacts.py::_reference_sidecar_cycle derives its reference the same way - latest.json, else newest on disk - and carries an equally accepted residual risk, so the two stay consistent). Gates (final, after review round 2): pytest tests/unit/test_archive_persistence.py tests/unit/test_prune_agent_artifacts.py = 29 passed (18+11, was 8+11 at handoff); my test file inside the full suite shows 18 passing dots at tests/unit/test_archive_persistence.py; ruff format --check + ruff check exit 0 on all 3 touched files; full suite t_a8dc2932_full_suite_FINAL.log = 27 failed / 9978 passed / 80 skipped in 989.12s with the FAILED set byte-identical to my pre-review-fix run (20:57) and a subset of the parent baseline (29 failed, 13:11): NEW FAILURES = 0 (2 baseline wave19 complexity gates stopped failing), and 0 failures reference archive_persistence / prune_agent_artifacts. Related-file run: 4 files (archive_persistence, prune_agent_artifacts, coverage_improvement, terminal_retrain_skip) = 63 passed; round-2 reviewer independently ran 17 / 29 / 40 / 64-passed sets green. test_load_prefers_richer_nearby_sidecar untouched and still passing for the right reason (newest candidate clearing the floor); no existing assertion changed, removed or weakened - the only as-received construct edited is _write_raw_sidecar's new optional tag=None parameter, whose tag=None output is byte-identical. Reviews: round 1 CHANGES-REQUIRED (2 MAJOR / 4 MINOR / 3 NIT) -> all addressed; round 2 APPROVED (all 9 findings VERIFIED, independent rebuild of the as-received file byte-identical to the OLD reference used by the probe) with 4 residual NITs -> NIT 1 closed with test_malformed_env_values_do_not_crash_resume (probe: OLD CRASH ValueError: invalid literal for int() -> NEW live), NIT 4 closed by rewording the docstring attribution to prune_agent_artifacts.py::_reference_sidecar_cycle, NIT 3 corrected here (was mis-stated as 65), NIT 2 (stale status header current_task/updated_at) left alone as shared sibling bookkeeping. Probe t_a8dc2932_before_after_probe.py vs the exact as-received module: 8 bug-fix REDs, 2 behaviour pins unchanged, 1 measured tradeoff. No commit; no git state operations; production .agents/archive_state only ever read (incident copies made in a temp dir)."
 }

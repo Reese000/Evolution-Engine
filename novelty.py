@@ -961,9 +961,7 @@ class SparseArchive:
                     program_generation = meta.get("generation") if isinstance(meta, dict) else None
                     flat_descriptor = entry[0]
                     if program_generation is not None and flat_descriptor is not None:
-                        return self._compute_adaptive_decay(
-                            flat_descriptor, program_generation, current_generation, half_life, meta
-                        )
+                        return self._compute_adaptive_decay(flat_descriptor, program_generation, current_generation, half_life, meta)
         return 0.0
 
     # ------------------------------------------------------------------
@@ -1223,13 +1221,7 @@ class SparseArchive:
             interp += f" Longitudinal r={lr:.3f}{sig} across {longitudinal['n_generations']} generations."
         elif lg_effect == "insufficient_data":
             interp += " Insufficient longitudinal data (<3 generations) for temporal analysis."
-        return {
-            "cross_sectional_effect": cs_effect,
-            "longitudinal_effect": lg_effect,
-            "overall_interpretation": interp,
-            "median_pearson_r": median_r,
-            "n_metrics_correlated": len(pearson_rs),
-        }
+        return {"cross_sectional_effect": cs_effect, "longitudinal_effect": lg_effect, "overall_interpretation": interp, "median_pearson_r": median_r, "n_metrics_correlated": len(pearson_rs)}
 
     def get_novelty_impact_correlation(self) -> dict[str, Any]:
         """Analyze whether novelty pressure is increasing program diversity.

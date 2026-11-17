@@ -9,6 +9,7 @@ ensure_project_on_path()
 from evolution.qd_archive_mixin import QDArchiveMixin
 from evolution_engine import compute_qd_axes
 from qd_archive import MAPElitesArchive
+from tests.live_results import live_champion_row
 
 # ADDI x1, x0, 1  and  EBREAK-like ebreak 0x00100073
 _ADDI_X1 = 0x00100093
@@ -142,15 +143,12 @@ def test_pick_mutation_parent_uses_shorter_archive_cell():
     longp = eng.champion
     eng.qd_archive.add_solution(compute_qd_axes(short, _trace(12)), 1.0, short, _trace(12))
     eng.qd_archive.add_solution(compute_qd_axes(longp, _trace(2)), 572.0, longp, _trace(2))
-
     # Force archive branch
     class _Always:
         def random(self):
             return 0.0
-
         def randrange(self, n):
             return 0
-
     eng.rng = _Always()
     parent, traces = eng._pick_mutation_parent()
     assert parent == short
@@ -189,20 +187,13 @@ def test_pick_mutation_parent_uses_l10_lift_growth_material(monkeypatch):
 
 
 def test_scan_floor_growth_crossover_prefers_equal_length(monkeypatch):
-    import json
     import os
 
     if not os.path.isfile("multi_cycle_results.jsonl"):
         import pytest
 
         pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 48 and candidate.get("final_level") == 30:
-            row = candidate
+    row = live_champion_row(48)
     if row is None:
         import pytest
 

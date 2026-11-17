@@ -21,8 +21,8 @@ import re
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any
 
 # ── Project paths ────────────────────────────────────────────────────
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -332,6 +332,7 @@ def get_gpu_info() -> str:
             capture_output=True,
             text=True,
             timeout=3,
+            check=False,
         )
         if r.returncode == 0 and r.stdout.strip():
             parts = r.stdout.strip().split(", ")
@@ -363,7 +364,7 @@ def _draw_live(log_path: str) -> None:
             m = re.match(r"\[(\d{2}):(\d{2}):(\d{2})\]", first)
             if m:
                 h, mm, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                run_start = datetime.now().replace(hour=h, minute=mm, second=s, microsecond=0)
+                run_start = datetime.now(timezone.utc).replace(hour=h, minute=mm, second=s, microsecond=0)
                 start_time = run_start.timestamp()
     except (OSError, IndexError):
         pass
@@ -385,7 +386,7 @@ def _draw_live(log_path: str) -> None:
             # Read health.json + metrics (Phase 7.1 integration)
             health = read_health_json()
             metrics_records = read_metrics_jsonl(last_n=20)
-            progress = read_progress_report()
+            read_progress_report()
 
             # Timing calculations
             run_elapsed = now - start_time

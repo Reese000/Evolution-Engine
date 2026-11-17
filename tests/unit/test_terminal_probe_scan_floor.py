@@ -1,31 +1,17 @@
 """Terminal probe injection respects held-out scan floor."""
 
 import json
-import os
 
 import pytest
 
 from evolution_engine import EvolutionConfig, EvolutionEngine
-
-
-def _live_60w_champion():
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    return [int(x, 16) for x in row["champion_program"]]
+from tests.live_results import live_champion_program, live_champion_row
 
 
 def test_scan_floor_skips_semantic_compress_and_easy_fill(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     eng = EvolutionEngine(config=EvolutionConfig(max_level=30))
     eng.champion = prog
     eng.champion_level = 30
@@ -157,17 +143,7 @@ def test_maybe_rearm_scan_floor_above_champion(tmp_path, monkeypatch):
 
 
 def test_ranked_scan_floor_growth_fills_skip_timeout_sentinel():
-    import os
-
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 61 and candidate.get("final_level") == 30:
-            row = candidate
+    row = live_champion_row(61)
     if row is None:
         pytest.skip("needs live 61w champion")
     from evolution.terminal_stagnation import ranked_scan_floor_growth_fills
@@ -180,17 +156,7 @@ def test_ranked_scan_floor_growth_fills_skip_timeout_sentinel():
 
 
 def test_ranked_scan_floor_growth_fills_returns_multiple_at_48w():
-    import os
-
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 48 and candidate.get("final_level") == 30:
-            row = candidate
+    row = live_champion_row(48)
     if row is None:
         pytest.skip("needs live 48w champion")
     from evolution.terminal_stagnation import _ranked_scan_floor_growth_fills_cached, ranked_scan_floor_growth_fills
@@ -206,15 +172,7 @@ def test_ranked_scan_floor_growth_fills_returns_multiple_at_48w():
 def test_growth_inject_does_not_shadow_os_module(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 48 and candidate.get("final_level") == 30:
-            row = candidate
+    row = live_champion_row(48)
     if row is None:
         pytest.skip("needs live 48w champion")
     prog = [int(x, 16) for x in row["champion_program"]]
@@ -247,15 +205,7 @@ def test_growth_inject_does_not_shadow_os_module(tmp_path, monkeypatch):
 def test_scan_floor_injects_growth_easy_fill_when_stalled(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 61 and candidate.get("final_level") == 30:
-            row = candidate
+    row = live_champion_row(61)
     if row is None:
         pytest.skip("needs live 61w champion")
     prog = [int(x, 16) for x in row["champion_program"]]
@@ -326,7 +276,7 @@ def test_scan_floor_injects_growth_easy_fill_when_stalled(tmp_path, monkeypatch)
 def test_scan_floor_empty_probes_injects_diversity(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     eng = EvolutionEngine(config=EvolutionConfig(max_level=30, diversity_inject_ratio=0.1))
     eng.champion = prog
     eng.champion_level = 30
@@ -362,7 +312,7 @@ def test_scan_floor_empty_probes_injects_diversity(tmp_path, monkeypatch):
 def test_stalled_capability_injects_top_probes_without_rotation(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor
 
-    prog = _live_60w_champion()[:48]
+    prog = live_champion_program(60)[:48]
     eng = EvolutionEngine(config=EvolutionConfig(max_level=30))
     eng.champion = prog
     eng.champion_level = 30
@@ -412,7 +362,7 @@ def test_stalled_capability_injects_top_probes_without_rotation(tmp_path, monkey
 def test_warm_steady_caps_terminal_probe_escalation(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor
 
-    prog = _live_60w_champion()[:27]
+    prog = live_champion_program(60)[:27]
     eng = EvolutionEngine(config=EvolutionConfig(max_level=30))
     eng.champion = prog
     eng.champion_level = 30

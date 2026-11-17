@@ -53,6 +53,8 @@ def test_probe_strategy_skipped():
     desc = compute_qd_axes(prog, trace)
     assert desc is not None
     assert eng.qd_archive.cell_is_empty(desc)
-    added = eng._fill_empty_qd_cells_from_evaluated([prog], [trace], ["TERMINAL_VERIFY_PROBE"])
+    added = eng._fill_empty_qd_cells_from_evaluated(
+        [prog], [trace], ["TERMINAL_VERIFY_PROBE"]
+    )
     assert added == 0
     assert eng.qd_archive.cell_is_empty(desc)

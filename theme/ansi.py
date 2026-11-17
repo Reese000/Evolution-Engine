@@ -3,10 +3,10 @@
 Converts Design System hex tokens to ANSI 24-bit (truecolor) escape
 sequences for rich terminal styling.
 """
+
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ANSI ESCAPE CODES
@@ -71,6 +71,7 @@ def _parse_rgba(color: str) -> tuple[int, int, int]:
 # ══════════════════════════════════════════════════════════════════════════════
 # PUBLIC API
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def ansi_color(hex_color: str) -> str:
     """Return ANSI escape sequence for a foreground color from hex."""
@@ -150,9 +151,14 @@ def colorize(
     if bg:
         parts.append(ansi_bg(bg))
     if bold or dim or italic or underline:
-        parts.append(ansi_style(
-            bold=bold, dim=dim, italic=italic, underline=underline,
-        ))
+        parts.append(
+            ansi_style(
+                bold=bold,
+                dim=dim,
+                italic=italic,
+                underline=underline,
+            )
+        )
     if not parts:
         return text
     return f"{''.join(parts)}{text}{RESET}"

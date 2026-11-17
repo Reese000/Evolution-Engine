@@ -8,13 +8,10 @@ Validates:
   - autonomous_runner.py: _generate_progress_report, MetricsCollector integration
 """
 
-import glob
 import json
-import math
 import os
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -25,6 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 try:
     import v11_dashboard
+
     _has_v11_dashboard = True
 except ImportError:
     _has_v11_dashboard = False
@@ -44,16 +42,19 @@ class TestCycleState(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_import_cycle_state(self):
         from cycle_state import SCHEMA_VERSION, CycleState, default_cycle_state
+
         self.assertTrue(callable(CycleState))
         self.assertTrue(callable(default_cycle_state))
         self.assertEqual(SCHEMA_VERSION, 2)
 
     def test_default_state_has_all_fields(self):
         from cycle_state import default_cycle_state
+
         state = default_cycle_state()
         self.assertEqual(state["version"], 2)
         self.assertIn("current_cycle", state)
@@ -76,6 +77,7 @@ class TestCycleState(unittest.TestCase):
 
     def test_save_and_load_roundtrip(self):
         from cycle_state import CycleState
+
         cs = CycleState(self.state_path)
         cs.update(current_cycle=5, best_fitness=42.5, best_level=3, population_size=50)
         self.assertTrue(cs.save())
@@ -91,6 +93,7 @@ class TestCycleState(unittest.TestCase):
     def test_checksum_valid(self):
         """After save, the checksum field should be present and valid."""
         from cycle_state import CycleState, _compute_checksum
+
         cs = CycleState(self.state_path)
         cs.update(current_cycle=1, best_fitness=10.0)
         cs.save()
@@ -105,6 +108,7 @@ class TestCycleState(unittest.TestCase):
     def test_corruption_detected(self):
         """Tampering with a field should cause load() to return False."""
         from cycle_state import CycleState
+
         cs = CycleState(self.state_path)
         cs.update(current_cycle=3, best_fitness=20.0)
         cs.save()
@@ -122,12 +126,14 @@ class TestCycleState(unittest.TestCase):
 
     def test_missing_file_returns_false(self):
         from cycle_state import CycleState
+
         cs = CycleState(os.path.join(self._tmpdir, "nonexistent.json"))
         loaded = cs.load()
         self.assertFalse(loaded)
 
     def test_corrupt_json_returns_false(self):
         from cycle_state import CycleState
+
         with open(self.state_path, "w") as f:
             f.write("not valid json {{{")
         cs = CycleState(self.state_path)
@@ -136,6 +142,7 @@ class TestCycleState(unittest.TestCase):
 
     def test_reset_preserves_start_timestamp(self):
         from cycle_state import CycleState
+
         cs = CycleState(self.state_path)
         cs.update(current_cycle=10, best_fitness=100.0)
         original_start = cs["start_timestamp"]
@@ -145,6 +152,7 @@ class TestCycleState(unittest.TestCase):
 
     def test_getitem_setitem(self):
         from cycle_state import CycleState
+
         cs = CycleState(self.state_path)
         cs["current_cycle"] = 7
         self.assertEqual(cs["current_cycle"], 7)
@@ -154,6 +162,7 @@ class TestCycleState(unittest.TestCase):
 
     def test_file_exists(self):
         from cycle_state import CycleState
+
         cs = CycleState(self.state_path)
         self.assertFalse(cs.file_exists())
         cs.save()
@@ -170,20 +179,21 @@ class TestCleanupStaleState(unittest.TestCase):
 
     def test_import_cleanup(self):
         from autonomous_runner import cleanup_stale_state
+
         self.assertTrue(callable(cleanup_stale_state))
 
     def test_removes_bak_files(self):
         from autonomous_runner import cleanup_stale_state
         from paths import PROJECT_ROOT
+
         # Create fake .bak files
         bak_files = []
-        for name in ["runner_state.json.bak", "cycle_state.json.bak",
-                      "runner_state.json.old", "cycle_state.json.old"]:
+        for name in ["runner_state.json.bak", "cycle_state.json.bak", "runner_state.json.old", "cycle_state.json.old"]:
             p = os.path.join(str(PROJECT_ROOT), name)
             Path(p).touch()
             bak_files.append(p)
         try:
-            cleaned = cleanup_stale_state(current_cycle=0)
+            cleanup_stale_state(current_cycle=0)
             # Should have cleaned the .bak files
             for p in bak_files:
                 self.assertFalse(os.path.isfile(p), f"Should have removed {p}")
@@ -195,10 +205,11 @@ class TestCleanupStaleState(unittest.TestCase):
     def test_removes_strategy_archive_bak(self):
         from autonomous_runner import cleanup_stale_state
         from paths import PROJECT_ROOT
+
         p = os.path.join(str(PROJECT_ROOT), "strategy_archive_test.json.bak")
         Path(p).touch()
         try:
-            cleaned = cleanup_stale_state(current_cycle=0)
+            cleanup_stale_state(current_cycle=0)
             self.assertFalse(os.path.isfile(p))
         finally:
             if os.path.isfile(p):
@@ -206,6 +217,7 @@ class TestCleanupStaleState(unittest.TestCase):
 
     def test_returns_list(self):
         from autonomous_runner import cleanup_stale_state
+
         result = cleanup_stale_state(current_cycle=0)
         self.assertIsInstance(result, list)
 
@@ -213,6 +225,7 @@ class TestCleanupStaleState(unittest.TestCase):
         """checkpoint_best.pt should never be touched by cleanup."""
         from autonomous_runner import cleanup_stale_state
         from paths import M1_CHECKPOINTS
+
         ckpt = os.path.join(str(M1_CHECKPOINTS), "checkpoint_best.pt")
         existed_before = os.path.isfile(ckpt)
         cleanup_stale_state(current_cycle=100)
@@ -230,6 +243,7 @@ class TestOOMRecovery(unittest.TestCase):
 
     def test_import_oom_handler(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         self.assertTrue(hasattr(runner, "_handle_oom"))
         self.assertTrue(hasattr(runner, "_is_cuda_oom"))
@@ -237,6 +251,7 @@ class TestOOMRecovery(unittest.TestCase):
 
     def test_oom_reduces_population(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         runner._config["evolution"]["population_size"] = 50
         runner._handle_oom(MemoryError("test OOM"), cycle=1, max_retries=1)
@@ -245,6 +260,7 @@ class TestOOMRecovery(unittest.TestCase):
     def test_oom_minimum_population(self):
         """When population is already near minimum, OOM should still work."""
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         runner._config["evolution"]["population_size"] = 10
         result = runner._handle_oom(MemoryError("test OOM"), cycle=1, max_retries=1)
@@ -254,6 +270,7 @@ class TestOOMRecovery(unittest.TestCase):
 
     def test_cuda_oom_detection(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         self.assertTrue(runner._is_cuda_oom(MemoryError("CUDA out of memory")))
         # "OOM error" alone is NOT CUDA OOM — requires "cuda" or "out of memory"
@@ -263,11 +280,13 @@ class TestOOMRecovery(unittest.TestCase):
     def test_clear_gpu_cache_no_crash(self):
         """_clear_gpu_cache should not raise even without GPU."""
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         runner._clear_gpu_cache()  # Should not raise
 
     def test_oom_cpu_fallback_on_final_retry(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         runner._config["evolution"]["population_size"] = 100
         runner._config["evolution"]["use_gpu"] = True
@@ -286,12 +305,14 @@ class TestRetrainFailureRecovery(unittest.TestCase):
 
     def test_import_retrain_recovery(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         self.assertTrue(hasattr(runner, "_run_retrain_with_recovery"))
 
     def test_nan_loss_reduces_lr(self):
         """When retrain returns NaN val_loss, LR should be halved."""
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         original_lr = runner._retrain_config.retrain_lr
 
@@ -308,6 +329,7 @@ class TestRetrainFailureRecovery(unittest.TestCase):
     def test_inf_loss_reduces_lr(self):
         """When retrain returns Inf val_loss, LR should be halved."""
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         original_lr = runner._retrain_config.retrain_lr
 
@@ -315,12 +337,13 @@ class TestRetrainFailureRecovery(unittest.TestCase):
             return {"retrained": True, "val_loss": float("inf")}
 
         runner._run_retrain = mock_retrain
-        result = runner._run_retrain_with_recovery(cycle=1, evo_result={}, max_attempts=2)
+        runner._run_retrain_with_recovery(cycle=1, evo_result={}, max_attempts=2)
         self.assertLess(runner._retrain_config.retrain_lr, original_lr)
 
     def test_successful_retrain_passes_through(self):
         """A successful retrain should pass through without modification."""
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
 
         def mock_retrain(cycle, evo_result):
@@ -334,6 +357,7 @@ class TestRetrainFailureRecovery(unittest.TestCase):
     def test_cuda_error_returns_skip(self):
         """CUDA error in retrain should return retrained=False with reason."""
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
 
         def mock_retrain(cycle, evo_result):
@@ -347,9 +371,11 @@ class TestRetrainFailureRecovery(unittest.TestCase):
     def test_max_attempts_returns_skip(self):
         """After max_attempts failures, should skip retrain."""
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
 
         call_count = [0]
+
         def mock_retrain(cycle, evo_result):
             call_count[0] += 1
             raise RuntimeError("generic failure")
@@ -372,6 +398,7 @@ class TestDashboardHealthMetrics(unittest.TestCase):
 
     def test_import_dashboard_functions(self):
         from v11_dashboard import compute_metrics_trend, read_health_json, read_metrics_jsonl, read_progress_report
+
         self.assertTrue(callable(read_health_json))
         self.assertTrue(callable(read_metrics_jsonl))
         self.assertTrue(callable(compute_metrics_trend))
@@ -379,11 +406,13 @@ class TestDashboardHealthMetrics(unittest.TestCase):
 
     def test_read_health_json_missing(self):
         from v11_dashboard import read_health_json
+
         result = read_health_json("/nonexistent/path/health.json")
         self.assertIsNone(result)
 
     def test_read_health_json_valid(self):
         from v11_dashboard import read_health_json
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump({"status": "running", "cycles_completed": 5, "current_fitness": 42.0}, f)
             path = f.name
@@ -397,6 +426,7 @@ class TestDashboardHealthMetrics(unittest.TestCase):
 
     def test_read_health_json_corrupt(self):
         from v11_dashboard import read_health_json
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("not json")
             path = f.name
@@ -408,11 +438,13 @@ class TestDashboardHealthMetrics(unittest.TestCase):
 
     def test_read_metrics_jsonl_missing(self):
         from v11_dashboard import read_metrics_jsonl
+
         result = read_metrics_jsonl("/nonexistent/path.jsonl")
         self.assertEqual(result, [])
 
     def test_read_metrics_jsonl_valid(self):
         from v11_dashboard import read_metrics_jsonl
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             f.write(json.dumps({"cycle": 1, "fitness": 0.5}) + "\n")
             f.write(json.dumps({"cycle": 2, "fitness": 0.7}) + "\n")
@@ -426,6 +458,7 @@ class TestDashboardHealthMetrics(unittest.TestCase):
 
     def test_read_metrics_jsonl_last_n(self):
         from v11_dashboard import read_metrics_jsonl
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             for i in range(10):
                 f.write(json.dumps({"cycle": i + 1}) + "\n")
@@ -439,6 +472,7 @@ class TestDashboardHealthMetrics(unittest.TestCase):
 
     def test_compute_metrics_trend_improving(self):
         from v11_dashboard import compute_metrics_trend
+
         records = [{"fitness": float(i) * 10.0} for i in range(10)]
         trend = compute_metrics_trend(records, "fitness", window=10)
         self.assertEqual(trend["trend"], "improving")
@@ -446,23 +480,27 @@ class TestDashboardHealthMetrics(unittest.TestCase):
 
     def test_compute_metrics_trend_stable(self):
         from v11_dashboard import compute_metrics_trend
+
         records = [{"fitness": 50.0} for _ in range(10)]
         trend = compute_metrics_trend(records, "fitness", window=10)
         self.assertEqual(trend["trend"], "stable")
 
     def test_compute_metrics_trend_empty(self):
         from v11_dashboard import compute_metrics_trend
+
         trend = compute_metrics_trend([], "fitness")
         self.assertEqual(trend["trend"], "unknown")
         self.assertIsNone(trend["current"])
 
     def test_read_progress_report_missing(self):
         from v11_dashboard import read_progress_report
+
         result = read_progress_report("/nonexistent/progress_report.json")
         self.assertIsNone(result)
 
     def test_read_progress_report_valid(self):
         from v11_dashboard import read_progress_report
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump({"cycle": 5, "summary": {"best_fitness": 42.0}}, f)
             path = f.name
@@ -483,22 +521,24 @@ class TestDashboardHealthMetrics(unittest.TestCase):
     sys.platform == "win32",
     reason="FileNotFoundError in progress report — PM Rule #27",
 )
-
 class TestProgressReport(unittest.TestCase):
     """Tests for _generate_progress_report in AutonomousRunner."""
 
     def test_runner_has_progress_report_method(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         self.assertTrue(hasattr(runner, "_generate_progress_report"))
 
     def test_runner_has_metrics_collector(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         self.assertIsNotNone(runner._metrics)
 
     def test_generate_progress_report_creates_file(self):
         from autonomous_runner import AutonomousRunner
+
         runner = AutonomousRunner()
         cycle_metrics = {
             "cycle": 1,

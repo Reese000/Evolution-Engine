@@ -1699,7 +1699,7 @@ def _l25_base_ref() -> list[dict]:
         {"name": "JALR", "rd": 0, "rs1": 23, "imm": 0},
         # L18: XOR + AND
         {"name": "XOR", "rd": 21, "rs1": 1, "rs2": 2},
-        *_l18_mask_load(22),
+                *_l18_mask_load(22),
         {"name": "AND", "rd": 21, "rs1": 21, "rs2": 22},
         # L19: BNE
         {"name": "BNE", "rs1": 1, "rs2": 2, "imm": 12},

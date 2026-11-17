@@ -3,7 +3,6 @@
 Extracted from EvolutionEngine in evolution_engine.py.
 Uses mixin pattern: all methods access self.* from the host EvolutionEngine.
 """
-
 from __future__ import annotations
 
 import heapq
@@ -54,6 +53,7 @@ class RecurrentMixin:
         )
 
     def _collect_recurrent_candidates(self, fitnesses, n_fitnesses):
+
         """Phase 1: Collect eligible candidates for recurrent feedback."""
 
         _candidates = []
@@ -67,7 +67,9 @@ class RecurrentMixin:
         strategies = getattr(self, "_last_challenger_strategies", None)
         skip_terminal_recurrent = int(getattr(self, "champion_level", 0)) >= 30
         champ_sha = (
-            sha256_program(self.champion) if skip_terminal_recurrent and getattr(self, "champion", None) else None
+            sha256_program(self.champion)
+            if skip_terminal_recurrent and getattr(self, "champion", None)
+            else None
         )
 
         for idx in range(len(self._last_challengers)):
@@ -152,7 +154,12 @@ class RecurrentMixin:
 
         return _candidates, rejected_count, _levels, _verify_levels_sorted
 
+
+
+
+
     def _compute_level_weights(self, candidates, levels, verify_levels_sorted):
+
         """Phase 3.5 + 4: Compute level-diversity and fitness weights."""
 
         _level_data = []
@@ -192,8 +199,11 @@ class RecurrentMixin:
                 for _prog, _fit, _trace, _sha in candidates:
 
                     _output = {
+
                         "registers": _trace.get("final_regs", {}),
+
                         "memory": _trace.get("final_memory", {}),
+
                     }
 
                     try:
@@ -215,8 +225,11 @@ class RecurrentMixin:
                     _solved_level = self.champion_level
 
                     _output = {
+
                         "registers": _trace.get("final_regs", {}),
+
                         "memory": _trace.get("final_memory", {}),
+
                     }
 
                     try:
@@ -268,7 +281,9 @@ class RecurrentMixin:
                 _sum_exp = sum(_exp_logits)
 
                 _fitness_weights = (
+
                     [e / _sum_exp for e in _exp_logits] if _sum_exp > 0 else [1.0 / len(_logits)] * len(_logits)
+
                 )
 
             else:
@@ -296,6 +311,10 @@ class RecurrentMixin:
                 _weights = [w / _w_sum for w in _weights]
 
         return _level_data, _weights, _n_levels_found
+
+
+
+
 
     def _load_saved_sha256_index(self, jsonl_path: str) -> dict:
         """Build dedupe index from recurrent jsonl; tail-only at terminal plateau."""
@@ -342,8 +361,10 @@ class RecurrentMixin:
         if not self._terminal_recurrent_level_fast_path():
             return False
         interval = max(1, int(TERMINAL_RECURRENT_GENERATION_INTERVAL))
-        if self.champion is not None and int(getattr(self, "champion_level", 0)) >= int(
-            getattr(self.config, "max_level", 30)
+        if (
+            self.champion is not None
+            and int(getattr(self, "champion_level", 0))
+            >= int(getattr(self.config, "max_level", 30))
         ):
             from evolution.terminal_stagnation import terminal_efficiency_at_scan_floor
 
@@ -359,8 +380,10 @@ class RecurrentMixin:
         if not self._terminal_recurrent_level_fast_path():
             return candidates
         cap = MAX_TERMINAL_RECURRENT_PER_CYCLE
-        if self.champion is not None and int(getattr(self, "champion_level", 0)) >= int(
-            getattr(self.config, "max_level", 30)
+        if (
+            self.champion is not None
+            and int(getattr(self, "champion_level", 0))
+            >= int(getattr(self.config, "max_level", 30))
         ):
             from evolution.terminal_stagnation import terminal_efficiency_at_scan_floor
 
@@ -371,6 +394,7 @@ class RecurrentMixin:
         return sorted(candidates, key=lambda item: item[1], reverse=True)[:cap]
 
     def _apply_novelty_weights(self, candidates, weights, jsonl_path):
+
         """Phase 6: Apply novelty weighting to training examples."""
 
         if not candidates:
@@ -401,7 +425,9 @@ class RecurrentMixin:
 
                 if os.path.isfile(jsonl_path):
 
-                    with open(jsonl_path) as f:
+                    # UTF-8: every other reader of this file pins it
+                    # (t_bd0760ea); decode failures land in the bare handler.
+                    with open(jsonl_path, encoding="utf-8") as f:
 
                         for line in f:
 
@@ -471,7 +497,12 @@ class RecurrentMixin:
 
         return weights, True
 
+
+
+
+
     def _write_recurrent_examples(self, candidates, weights, level_data, jsonl_path):
+
         """Phase 2: Write training examples with fitness+diversity+novelty weights."""
 
         saved_any = False
@@ -484,19 +515,33 @@ class RecurrentMixin:
             task_score = level_data[i][1] if level_data else 0.0
 
             example = {
+
                 "level": solved_level,
+
                 "generation": self.current_generation,
+
                 "fitness": challenger_fitness,
+
                 "champion_sha256": sha256,
+
                 "champion_words": len(prog),
+
                 "champion_program": [hex(w) for w in prog],
+
                 "trace_status": trace.get("status", ""),
+
                 "trace_instr_count": trace.get("instructions_count", 0),
+
                 "stalled_count": self.generations_stalled,
+
                 "task_score": task_score,
+
                 "timestamp": time.time(),
+
                 "trace_quality_score": min(1.0, max(0.0, challenger_fitness / 100.0)),
+
                 "training_weight": weights[i] if weights else 1.0,
+
             }
 
             self._saved_sha256s[sha256] = None
@@ -514,12 +559,19 @@ class RecurrentMixin:
             saved_any = True
 
         if lines:
-            with open(jsonl_path, "a") as f:
+            # UTF-8: live append writer of recurrent_data.jsonl -- its
+            # readers pin UTF-8, so the writer must not use the locale default.
+            with open(jsonl_path, "a", encoding="utf-8") as f:
                 f.writelines(lines)
 
         return saved_any
 
+
+
+
+
     def _try_recurrent_feedback(self) -> bool:
+
         """Save model-generated programs that execute successfully to training data."""
 
         if self._should_skip_terminal_recurrent_feedback():
@@ -557,13 +609,17 @@ class RecurrentMixin:
         n_fitnesses = len(fitnesses)
 
         _candidates, rejected_count, _levels, _verify_levels_sorted = self._collect_recurrent_candidates(
+
             fitnesses, n_fitnesses
+
         )
 
         _candidates = self._cap_terminal_recurrent_candidates(_candidates)
 
         _level_data, _weights, _n_levels_found = self._compute_level_weights(
+
             _candidates, _levels, _verify_levels_sorted
+
         )
 
         _weights, _novelty_weight_applied = self._apply_novelty_weights(_candidates, _weights, jsonl_path)
@@ -573,7 +629,9 @@ class RecurrentMixin:
         if saved_any:
 
             self._log(
+
                 f"Recurrent feedback saved ({self.recurrent_examples_count} total, {len(self._saved_sha256s)} unique, novelty={_novelty_weight_applied}, levels={_n_levels_found})"
+
             )
 
         if rejected_count > 0:
@@ -590,7 +648,12 @@ class RecurrentMixin:
         jsonl_path = os.path.join(recur_dir, "recurrent_data.jsonl")
         self._evict_recurrent_buffer(jsonl_path)
 
+
+
+
+
     def _evict_recurrent_buffer(self, jsonl_path: str) -> None:
+
         """Evict lowest-fitness traces when recurrent buffer exceeds MAX_RECURRENT_ENTRIES.
 
 
@@ -623,7 +686,10 @@ class RecurrentMixin:
 
             entries = []
 
-            with open(jsonl_path, encoding="utf-8") as f:
+            # errors="replace": the outer handler only catches
+            # (RuntimeError, OSError), so a torn row must degrade to a
+            # skipped entry instead of an escaped UnicodeDecodeError.
+            with open(jsonl_path, encoding="utf-8", errors="replace") as f:
 
                 for line in f:
 
@@ -643,9 +709,13 @@ class RecurrentMixin:
 
                 return
 
+
+
             # Sort by fitness ascending — lowest fitness first for eviction
 
             entries.sort(key=lambda e: e.get("fitness", 0.0))
+
+
 
             # Keep only the top MAX_RECURRENT_ENTRIES entries
 
@@ -653,9 +723,13 @@ class RecurrentMixin:
 
             entries = entries[evicted_count:]
 
+
+
             # Rewrite file with kept entries (atomic write)
 
             import tempfile
+
+
 
             dir_name = os.path.dirname(jsonl_path) or "."
 
@@ -663,7 +737,9 @@ class RecurrentMixin:
 
             try:
 
-                with os.fdopen(fd, "w") as f:
+                # UTF-8: this rewrite republishes the buffer as
+                # recurrent_data.jsonl, whose readers all pin UTF-8.
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
 
                     for entry in entries:
 
@@ -672,8 +748,11 @@ class RecurrentMixin:
                 os.replace(tmp_path, jsonl_path)
 
                 self._log(
+
                     f"Evicted {evicted_count} low-fitness traces from recurrent buffer "
+
                     f"(kept {len(entries)} entries)"
+
                 )
 
             except Exception:
@@ -694,13 +773,20 @@ class RecurrentMixin:
 
             self._log(f"[RecurrentEvict] Failed: {e}")
 
+
+
     # ------------------------------------------------------------------
 
     # Strategy archive
 
     # ------------------------------------------------------------------
 
+
+
+
+
     def _strategy_outcome_top_k(self, pair_count: int) -> int:
+
         """How many top challengers count as strategy successes for this generation."""
 
         if pair_count <= 0:
@@ -713,7 +799,12 @@ class RecurrentMixin:
 
         return max(1, pair_count // 10)
 
+
+
+
+
     def _record_strategy_outcomes(self) -> None:
+
         """Record strategy outcomes in the strategy archive.
 
 
@@ -748,6 +839,8 @@ class RecurrentMixin:
 
             return
 
+
+
         # Guard: truncate to shorter length
 
         pair_count = min(len(strategies), len(fitnesses))
@@ -755,6 +848,8 @@ class RecurrentMixin:
         if pair_count == 0:
 
             return
+
+
 
         # Single-pass threshold: find the k-th largest fitness using
 
@@ -792,6 +887,8 @@ class RecurrentMixin:
 
             threshold = top_k[0]
 
+
+
         # R15: Batch record all outcomes in one call (single bulk append
 
         # instead of per-record append + per-record index update).
@@ -815,15 +912,24 @@ class RecurrentMixin:
             beats_champion = champ_s1 is not None and fitnesses[i] > champ_s1
 
             batch_append(
+
                 {
+
                     "strategy": strategies[i],
+
                     "level": lvl,
+
                     "success": fitnesses[i] >= threshold or beats_champion,
+
                     "gen": gen,
+
                 }
+
             )
 
         sa.record_batch(batch)
+
+
 
     # ------------------------------------------------------------------
 

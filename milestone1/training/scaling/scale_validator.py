@@ -9,7 +9,7 @@ Used by ScaleCoordinator in the GATING state of the scaling lifecycle.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from milestone1.training.scaling.types import ValidationResult
 

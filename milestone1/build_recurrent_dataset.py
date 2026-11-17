@@ -12,8 +12,7 @@ for 2+ reset cycles.
 import json
 import os
 import sys
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Add paths
 M2_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "milestone2"))
@@ -125,14 +124,16 @@ def save_recurrent_data(examples: list[dict], filename: str = "recurrent_data.js
     """
     # Primary path: milestone1/recurrent_data.jsonl (matches training default)
     path = RECURRENT_FILE
-    with open(path, "a") as f:
+    # UTF-8: writes the canonical file that training/loop.py reads (docstring
+    # above); its readers pin UTF-8, so the writer must too.
+    with open(path, "a", encoding="utf-8") as f:
         f.writelines(json.dumps(ex, separators=(",", ":")) + "\n" for ex in examples)
 
     # Also write to legacy subdirectory for backward compat
     legacy_path = os.path.join(RECURRENT_DIR, filename)
     os.makedirs(RECURRENT_DIR, exist_ok=True)
     try:
-        with open(legacy_path, "a") as f:
+        with open(legacy_path, "a", encoding="utf-8") as f:
             f.writelines(json.dumps(ex, separators=(",", ":")) + "\n" for ex in examples)
     except OSError:
         pass  # Legacy path is best-effort
@@ -156,7 +157,7 @@ def check_ready_for_retrain(min_examples: int = 100) -> bool:
     path = get_recurrent_data_path()
     if not os.path.exists(path):
         return False
-    with open(path) as f:
+    with open(path, encoding="utf-8", errors="replace") as f:
         count = sum(1 for _ in f)
     return count >= min_examples
 
@@ -183,7 +184,7 @@ def build_and_save(engine: Any) -> str | None:
     path = save_recurrent_data(examples)
     total = 0
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             total = sum(1 for line in f if line.strip())
     except OSError:
         pass

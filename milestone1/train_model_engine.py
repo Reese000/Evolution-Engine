@@ -22,7 +22,6 @@ from torch.utils.data import DataLoader, Dataset
 # Add paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "milestone0", "logit-masking"))
 
-from rv32i_mask import decode, encode, get_valid_combinations
 from rv32i_model import RV32IFieldTokenizer as RV32ITokenizer
 from rv32i_model import RV32ITransformer
 

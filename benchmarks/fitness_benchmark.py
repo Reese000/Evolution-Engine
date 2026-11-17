@@ -265,7 +265,7 @@ def _run_single_benchmark(
         result["error"] = f"Timed out after {timeout_seconds}s"
         print(f"  [Run {run_index}] TIMED OUT after {timeout_seconds}s")
 
-    except Exception as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         result["status"] = "error"
         result["error"] = f"{type(exc).__name__}: {exc}"
         print(f"  [Run {run_index}] ERROR: {exc}")

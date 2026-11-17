@@ -217,14 +217,8 @@ class MetaEvolutionEngine:
     def _validate_seeds(seed_configs: list[dict[str, Any]]) -> None:
         """Validate seed configs have all required MetaGenome fields and valid ranges."""
         _REQUIRED_SEED_KEYS = {
-            "mutation_rate",
-            "crossover_rate",
-            "elite_ratio",
-            "tournament_size",
-            "population_size",
-            "stall_threshold",
-            "novelty_weight",
-            "strategy_type_weights",
+            "mutation_rate", "crossover_rate", "elite_ratio", "tournament_size",
+            "population_size", "stall_threshold", "novelty_weight", "strategy_type_weights",
         }
         for idx, cfg in enumerate(seed_configs):
             missing = _REQUIRED_SEED_KEYS - set(cfg.keys())
@@ -246,9 +240,7 @@ class MetaEvolutionEngine:
         if meta_config.meta_population_size < len(seed_list):
             _logger.warning(
                 "[Meta-pop] population size %d < %d seeds. Truncating to %d.",
-                meta_config.meta_population_size,
-                len(seed_list),
-                meta_config.meta_population_size,
+                meta_config.meta_population_size, len(seed_list), meta_config.meta_population_size,
             )
             seed_list = seed_list[: meta_config.meta_population_size]
         seeded = [MetaGenome(**cfg) for cfg in seed_list]
@@ -298,12 +290,8 @@ class MetaEvolutionEngine:
                 for i in range(len(fitness_list)):
                     if fitness_list[i] > _neg_inf:
                         fitness_list[i] = (fitness_list[i] - m) * inv_std
-                best_fit = (
-                    max(f for f in fitness_list if f > _neg_inf) if any(f > _neg_inf for f in fitness_list) else 0.0
-                )
-                worst_fit = (
-                    min(f for f in fitness_list if f > _neg_inf) if any(f > _neg_inf for f in fitness_list) else 0.0
-                )
+                best_fit = max(f for f in fitness_list if f > _neg_inf) if any(f > _neg_inf for f in fitness_list) else 0.0
+                worst_fit = min(f for f in fitness_list if f > _neg_inf) if any(f > _neg_inf for f in fitness_list) else 0.0
         return best_fit, worst_fit
 
     def _evaluate_all_genomes(self) -> None:
@@ -667,28 +655,19 @@ class MetaEvolutionEngine:
 def _parse_meta_args() -> MetaEvolutionConfig:
     """Parse command-line arguments for meta-evolution configuration."""
     import argparse
-
     parser = argparse.ArgumentParser(description="Meta-evolution: discover optimal RV32I evolution configs")
-    parser.add_argument(
-        "--meta-population", type=int, default=10, help="Number of meta-genomes in the population (default: 10)"
-    )
-    parser.add_argument("--meta-generations", type=int, default=5, help="Number of meta-generations (default: 5)")
-    parser.add_argument(
-        "--base-generations", type=int, default=20, help="Generations per base evolution run (default: 20)"
-    )
-    parser.add_argument(
-        "--meta-mutation-std",
-        type=float,
-        default=0.15,
-        help="Mutation std for meta-genome perturbation (default: 0.15)",
-    )
-    parser.add_argument(
-        "--meta-crossover-rate",
-        type=float,
-        default=0.3,
-        help="Crossover probability for meta-reproduction (default: 0.3)",
-    )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument("--meta-population", type=int, default=10,
+                        help="Number of meta-genomes in the population (default: 10)")
+    parser.add_argument("--meta-generations", type=int, default=5,
+                        help="Number of meta-generations (default: 5)")
+    parser.add_argument("--base-generations", type=int, default=20,
+                        help="Generations per base evolution run (default: 20)")
+    parser.add_argument("--meta-mutation-std", type=float, default=0.15,
+                        help="Mutation std for meta-genome perturbation (default: 0.15)")
+    parser.add_argument("--meta-crossover-rate", type=float, default=0.3,
+                        help="Crossover probability for meta-reproduction (default: 0.3)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed (default: 42)")
     args = parser.parse_args()
     return MetaEvolutionConfig(
         meta_population_size=args.meta_population,
@@ -698,7 +677,6 @@ def _parse_meta_args() -> MetaEvolutionConfig:
         meta_crossover_rate=args.meta_crossover_rate,
         seed=args.seed,
     )
-
 
 def _print_meta_results(engine: MetaEvolutionEngine, meta_summary: dict[str, Any]) -> None:
     """Print meta-evolution results to stdout."""
@@ -719,7 +697,6 @@ def _print_meta_results(engine: MetaEvolutionEngine, meta_summary: dict[str, Any
     print(f"  tournament_size: {best_evo_config.tournament_size}")
     print(f"  curriculum_stall_threshold: {best_evo_config.curriculum_stall_threshold}")
     print(f"  novelty_weight: {best_evo_config.novelty_weight:.4f}")
-
 
 def main() -> None:
     """Command-line entry point for the meta-evolution loop.

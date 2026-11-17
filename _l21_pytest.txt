@@ -1,0 +1,23 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.9, pytest-9.0.0, pluggy-1.5.0
+rootdir: c:\Users\reese\Projects\Evolution Engine
+configfile: pyproject.toml
+plugins: anyio-4.9.0, langsmith-0.4.42, libtmux-0.47.0, asyncio-1.4.0, cov-7.0.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 22 items
+
+tests\unit\test_collapse_reseed.py ....F.                                [ 27%]
+tests\unit\test_champion_bloat_guard.py .....                            [ 50%]
+tests\unit\test_clean_depth_escape.py ...                                [ 63%]
+tests\unit\test_epi_momentum_governor.py ........                        [100%]
+
+================================== FAILURES ===================================
+________________ test_collapse_reseed_on_l21_bloat_at_39_words ________________
+tests\unit\test_collapse_reseed.py:102: in test_collapse_reseed_on_l21_bloat_at_39_words
+    assert tick.get("reseed_level") == 21
+E   AssertionError: assert 20 == 21
+E    +  where 20 = <built-in method get of dict object at 0x0000022EEA307340>('reseed_level')
+E    +    where <built-in method get of dict object at 0x0000022EEA307340> = {'collapse_reseed': True, 'depth_nudge_level': 20, 'reseed_level': 20}.get
+=========================== short test summary info ===========================
+FAILED tests/unit/test_collapse_reseed.py::test_collapse_reseed_on_l21_bloat_at_39_words
+======================== 1 failed, 21 passed in 0.81s =========================

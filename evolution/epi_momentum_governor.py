@@ -350,7 +350,11 @@ def assess_epi_momentum(
         growth_gate_met=growth_gate_met,
         # Intervene only on recent weakness — do not reseed while the rolling
         # window is healthy even if older samples still drag the 1000-cycle avg down.
-        needs_intervention=(len(recent) >= min_recent and recent_avg <= target_avg and not recovering),
+        needs_intervention=(
+            len(recent) >= min_recent
+            and recent_avg <= target_avg
+            and not recovering
+        ),
     )
 
 
@@ -376,7 +380,9 @@ def apply_growth_interventions(project_root: str, report: EpiMomentumReport) -> 
         if should_suppress_register_repair(project_root, report):
             tick.pop("force_register_repair", None)
             tick.pop("epi_plateau_boost", None)
-        if not should_suppress_champion_reseed(project_root, report) and not tick.get("collapse_reseed"):
+        if not should_suppress_champion_reseed(project_root, report) and not tick.get(
+            "collapse_reseed"
+        ):
             tick["force_champion_reseed"] = True
             tick["force_reference_champion"] = True
             level = _latest_champion_level(project_root)
@@ -468,7 +474,9 @@ def scan_floor_length_prom_stalled(
     """True when promotion_raw is flat over recent cycles at the armed scan-floor length."""
     from evolution.terminal_stagnation import L30_COMPACT_MAX_WORDS
 
-    stall = min_cycles if min_cycles is not None else int(os.environ.get("EE_SCAN_FLOOR_LOCAL_STALL_CYCLES", "5"))
+    stall = min_cycles if min_cycles is not None else int(
+        os.environ.get("EE_SCAN_FLOOR_LOCAL_STALL_CYCLES", "5")
+    )
     eps = improvement_epsilon if improvement_epsilon is not None else CAPABILITY_STALL_EPSILON
     if stall <= 0 or floor_words <= 0:
         return False
@@ -582,7 +590,9 @@ def _certified_high_level_champion(project_root: str) -> bool:
         level = int(state.get("level", 0))
         verify = float(state.get("verify_score", 0.0))
         stall = max(2, int(state.get("cycles_at_level", 2)))
-        return level >= 20 and ProgressController.passes_certify_verify(level, verify, stall=stall, stall_threshold=2)
+        return level >= 20 and ProgressController.passes_certify_verify(
+            level, verify, stall=stall, stall_threshold=2
+        )
     except (OSError, json.JSONDecodeError, TypeError, ValueError, ImportError):
         return False
 
@@ -667,7 +677,9 @@ def _stable_nudge_champion(project_root: str) -> bool:
         cycles = max(1, int(state.get("cycles_at_level", 1)))
         if level < 20:
             return False
-        return nudge_verify_passes(level, verify, cycles) and nudge_fitness_passes(level, fitness, verify)
+        return nudge_verify_passes(level, verify, cycles) and nudge_fitness_passes(
+            level, fitness, verify
+        )
     except (OSError, json.JSONDecodeError, TypeError, ValueError, ImportError):
         return False
 
@@ -688,7 +700,9 @@ def _fresh_depth_hold(project_root: str) -> bool:
         fitness = float(state.get("champion_fitness", state.get("raw_fitness", 0.0)))
         if level < 22 or cycles > 2:
             return False
-        return verify >= depth_carry_verify_floor(level) and nudge_fitness_passes(level, fitness, verify)
+        return verify >= depth_carry_verify_floor(level) and nudge_fitness_passes(
+            level, fitness, verify
+        )
     except (OSError, json.JSONDecodeError, TypeError, ValueError, ImportError):
         return False
 
@@ -737,7 +751,10 @@ def assess_plateau_boost(project_root: str, report: EpiMomentumReport) -> Platea
         and report.recent_avg > report.target_avg
         and (
             streak >= PLATEAU_STREAK_THRESHOLD
-            or (report.avg_momentum < report.target_avg and incoming_avg < report.target_avg + 0.1)
+            or (
+                report.avg_momentum < report.target_avg
+                and incoming_avg < report.target_avg + 0.1
+            )
         )
     )
     return PlateauBoostReport(
@@ -775,7 +792,8 @@ def apply_plateau_boost(
 ) -> None:
     """Soft diversity boost at plateau; escalate to champion reseed on long negative streak."""
     if report is not None and (
-        _sustained_goal_recovery(project_root, report) or should_suppress_register_repair(project_root, report)
+        _sustained_goal_recovery(project_root, report)
+        or should_suppress_register_repair(project_root, report)
     ):
         clear_plateau_boost(project_root)
         os.environ.pop("EE_REGISTER_REPAIR_BOOST", None)
@@ -807,7 +825,9 @@ def run_cycle_governor(project_root: str) -> tuple[EpiMomentumReport, PlateauBoo
             os.environ["EE_REGISTER_REPAIR_BOOST"] = "1"
     else:
         clear_intervention_flags(project_root)
-        if _plateau_recovery_sustained(project_root, report) or _sustained_goal_recovery(project_root, report):
+        if _plateau_recovery_sustained(project_root, report) or _sustained_goal_recovery(
+            project_root, report
+        ):
             clear_plateau_boost(project_root)
         plateau_report = assess_plateau_boost(project_root, report)
         if plateau_report.needs_boost:

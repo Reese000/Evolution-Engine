@@ -5,19 +5,7 @@ import os
 
 import pytest
 
-
-def _live_60w_champion():
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    return [int(x, 16) for x in row["champion_program"]]
+from tests.live_results import live_champion_program, live_result_rows
 
 
 def test_archive_program_probes_gate_qualified(tmp_path, monkeypatch):
@@ -27,7 +15,7 @@ def test_archive_program_probes_gate_qualified(tmp_path, monkeypatch):
         terminal_archive_program_probe_variants,
     )
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     gate = get_scan_floor_gate(prog)
     alt = list(prog)
     alt[0] ^= 1
@@ -61,16 +49,16 @@ def test_deterministic_archive_crossover_rotates(tmp_path, monkeypatch):
         terminal_deterministic_archive_crossover_probe_variants,
     )
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     gate = get_scan_floor_gate(prog)
-    bb519_row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("cycle") == 5963 and candidate.get("champion_program"):
-            bb519_row = candidate
-            break
+    bb519_row = next(
+        (
+            candidate
+            for candidate in live_result_rows()
+            if candidate.get("cycle") == 5963 and candidate.get("champion_program")
+        ),
+        None,
+    )
     if bb519_row is None:
         pytest.skip("needs C5963 parent in jsonl")
     parent = [int(x, 16) for x in bb519_row["champion_program"]]
@@ -107,13 +95,10 @@ def test_archive_intercross_rotates_offsets(tmp_path, monkeypatch):
         terminal_archive_intercross_probe_variants,
     )
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     gate = get_scan_floor_gate(prog)
     parents: list[list[int]] = []
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
+    for candidate in live_result_rows():
         if candidate.get("final_level") != 30:
             continue
         if int(candidate.get("champion_words", 0)) != len(prog):
@@ -146,17 +131,7 @@ def test_archive_intercross_rotates_offsets(tmp_path, monkeypatch):
 def test_jsonl_archive_parents_include_historical_lineage():
     from evolution.champion_rollback import collect_jsonl_archive_parents
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
     parents = collect_jsonl_archive_parents("multi_cycle_results.jsonl", prog, 30, max_parents=12)
     assert parents
     assert all(len(p) == len(prog) for p in parents)
@@ -171,16 +146,7 @@ def test_archive_mutate_probes_from_jsonl_parent(tmp_path, monkeypatch):
         terminal_archive_mutate_probe_variants,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("cycle") == 5964:
-            row = candidate
-            break
+    row = next((candidate for candidate in live_result_rows() if candidate.get("cycle") == 5964), None)
     assert row is not None
     prog = [int(x, 16) for x in row["champion_program"]]
     parents = collect_jsonl_archive_parents("multi_cycle_results.jsonl", prog, 30, max_parents=12)
@@ -205,7 +171,7 @@ def test_archive_mutate_probes_from_jsonl_parent(tmp_path, monkeypatch):
 def test_scan_floor_probe_pool_returns_expanded_cycle_pool(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor, select_terminal_probes_for_batch
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     agents = tmp_path / ".agents"
     agents.mkdir()
     monkeypatch.setattr(
@@ -235,7 +201,7 @@ def test_scan_floor_capability_rank_budget_when_stalled(monkeypatch):
 def test_stalled_scan_floor_prioritizes_archive_before_wide_imm(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor, select_terminal_probes_for_batch
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     agents = tmp_path / ".agents"
     agents.mkdir()
     monkeypatch.setattr(
@@ -342,7 +308,7 @@ def test_stalled_scan_floor_prioritizes_archive_before_wide_imm(tmp_path, monkey
 def test_stalled_scan_floor_prioritizes_capability_before_wide_imm(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor, select_terminal_probes_for_batch
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     agents = tmp_path / ".agents"
     agents.mkdir()
     monkeypatch.setattr(
@@ -429,7 +395,7 @@ def test_archive_word_diff_probes_gate_qualified(tmp_path, monkeypatch):
         terminal_archive_word_diff_probe_variants,
     )
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     parents = collect_jsonl_archive_parents("multi_cycle_results.jsonl", prog, 30, max_parents=12)
     if not parents:
         pytest.skip("no jsonl archive parents")
@@ -458,7 +424,7 @@ def test_segment_archive_crossover_probes_gate_qualified(tmp_path, monkeypatch):
         terminal_segment_archive_crossover_probe_variants,
     )
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     parents = collect_jsonl_archive_parents("multi_cycle_results.jsonl", prog, 30, max_parents=12)
     if not parents:
         pytest.skip("no jsonl archive parents")
@@ -484,7 +450,7 @@ def test_scan_floor_model_guided_dual_slot_when_capability_stalled(tmp_path, mon
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor
     from evolution_engine import EvolutionConfig, EvolutionEngine
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     eng = EvolutionEngine(config=EvolutionConfig(max_level=30, model_guided_ratio=None))
     eng.champion = prog
     eng.champion_level = 30
@@ -535,7 +501,7 @@ def test_scan_floor_model_guided_fires_when_ratio_none(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor
     from evolution_engine import EvolutionConfig, EvolutionEngine
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     eng = EvolutionEngine(config=EvolutionConfig(max_level=30, model_guided_ratio=None))
     eng.champion = prog
     eng.champion_level = 30
@@ -576,7 +542,7 @@ def test_replace_with_model_guided_mutates_live_challengers():
 
     from evolution_engine import EvolutionConfig, EvolutionEngine
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     eng = EvolutionEngine(config=EvolutionConfig(max_level=30, model_guided_ratio=0.2))
     eng.champion = prog
     eng.champion_level = 30
@@ -609,7 +575,7 @@ def test_terminal_tail_wide_imm_respects_min_position():
         terminal_tail_wide_imm_probe_variants,
     )
 
-    prog = _live_60w_champion()[:48]
+    prog = live_champion_program(60)[:48]
     if prog[-1] != 0x00100073:
         prog = prog[:47] + [0x00100073]
     gate = get_scan_floor_gate(prog)
@@ -693,7 +659,7 @@ def test_scan_floor_growth_compress_drop_qualifies_equal_length_requires_gate(mo
 def test_terminal_dual_imm_probe_variants_smoke():
     from evolution.terminal_stagnation import get_scan_floor_gate, terminal_dual_imm_probe_variants
 
-    champ = _live_60w_champion()[:48]
+    champ = live_champion_program(60)[:48]
     if champ[-1] != 0x00100073:
         champ = champ[:47] + [0x00100073]
     gate = get_scan_floor_gate(champ)
@@ -1352,7 +1318,7 @@ def test_compress_growth_probe_pool_frontloads_equal_length(monkeypatch):
 def test_scan_floor_growth_completion_qualifies_equal_length():
     from evolution.mutation_helpers import scan_floor_growth_completion_qualifies, scan_floor_growth_heldout_qualifies
 
-    champ = _live_60w_champion()[:48]
+    champ = live_champion_program(60)[:48]
     if champ[-1] != 0x00100073:
         champ = champ[:47] + [0x00100073]
 
@@ -1367,7 +1333,7 @@ def test_scan_floor_growth_completion_qualifies_equal_length():
 def test_compress_model_guided_growth_candidate_prefers_shorter(monkeypatch):
     from evolution.mutation_helpers import compress_model_guided_growth_candidate
 
-    champ = _live_60w_champion()[:48]
+    champ = live_champion_program(60)[:48]
     if champ[-1] != 0x00100073:
         champ = champ[:47] + [0x00100073]
     grown = list(champ) + [champ[1]]
@@ -2086,6 +2052,7 @@ def test_ranked_compression_skips_rebuild_between_rescans(tmp_path, monkeypatch)
     from evolution.terminal_stagnation import (
         ranked_scan_floor_compression_variants,
         record_terminal_efficiency_scan_floor,
+        terminal_efficiency_at_scan_floor,
     )
 
     prog = [0x11111111] * 48
@@ -2104,6 +2071,16 @@ def test_ranked_compression_skips_rebuild_between_rescans(tmp_path, monkeypatch)
         lambda _w: False,
     )
     record_terminal_efficiency_scan_floor(6543, 48, 1.0)
+    # Precondition: the cycle-gating branch below is only taken when this record
+    # reached disk. If the progress-state write is lost, every call rebuilds and
+    # the failure surfaces as a misleading `assert 2 == 1` on the second call —
+    # that signature was observed once (2026-09-30 full-file run under heavy
+    # load) and fault injection reproduces it exactly, but causation for that
+    # particular run is not proven. _patch_progress_state now retries its write.
+    assert terminal_efficiency_at_scan_floor(48), (
+        "scan-floor record did not persist to "
+        f"{agents / 'progress_controller_state.json'}"
+    )
     calls = {"n": 0}
 
     def _fake_ranked(key):
@@ -2187,8 +2164,6 @@ def test_terminal_efficiency_promote_skip_quiescent_when_compression_hot(monkeyp
 
 
 def test_at_floor_compression_rank_finds_shorter_candidates(monkeypatch):
-    import json
-    import os
 
     from evolution.terminal_stagnation import (
         _ranked_scan_floor_compression_variants_cached,
@@ -2196,13 +2171,8 @@ def test_at_floor_compression_rank_finds_shorter_candidates(monkeypatch):
         scan_floor_compression_promote_qualifies,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
     row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
+    for candidate in live_result_rows():
         if (
             candidate.get("champion_words") == 59
             and candidate.get("final_level") == 30
@@ -2298,7 +2268,7 @@ def test_archive_consensus_graft_probe_variants(tmp_path, monkeypatch):
         terminal_archive_consensus_graft_probe_variants,
     )
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     gate = get_scan_floor_gate(prog)
     parent_a = list(prog)
     parent_b = list(prog)
@@ -2333,7 +2303,7 @@ def test_terminal_probe_pool_includes_archive_parents(tmp_path, monkeypatch):
     from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor
     from evolution_engine import EvolutionConfig, EvolutionEngine
 
-    prog = _live_60w_champion()
+    prog = live_champion_program(60)
     eng = EvolutionEngine(config=EvolutionConfig(max_level=30))
     eng.champion = prog
     eng.champion_level = 30
@@ -2511,10 +2481,7 @@ def test_compact_l30_isolates_champion_state():
     from evolution.fitness_helpers import _isolate_capability_score_engine, decode_program_words
 
     row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
+    for candidate in live_result_rows():
         if candidate.get("final_level") == 30 and candidate.get("champion_program"):
             row = candidate
     assert row is not None
@@ -2634,3 +2601,192 @@ def test_segment_probe_uses_gate_repair(monkeypatch):
         max_span=1,
     )
     assert repaired in out
+
+
+def _valid_archive_line(sha: str) -> str:
+    """One JSONL row carrying every ChampionEntry field (what save() writes)."""
+    return json.dumps(
+        {
+            "program": [0, 1],
+            "program_hex": ["0x00000000", "0x00000001"],
+            "level": 1,
+            "fitness": 0.5,
+            "cycle": 1,
+            "generation": 1,
+            "instructions_count": 2,
+            "sha256": sha,
+            "trace_status": "ok",
+            "task_score": 1.0,
+            "timestamp": 0.0,
+        }
+    )
+
+
+def test_champion_archive_load_skips_bad_lines_keeps_good_ones(tmp_path):
+    """EE-W1b-FU: a malformed / non-UTF8 row must not crash or truncate the load.
+
+    ChampionArchive.__init__ is called unguarded from evolution_engine, so any
+    exception out of _load aborts an evolution cycle. Each bad row has to be
+    dropped on its own while the surrounding valid rows still load.
+    """
+    from champion_archive import ChampionArchive
+
+    first = _valid_archive_line("sha_first")
+    second = _valid_archive_line("sha_second")
+    payload = b"".join(
+        [
+            (first + "\n").encode(),
+            # missing required dataclass fields -> ChampionEntry.__init__ TypeError
+            b'{"level":1,"fitness":0.5}\n',
+            # truncated JSON -> json.JSONDecodeError
+            b'{"program": [0, }\n',
+            # non-UTF8 bytes -> UnicodeDecodeError while iterating the file
+            b"\xff\xfe\x00not utf-8 at all\n",
+            (second + "\n").encode(),
+        ]
+    )
+    path = tmp_path / "archive.jsonl"
+    path.write_bytes(payload)
+
+    archive = ChampionArchive(path=str(path))  # must not raise
+
+    assert {e.sha256 for e in archive.entries} == {"sha_first", "sha_second"}
+    # exactly the three damaged rows were rejected, nothing else
+    assert archive._load_skipped == 3
+
+
+def test_champion_archive_load_tolerates_missing_archive_file(tmp_path):
+    """A not-yet-created archive is a normal cold-start state, not an error."""
+    from champion_archive import ChampionArchive
+
+    archive = ChampionArchive(path=str(tmp_path / "nope.jsonl"))
+
+    assert archive.entries == []
+    assert archive._load_skipped == 0
+
+
+def test_champion_archive_load_swallows_io_error(tmp_path, monkeypatch):
+    """The OSError guard must still absorb read failures (locked/permission)."""
+    import champion_archive as ca
+
+    path = tmp_path / "archive.jsonl"
+    path.write_bytes((_valid_archive_line("sha_io") + "\n").encode())
+
+    def _denied(*args, **kwargs):
+        raise PermissionError("archive is locked")
+
+    monkeypatch.setattr(ca, "open", _denied, raising=False)
+
+    archive = ca.ChampionArchive(path=str(path))
+
+    assert archive.entries == []
+    # rows the loader never reached are unknowable, so they are not counted
+    assert archive._load_skipped == 0
+
+
+def test_champion_archive_load_skips_unusable_field_types(tmp_path):
+    """Rows that parse as JSON but carry unusable field types must be skipped too.
+
+    Adversarial follow-up to test_champion_archive_load_skips_bad_lines_keeps_good_ones:
+    a list-valued sha256 (unhashable in the dedup set), a null fitness (breaks the
+    tier sort in _update_tiers, i.e. after _load returned), a non-list program and an
+    absurdly nested row (RecursionError inside json.loads) all parse cleanly, so each
+    needs its own guard instead of escaping the per-line handler.
+    """
+    from champion_archive import ChampionArchive
+
+    first = _valid_archive_line("sha_first")
+    second = _valid_archive_line("sha_second")
+    unhashable_sha = (
+        '{"program":[0,1],"program_hex":["0x00000000"],"level":1,"fitness":0.5,'
+        '"cycle":1,"generation":1,"instructions_count":2,"sha256":[]}'
+    )
+    null_fitness = (
+        '{"program":[0,1],"program_hex":["0x00000000"],"level":1,"fitness":null,'
+        '"cycle":1,"generation":1,"instructions_count":2,"sha256":"sha_null"}'
+    )
+    not_a_list = (
+        '{"program":"not-a-list","program_hex":["0x00000000"],"level":1,"fitness":0.5,'
+        '"cycle":1,"generation":1,"instructions_count":2,"sha256":"sha_nolist"}'
+    )
+    payload = b"".join(
+        [
+            (first + "\n").encode(),
+            (unhashable_sha + "\n").encode(),
+            (null_fitness + "\n").encode(),
+            (not_a_list + "\n").encode(),
+            # pathological nesting -> RecursionError inside json.loads
+            b"[" * 1200 + b"]" * 1200 + b"\n",
+            (second + "\n").encode(),
+        ]
+    )
+    path = tmp_path / "archive.jsonl"
+    path.write_bytes(payload)
+
+    archive = ChampionArchive(path=str(path))  # must not raise
+
+    assert {e.sha256 for e in archive.entries} == {"sha_first", "sha_second"}
+    # unhashable sha256, null fitness, non-list program and the nested row -> 4 skips
+    assert archive._load_skipped == 4
+
+
+def test_champion_archive_load_reads_first_row_after_utf8_bom(tmp_path):
+    """EE-W1b-FU3: a "UTF-8 with BOM" re-save must not lose the first archive row.
+
+    With plain ``utf-8`` the BOM stays inside the first line, json.loads rejects
+    it and the row silently vanishes (pre-fix: entries == [], _load_skipped == 1).
+    ``utf-8-sig`` strips a leading BOM and decodes BOM-less UTF-8 byte-for-byte
+    identically, so the no-BOM control below pins it down as a strict superset.
+    """
+    from champion_archive import ChampionArchive
+
+    row = _valid_archive_line("sha_bom")
+    path = tmp_path / "archive.jsonl"
+    path.write_bytes(b"\xef\xbb\xbf" + (row + "\n").encode("utf-8"))
+
+    # control: the raw first line really is unparseable as JSON
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(path.read_bytes().decode("utf-8").splitlines()[0])
+
+    archive = ChampionArchive(path=str(path))  # must not raise
+    assert [e.sha256 for e in archive.entries] == ["sha_bom"]
+    assert archive._load_skipped == 0
+
+    plain = tmp_path / "plain.jsonl"
+    plain.write_bytes((row + "\n").encode("utf-8"))
+    no_bom = ChampionArchive(path=str(plain))
+    assert [e.sha256 for e in no_bom.entries] == ["sha_bom"]
+    assert no_bom._load_skipped == 0
+
+
+def test_champion_archive_load_counts_a_mid_file_bom_row_as_skipped(tmp_path):
+    """Boundary of the BOM fix: only a BOM at the start of the file is stripped.
+
+    A BOM anywhere else corrupts that one row (json.loads sees a \ufeff prefix),
+    which must land in ``_load_skipped`` -- counted, not silently loaded -- while
+    the rows around it still come through.
+
+    Characterisation test: it passes on the pre-fix loader too (the per-line
+    JSONDecodeError guard already existed), so it pins where the fix stops
+    rather than proving the fix -- unlike
+    ``test_champion_archive_load_reads_first_row_after_utf8_bom`` above, which
+    fails before the utf-8-sig change.
+    """
+    from champion_archive import ChampionArchive
+
+    first = _valid_archive_line("sha_first")
+    second = _valid_archive_line("sha_second")
+    path = tmp_path / "archive.jsonl"
+    path.write_bytes(
+        b"".join(
+            [
+                (first + "\n").encode("utf-8"),
+                b"\xef\xbb\xbf",
+                (second + "\n").encode("utf-8"),
+            ]
+        )
+    )
+
+    archive = ChampionArchive(path=str(path))  # must not raise
+    assert [e.sha256 for e in archive.entries] == ["sha_first"]
+    assert archive._load_skipped == 1

@@ -8,8 +8,6 @@ Tests:
 4. Full evolution cycle: champion quality improves over generations
 """
 
-import math
-import os
 import sys
 
 from paths import ensure_project_on_path
@@ -28,7 +26,7 @@ def verify_mutation_scheduler():
         mutation_schedule_generations=200,
         use_gpu=False,
     )
-    engine = EvolutionEngine(config=cfg)
+    EvolutionEngine(config=cfg)
 
     # Simulate the scheduler logic for various generation points
     gens_to_check = [0, 50, 100, 150, 200, 300]
@@ -94,7 +92,7 @@ def verify_tournament_selection():
         tournament_size=3,
         use_gpu=False,
     )
-    engine = EvolutionEngine(config=cfg)
+    EvolutionEngine(config=cfg)
 
     # Verify elite_size calculation
     elite_size = max(1, int(cfg.population_size * cfg.elite_ratio))
@@ -141,7 +139,7 @@ def verify_model_guided_ratio():
         model_guided_ratio_high=0.6,
         use_gpu=False,
     )
-    engine = EvolutionEngine(config=cfg)
+    EvolutionEngine(config=cfg)
 
     print("=== Model-Guided Ratio (Level-Adaptive) ===")
     test_levels = [
@@ -233,7 +231,7 @@ if __name__ == "__main__":
         try:
             fn()
             print(f"[PASS] {name}\n")
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError) as e:
             print(f"[FAIL] {name}: {e}\n")
             failures += 1
 

@@ -335,9 +335,7 @@ class TestTestSuiteHealth:
                         with open(fpath, encoding="utf-8") as f:
                             tree = ast.parse(f.read(), filename=fpath)
                         for node in ast.walk(tree):
-                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
-                                "test_"
-                            ):
+                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
                                 count += 1
                     except SyntaxError:
                         pass  # syntax errors caught separately

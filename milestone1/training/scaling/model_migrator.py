@@ -18,7 +18,6 @@ learned representations.
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
 
 import torch
 from torch import nn
@@ -122,7 +121,7 @@ class ModelMigrator:
                 ),
             )
 
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.error(f"Migration failed: {e}")
             return MigrationResult(
                 success=False,

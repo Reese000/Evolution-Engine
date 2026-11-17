@@ -28,7 +28,9 @@ def row_needs_certified_backfill(
     verify = float(row.get("champion_verify_score", 0.0))
     fit = float(row.get("final_fitness", 0.0))
     row_prog = row.get("champion_program")
-    same_certified_prog = isinstance(row_prog, list) and certified_prog_key and tuple(row_prog) == certified_prog_key
+    same_certified_prog = (
+        isinstance(row_prog, list) and certified_prog_key and tuple(row_prog) == certified_prog_key
+    )
     misreported_fit = same_certified_prog and fit < certified_fit - 1.0
     misreported_verify = same_certified_prog and verify < certified_verify - 1e-6
     return misreported_verify or misreported_fit
@@ -46,7 +48,9 @@ def count_misreported_rows(
         return 0
     from evolution.champion_rollback import find_best_certified_champion
 
-    clean = find_best_certified_champion(results, min_level, min_verify=0.99, min_fitness=100.0)
+    clean = find_best_certified_champion(
+        results, min_level, min_verify=0.99, min_fitness=100.0
+    )
     if not clean:
         return 0
     certified_prog_key = tuple(clean.get("champion_program") or [])
@@ -95,7 +99,9 @@ def backfill_misreported_certified_metrics(
 
     from evolution.champion_rollback import find_best_certified_champion
 
-    clean = find_best_certified_champion(results, min_level, min_verify=0.99, min_fitness=100.0)
+    clean = find_best_certified_champion(
+        results, min_level, min_verify=0.99, min_fitness=100.0
+    )
     if not clean:
         summary["reason"] = "no_certified_champion"
         return summary

@@ -4,7 +4,6 @@ Phase 1: Trend analysis and saturation detection types.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 
 @dataclass

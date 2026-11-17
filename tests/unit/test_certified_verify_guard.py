@@ -22,15 +22,12 @@ def test_equal_verify_fitness_upgrade_allowed_when_gain_exceeds_one():
 def test_verify_regression_rollback_sensitive_at_one(tmp_path):
     from evolution.champion_rollback import flag_verify_regression_rollback
 
-    assert (
-        flag_verify_regression_rollback(
-            str(tmp_path),
-            level=30,
-            prev_verify=1.0,
-            prev_program=[1, 2],
-            prev_cycle=3511,
-            current_verify=0.842,
-            min_drop=0.03,
-        )
-        is True
-    )
+    assert flag_verify_regression_rollback(
+        str(tmp_path),
+        level=30,
+        prev_verify=1.0,
+        prev_program=[1, 2],
+        prev_cycle=3511,
+        current_verify=0.842,
+        min_drop=0.03,
+    ) is True

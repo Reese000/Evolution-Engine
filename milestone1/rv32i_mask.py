@@ -17,7 +17,7 @@ Exports:
     Opcode         -- opcode constants
 """
 
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import NamedTuple
 
 # =====================================================================
 #  CONSTANTS
@@ -456,5 +456,5 @@ def is_valid(word: int) -> bool:
     try:
         result = decode(word, validate=False)
         return result is not None
-    except Exception:
+    except (ValueError, TypeError, KeyError):
         return False

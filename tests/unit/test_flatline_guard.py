@@ -7,7 +7,11 @@ import os
 import tempfile
 import unittest
 
-from evolution.flatline_guard import apply_flatline_halt, assess_flatline, is_flatline_halted
+from evolution.flatline_guard import (
+    apply_flatline_halt,
+    assess_flatline,
+    is_flatline_halted,
+)
 
 
 def _write_flat_trajectory(agents_dir: str, n: int = 35) -> None:
@@ -78,6 +82,7 @@ class TestFlatlineGuard(unittest.TestCase):
             self.assertFalse(tick.get("evolution_paused"))
             self.assertTrue(tick.get("flatline_advisory"))
             self.assertTrue(tick["flatline_halted"])
+
 
     def test_certified_l30_plateau_does_not_halt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,7 +1,7 @@
 """Batch VM must match scalar eval when a spinner shares the batch."""
 
-from gpu_vm_farm import _execute_vm, _execute_vm_batch_numpy
 from mutation_proposer import EBREAK, make_rv32i
+from gpu_vm_farm import _execute_vm, _execute_vm_batch_numpy
 
 
 def test_spinner_does_not_change_linear_result():
@@ -42,7 +42,9 @@ def test_two_insn_spinner_timeout_matches_scalar():
     assert batch[1]["cycles"] == budget
     assert batch[1]["cycles"] == scalar["cycles"]
     assert batch[1]["registers"] == scalar["registers"]
-    assert batch[0]["registers"] == _execute_vm(linear, inputs["registers"], inputs["memory"], budget)["registers"]
+    assert batch[0]["registers"] == _execute_vm(
+        linear, inputs["registers"], inputs["memory"], budget
+    )["registers"]
 
 
 def test_six_insn_x0_spin_timeouts_without_scalar_replay():
@@ -154,7 +156,9 @@ def test_long_mutant_does_not_change_short_result():
     long_halt = [make_rv32i("ADDI", rd=5, rs1=1, imm=7)] + [0] * 200 + [EBREAK]
     inputs = {"registers": {1: 3, 2: 5}, "memory": {}}
     budget = 4000
-    batch = _execute_vm_batch_numpy([linear, long_spin, long_halt], [inputs, inputs, inputs], budget)
+    batch = _execute_vm_batch_numpy(
+        [linear, long_spin, long_halt], [inputs, inputs, inputs], budget
+    )
     scalar = _execute_vm(linear, inputs["registers"], inputs["memory"], budget)
     assert batch[0]["registers"] == scalar["registers"]
     assert batch[0]["cycles"] == scalar["cycles"]

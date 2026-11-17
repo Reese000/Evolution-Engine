@@ -16,13 +16,13 @@ Covers:
 """
 
 import os
-import sys
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 try:
     import log_rotation
+
     _has_log_rotation = True
 except ImportError:
     _has_log_rotation = False
@@ -361,6 +361,7 @@ class TestExecCreditBudgetDenominator:
         import random
 
         from evolution_engine import EvolutionConfig, EvolutionEngine
+
         cfg = EvolutionConfig(eval_budget=1000, max_bonus_fraction=1.0)
         engine = EvolutionEngine(config=cfg, rng=random.Random(42), vm_farm=MagicMock())
         engine.task_instance = {

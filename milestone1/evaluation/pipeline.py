@@ -33,7 +33,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import torch
@@ -43,11 +43,12 @@ _MILESTONE1_DIR = str(Path(__file__).resolve().parent.parent)
 if _MILESTONE1_DIR not in sys.path:
     sys.path.insert(0, _MILESTONE1_DIR)
 
-from rv32i_model import RV32IFieldTokenizer, RV32ITransformer, RV32IVocab, compute_loss
+from rv32i_model import RV32IFieldTokenizer, RV32ITransformer, RV32IVocab
 
 # ==================================================================
 #  EvalResult — frozen-ish container for one evaluation run
 # ==================================================================
+
 
 @dataclass
 class EvalResult:
@@ -101,6 +102,7 @@ class EvalResult:
 # ==================================================================
 #  MetricsCollector — thread-safe latency / throughput accumulator
 # ==================================================================
+
 
 class MetricsCollector:
     """Collects per-inference timing and throughput samples.
@@ -203,6 +205,7 @@ class MetricsCollector:
 #  EvaluationManager — main evaluation orchestrator
 # ==================================================================
 
+
 class EvaluationManager:
     """Runs quality and performance evaluations on an RV32I transformer.
 
@@ -254,18 +257,15 @@ class EvaluationManager:
         # Pad all sequences to the same length
         max_len = max(len(seq) for seq in eval_data)
         vocab = RV32IVocab
-        padded = [
-            seq + [vocab.PAD] * (max_len - len(seq))
-            for seq in eval_data
-        ]
+        padded = [seq + [vocab.PAD] * (max_len - len(seq)) for seq in eval_data]
 
         input_ids = torch.tensor(padded, dtype=torch.long, device=self.device)
         num_samples = len(eval_data)
 
         total_loss = 0.0
-        total_tokens = 0        # non-PAD tokens in labels
-        correct_tokens = 0      # argmax matches (all non-PAD)
-        masked_correct = 0      # argmax matches (non-PAD, non-special)
+        total_tokens = 0  # non-PAD tokens in labels
+        correct_tokens = 0  # argmax matches (all non-PAD)
+        masked_correct = 0  # argmax matches (non-PAD, non-special)
         masked_total = 0
 
         with torch.no_grad():
@@ -291,7 +291,7 @@ class EvaluationManager:
                 )  # (B*T,)
 
                 # Build active mask (non-PAD positions)
-                active = (shift_labels.view(-1) != vocab.PAD)
+                active = shift_labels.view(-1) != vocab.PAD
                 batch_loss = loss_per_token[active].sum().item()
                 batch_count = active.sum().item()
 
@@ -306,7 +306,11 @@ class EvaluationManager:
                 # Masked accuracy: exclude PAD *and* special tokens from
                 # denominator so we measure only real instruction fields
                 special_ids = {
-                    vocab.PAD, vocab.SEP, vocab.CLS, vocab.MASK, vocab.NO_REG,
+                    vocab.PAD,
+                    vocab.SEP,
+                    vocab.CLS,
+                    vocab.MASK,
+                    vocab.NO_REG,
                 }
                 real_mask = active.view(B, T)
                 for sid in special_ids:
@@ -320,12 +324,13 @@ class EvaluationManager:
         accuracy = correct_tokens / max(total_tokens, 1)
         masked_acc = masked_correct / max(masked_total, 1)
 
-        print(f"[Eval]   loss={avg_loss:.4f}  perplexity={perplexity:.2f}  "
-              f"accuracy={accuracy:.4f}  masked_accuracy={masked_acc:.4f}")
+        print(
+            f"[Eval]   loss={avg_loss:.4f}  perplexity={perplexity:.2f}  "
+            f"accuracy={accuracy:.4f}  masked_accuracy={masked_acc:.4f}"
+        )
 
         # GPU memory snapshot
         gpu_mem = 0.0
-        gpu_util = 0.0
         if self.device.type == "cuda":
             gpu_mem = torch.cuda.max_memory_allocated(self.device) / (1024 * 1024)
 
@@ -364,8 +369,7 @@ class EvaluationManager:
         if prompt_lengths is None:
             prompt_lengths = [9, 18, 36, 72]
 
-        print(f"[Eval] Performance evaluation: {num_samples} samples, "
-              f"prompt_lengths={prompt_lengths}")
+        print(f"[Eval] Performance evaluation: {num_samples} samples, " f"prompt_lengths={prompt_lengths}")
         self.model.eval()
         self.metrics.reset()
 
@@ -376,8 +380,11 @@ class EvaluationManager:
         # Warmup run to stabilise GPU clocks
         warmup_len = prompt_lengths[0]
         warmup_ids = torch.randint(
-            token_pool[0], token_pool[-1] + 1,
-            (1, warmup_len), device=self.device, dtype=torch.long,
+            token_pool[0],
+            token_pool[-1] + 1,
+            (1, warmup_len),
+            device=self.device,
+            dtype=torch.long,
         )
         with torch.no_grad():
             self.model.generate(warmup_ids, max_new_tokens=9, temperature=0.0)
@@ -393,8 +400,11 @@ class EvaluationManager:
         for i in range(num_samples):
             plen = prompt_lengths[i % len(prompt_lengths)]
             prompt = torch.randint(
-                token_pool[0], token_pool[-1] + 1,
-                (1, plen), device=self.device, dtype=torch.long,
+                token_pool[0],
+                token_pool[-1] + 1,
+                (1, plen),
+                device=self.device,
+                dtype=torch.long,
             )
 
             if self.device.type == "cuda":
@@ -403,7 +413,9 @@ class EvaluationManager:
             t0 = time.perf_counter()
             with torch.no_grad():
                 output = self.model.generate(
-                    prompt, max_new_tokens=9, temperature=0.0,
+                    prompt,
+                    max_new_tokens=9,
+                    temperature=0.0,
                 )
             if self.device.type == "cuda":
                 torch.cuda.synchronize(self.device)
@@ -433,8 +445,7 @@ class EvaluationManager:
         if self.device.type == "cuda":
             # Approximate: total inference wall time / total elapsed time
             total_inference_sec = sum(
-                s / 1000.0 for s in
-                [self.metrics._latencies_ms[j] for j in range(len(self.metrics._latencies_ms))]
+                s / 1000.0 for s in [self.metrics._latencies_ms[j] for j in range(len(self.metrics._latencies_ms))]
             )
             # Use a rough wall clock from the loop
             gpu_util = min(100.0, (total_inference_sec / max(total_inference_sec, 0.001)) * 100)
@@ -459,8 +470,10 @@ class EvaluationManager:
             },
         )
 
-        print(f"[Eval]   p50={summary['p50_ms']:.1f}ms  p95={summary['p95_ms']:.1f}ms  "
-              f"p99={summary['p99_ms']:.1f}ms  throughput={summary['throughput_tps']:.0f} tok/s")
+        print(
+            f"[Eval]   p50={summary['p50_ms']:.1f}ms  p95={summary['p95_ms']:.1f}ms  "
+            f"p99={summary['p99_ms']:.1f}ms  throughput={summary['throughput_tps']:.0f} tok/s"
+        )
 
         return result
 
@@ -495,37 +508,29 @@ class EvaluationManager:
         mem_score = 0.0
         per_level: dict[str, float] = {}
         if recurrent_data_path and os.path.isfile(recurrent_data_path):
-            gen_score, mem_score, per_level = self._evaluate_generalisation(
-                recurrent_data_path
-            )
+            gen_score, mem_score, per_level = self._evaluate_generalisation(recurrent_data_path)
 
         # --- Merge ---
         combined = EvalResult(
             timestamp=datetime.now(timezone.utc).isoformat(),
             model_path=quality_result.extra.get("model_path", ""),
-
             # Quality
             loss=quality_result.loss,
             perplexity=quality_result.perplexity,
             accuracy=quality_result.accuracy,
             masked_accuracy=quality_result.masked_accuracy,
-
             # Performance
             latency_p50_ms=perf_result.latency_p50_ms,
             latency_p95_ms=perf_result.latency_p95_ms,
             latency_p99_ms=perf_result.latency_p99_ms,
             throughput_tokens_per_sec=perf_result.throughput_tokens_per_sec,
-
             # Generalisation
             memorization_score=mem_score,
             generalization_score=gen_score,
             per_level_generalization=per_level,
-
             # Hardware
-            gpu_memory_used_mb=max(quality_result.gpu_memory_used_mb,
-                                   perf_result.gpu_memory_used_mb),
+            gpu_memory_used_mb=max(quality_result.gpu_memory_used_mb, perf_result.gpu_memory_used_mb),
             gpu_utilization_pct=perf_result.gpu_utilization_pct,
-
             # Dataset
             dataset_size=quality_result.dataset_size,
             num_samples=quality_result.num_samples,
@@ -536,8 +541,10 @@ class EvaluationManager:
         )
 
         print("[Eval] ===== Full Evaluation Complete =====")
-        print(f"[Eval]   loss={combined.loss:.4f}  ppl={combined.perplexity:.2f}  "
-              f"acc={combined.accuracy:.4f}  p50={combined.latency_p50_ms:.1f}ms")
+        print(
+            f"[Eval]   loss={combined.loss:.4f}  ppl={combined.perplexity:.2f}  "
+            f"acc={combined.accuracy:.4f}  p50={combined.latency_p50_ms:.1f}ms"
+        )
 
         return combined
 
@@ -560,7 +567,11 @@ class EvaluationManager:
         print(f"[Eval] Generalisation eval from {recurrent_data_path}")
 
         level_data: dict[str, list[list[int]]] = {}
-        with open(recurrent_data_path, "r") as f:
+        # UTF-8 + errors="replace": this reads whatever recurrent_data_path the
+        # caller passes (a recurrent_data.jsonl when one is passed; the argument
+        # is optional and no in-repo caller passes it today) and no handler here
+        # catches UnicodeDecodeError, so a torn row degrades to skipped lines.
+        with open(recurrent_data_path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -596,8 +607,10 @@ class EvaluationManager:
         non_train = {k: v for k, v in per_level.items() if k not in ("L0", "train")}
         gen_score = float(np.mean(list(non_train.values()))) if non_train else 0.0
 
-        print(f"[Eval]   memorisation={mem_score:.4f}  generalisation={gen_score:.4f}  "
-              f"levels={list(per_level.keys())}")
+        print(
+            f"[Eval]   memorisation={mem_score:.4f}  generalisation={gen_score:.4f}  "
+            f"levels={list(per_level.keys())}"
+        )
 
         return gen_score, mem_score, per_level
 
@@ -638,6 +651,7 @@ class EvaluationManager:
 # ==================================================================
 #  ReportGenerator — markdown report output
 # ==================================================================
+
 
 class ReportGenerator:
     """Generates markdown evaluation reports.
@@ -718,12 +732,12 @@ class ReportGenerator:
                 ("Accuracy", previous.accuracy, latest.accuracy, False),
                 ("Masked Accuracy", previous.masked_accuracy, latest.masked_accuracy, False),
                 ("Latency P50 (ms)", previous.latency_p50_ms, latest.latency_p50_ms, True),
-                ("Throughput (tok/s)", previous.throughput_tokens_per_sec,
-                 latest.throughput_tokens_per_sec, False),
+                ("Throughput (tok/s)", previous.throughput_tokens_per_sec, latest.throughput_tokens_per_sec, False),
             ]
             for name, prev_val, curr_val, lib in trend_rows:
-                lines.append(f"| {name} | {prev_val:.4f} | {curr_val:.4f} | "
-                             f"{_delta_str(prev_val, curr_val, lib)} |")
+                lines.append(
+                    f"| {name} | {prev_val:.4f} | {curr_val:.4f} | " f"{_delta_str(prev_val, curr_val, lib)} |"
+                )
             lines.append("")
 
         # --- Best ever ---
@@ -734,7 +748,11 @@ class ReportGenerator:
         best_ppl = min(r.perplexity for r in history)
         best_acc = max(r.accuracy for r in history)
         best_masked = max(r.masked_accuracy for r in history)
-        best_latency = min(r.latency_p50_ms for r in history if r.latency_p50_ms > 0) if any(r.latency_p50_ms > 0 for r in history) else 0.0
+        best_latency = (
+            min(r.latency_p50_ms for r in history if r.latency_p50_ms > 0)
+            if any(r.latency_p50_ms > 0 for r in history)
+            else 0.0
+        )
         best_throughput = max(r.throughput_tokens_per_sec for r in history)
 
         lines.append("| Metric | Best Value | Run |")
@@ -751,10 +769,16 @@ class ReportGenerator:
         lines.append(f"| Loss | {best_loss:.4f} | {_find_run(lambda r: r.loss == best_loss, 'loss')} |")
         lines.append(f"| Perplexity | {best_ppl:.2f} | {_find_run(lambda r: r.perplexity == best_ppl, 'perplexity')} |")
         lines.append(f"| Accuracy | {best_acc:.4f} | {_find_run(lambda r: r.accuracy == best_acc, 'accuracy')} |")
-        lines.append(f"| Masked Accuracy | {best_masked:.4f} | {_find_run(lambda r: r.masked_accuracy == best_masked, 'masked_accuracy')} |")
+        lines.append(
+            f"| Masked Accuracy | {best_masked:.4f} | {_find_run(lambda r: r.masked_accuracy == best_masked, 'masked_accuracy')} |"
+        )
         if best_latency > 0:
-            lines.append(f"| Latency P50 | {best_latency:.1f} ms | {_find_run(lambda r: r.latency_p50_ms == best_latency, 'latency_p50_ms')} |")
-        lines.append(f"| Throughput | {best_throughput:.0f} tok/s | {_find_run(lambda r: r.throughput_tokens_per_sec == best_throughput, 'throughput_tokens_per_sec')} |")
+            lines.append(
+                f"| Latency P50 | {best_latency:.1f} ms | {_find_run(lambda r: r.latency_p50_ms == best_latency, 'latency_p50_ms')} |"
+            )
+        lines.append(
+            f"| Throughput | {best_throughput:.0f} tok/s | {_find_run(lambda r: r.throughput_tokens_per_sec == best_throughput, 'throughput_tokens_per_sec')} |"
+        )
         lines.append("")
 
         # --- Generalisation (if present) ---
@@ -879,6 +903,7 @@ class ReportGenerator:
 #  Self-test
 # ==================================================================
 
+
 def _self_test():
     """Quick smoke test for the evaluation pipeline."""
     import tempfile
@@ -893,8 +918,12 @@ def _self_test():
     # Build a small model for testing
     model = RV32ITransformer(
         vocab_size=RV32IVocab.VOCAB_SIZE,
-        d_model=128, n_layers=2, n_heads=4, d_ff=256,
-        max_seq_len=256, dropout=0.0,
+        d_model=128,
+        n_layers=2,
+        n_heads=4,
+        d_ff=256,
+        max_seq_len=256,
+        dropout=0.0,
     )
     model.to(device)
     model.eval()

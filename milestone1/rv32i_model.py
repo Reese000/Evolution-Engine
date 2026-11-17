@@ -27,6 +27,8 @@ Spec reference: RISC-V Unprivileged Spec v20191213
 """
 
 
+from typing import ClassVar
+
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
@@ -124,13 +126,13 @@ class RV32IVocab:
     J_FORMAT = "J"
 
     # Instruction mapping cache (lazily built from rv32i_mask)
-    _INSTRUCTION_NAMES: list[str] = []  # token_index -> name
-    _NAME_TO_TOKEN: dict[str, int] = {}  # name -> token_id
-    _NAME_TO_FORMAT: dict[str, str] = {}  # name -> format
-    _NAME_TO_FUNCT3: dict[str, int] = {}  # name -> funct3 value
-    _NAME_TO_FUNCT7: dict[str, int] = {}  # name -> funct7 value
-    _NAME_TO_OPCODE: dict[str, int] = {}  # name -> opcode
-    _TOKEN_TO_NAME: dict[int, str] = {}  # token_id -> name
+    _INSTRUCTION_NAMES: ClassVar[list[str]] = []  # token_index -> name
+    _NAME_TO_TOKEN: ClassVar[dict[str, int]] = {}  # name -> token_id
+    _NAME_TO_FORMAT: ClassVar[dict[str, str]] = {}  # name -> format
+    _NAME_TO_FUNCT3: ClassVar[dict[str, int]] = {}  # name -> funct3 value
+    _NAME_TO_FUNCT7: ClassVar[dict[str, int]] = {}  # name -> funct7 value
+    _NAME_TO_OPCODE: ClassVar[dict[str, int]] = {}  # name -> opcode
+    _TOKEN_TO_NAME: ClassVar[dict[int, str]] = {}  # token_id -> name
     _BUILT = False
 
     @classmethod
@@ -911,8 +913,8 @@ class RV32ITransformer(nn.Module):
             cache_i = kv_caches[i] if kv_caches is not None else None
             if self.use_checkpointing and self.training:
 
-                def _block_fn(x_in, c=cache_i):
-                    return block(x_in, kv_cache=c)
+                def _block_fn(x_in, c=cache_i, b=block):
+                    return b(x_in, kv_cache=c)
 
                 x, new_cache = torch.utils.checkpoint.checkpoint(_block_fn, x, use_reentrant=False)
             else:

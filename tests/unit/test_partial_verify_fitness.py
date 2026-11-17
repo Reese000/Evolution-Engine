@@ -1,5 +1,4 @@
 """Per-program partial verify scaling at terminal depth."""
-
 import os
 import random
 import unittest
@@ -9,7 +8,7 @@ class TestPartialVerifyFitness(unittest.TestCase):
     def test_full_verify_program_not_scaled_by_champion_partial(self):
         os.environ.setdefault("EE_USE_GPU", "0")
         from evolution.fitness_helpers import partial_verify_multiplier
-        from evolution_engine import EvolutionConfig, EvolutionEngine
+        from evolution_engine import EvolutionEngine, EvolutionConfig
 
         eng = EvolutionEngine(EvolutionConfig(curriculum_level=30))
         eng.champion_level = 30
@@ -17,9 +16,9 @@ class TestPartialVerifyFitness(unittest.TestCase):
         eng._refresh_task_instance()
         rows = __import__("json").load(open(".agents/champion_carry_forward.json"))  # use multi_cycle if needed
         # load L30 champion from last line of multi_cycle_results.jsonl
-        import json
+        from tests.live_results import live_result_rows
 
-        lines = [json.loads(l) for l in open("multi_cycle_results.jsonl") if l.strip()]
+        lines = list(live_result_rows())
         prog = [int(x, 16) if isinstance(x, str) else int(x) for x in lines[-1]["champion_program"]]
         trace = eng._evaluate(prog)
         eng._champion_verify_score = 0.842

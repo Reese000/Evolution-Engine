@@ -1,5 +1,4 @@
 """Tests for max-pop verify promotion and fresh verify guards."""
-
 import os
 from unittest.mock import MagicMock
 

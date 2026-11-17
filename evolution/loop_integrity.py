@@ -62,7 +62,10 @@ def ensure_metrics_integrity(
         _log(f"Metrics dedupe skipped ({unique} unique cycles, no duplicates)")
 
     try:
-        from evolution.metrics_backfill import backfill_misreported_certified_metrics, count_misreported_rows
+        from evolution.metrics_backfill import (
+            backfill_misreported_certified_metrics,
+            count_misreported_rows,
+        )
 
         misreported = count_misreported_rows(project_root)
         summary["misreported_rows"] = misreported
@@ -70,7 +73,9 @@ def ensure_metrics_integrity(
             backfill_summary = backfill_misreported_certified_metrics(project_root)
             summary["certified_backfill"] = backfill_summary
             if backfill_summary.get("updated", 0) > 0:
-                _log(f"Certified metrics backfill: {backfill_summary['updated']} rows corrected")
+                _log(
+                    f"Certified metrics backfill: {backfill_summary['updated']} rows corrected"
+                )
     except Exception as exc:  # noqa: BLE001
         summary["certified_backfill_error"] = repr(exc)
         _log(f"Certified metrics backfill failed: {exc!r}")

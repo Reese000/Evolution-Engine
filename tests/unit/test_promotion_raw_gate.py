@@ -109,7 +109,10 @@ def test_verify_promotion_allows_shorter_same_raw(monkeypatch):
 
 def test_verify_promotion_rejects_scan_floor_growth_with_side_regression(monkeypatch):
     monkeypatch.setenv("EE_TERMINAL_VERIFY_PROMOTE", "1")
-    from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor, verify_promotion_beats_champion
+    from evolution.terminal_stagnation import (
+        record_terminal_efficiency_scan_floor,
+        verify_promotion_beats_champion,
+    )
 
     class _Eng:
         _champion_verify_score = 1.0
@@ -152,7 +155,10 @@ def test_verify_promotion_rejects_scan_floor_growth_with_side_regression(monkeyp
 
 def test_verify_promotion_rejects_fitness_led_longer_bloat(monkeypatch):
     monkeypatch.setenv("EE_TERMINAL_VERIFY_PROMOTE", "1")
-    from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor, verify_promotion_beats_champion
+    from evolution.terminal_stagnation import (
+        record_terminal_efficiency_scan_floor,
+        verify_promotion_beats_champion,
+    )
 
     class _Eng:
         _champion_verify_score = 1.0

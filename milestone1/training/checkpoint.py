@@ -133,7 +133,6 @@ def save_training_checkpoint(
     _atomic_save(ckpt_out, final_path)
     print(f"[Train] Saved: {os.path.basename(final_path)} (val_loss={best_val_loss:.4f}, epoch={best_epoch + 1})")
 
-    import shutil
 
     # When output_path is specified (cycle-specific retrain), write there
     # instead of checkpoint_best.pt to avoid overwriting the last-known-good.

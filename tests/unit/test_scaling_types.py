@@ -3,6 +3,7 @@
 Tests all dataclasses and their properties in the self-scaling architecture.
 """
 
+
 from milestone1.training.scaling.types import (
     MigrationResult,
     SaturationReport,

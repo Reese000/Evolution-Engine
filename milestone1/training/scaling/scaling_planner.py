@@ -6,7 +6,8 @@ based on saturation detection reports.
 Includes VRAM pre-flight checks using torch.cuda.mem_get_info() when available.
 """
 
-from typing import Dict, Optional, Tuple
+
+from typing import ClassVar
 
 from .types import SaturationReport, ScalingDecision
 
@@ -22,7 +23,7 @@ class ScalingPlanner:
     """
 
     # (stage, embed_dim, ff_dim, num_heads, approx_params, vram_budget_gb)
-    SCALING_LADDER = [
+    SCALING_LADDER: ClassVar[list[tuple]] = [
         (0, 8, 256, 8, "9M", 4.0),
         (1, 14, 512, 8, "35M", 8.5),
         (2, 20, 768, 12, "80M", 11.5),

@@ -20,9 +20,9 @@ import json
 import logging
 import os
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ class ScaleCoordinator:
                 self.current_stage = state.get("current_stage", 0)
                 self.cooldown_count = state.get("cooldown_count", 0)
                 self.events = [ScaleEvent(**e) for e in state.get("events", [])]
-            except Exception:
+            except (OSError, json.JSONDecodeError, ValueError, KeyError):
                 pass
 
     def _save_state(self) -> None:
@@ -132,7 +132,7 @@ class ScaleCoordinator:
             with open(tmp_path, "w") as f:
                 json.dump(state, f, indent=2)
             os.replace(tmp_path, self.state_path)
-        except Exception:
+        except (OSError, ValueError):
             try:
                 os.unlink(tmp_path)
             except OSError:
@@ -289,7 +289,7 @@ class ScaleCoordinator:
                 logger.info(f"Rolled back: {val_result.recommendation}")
                 return f"ROLLED BACK: {val_result.recommendation}"
 
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError) as e:
             logger.error(f"Scaling failed: {e}")
             self.state = ScaleState.ROLLING_BACK
             self._save_state()

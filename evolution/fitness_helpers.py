@@ -566,7 +566,11 @@ def compact_l30_promotion_raw_fitness(program: list[int]) -> float:
         return cached
     disk_key = None
     try:
-        from evolution.terminal_stagnation import _vm_score_disk_get, _vm_score_disk_put, _vm_score_program_key
+        from evolution.terminal_stagnation import (
+            _vm_score_disk_get,
+            _vm_score_disk_put,
+            _vm_score_program_key,
+        )
 
         disk_key = _vm_score_program_key(key)
         disk_cached = _vm_score_disk_get("promotion_raw_l30", disk_key)
@@ -579,7 +583,9 @@ def compact_l30_promotion_raw_fitness(program: list[int]) -> float:
     if _CAPABILITY_SCORE_ENGINE is None:
         from evolution_engine import EvolutionConfig, EvolutionEngine
 
-        _CAPABILITY_SCORE_ENGINE = EvolutionEngine(EvolutionConfig(max_level=30, curriculum_level=30, use_gpu=False))
+        _CAPABILITY_SCORE_ENGINE = EvolutionEngine(
+            EvolutionConfig(max_level=30, curriculum_level=30, use_gpu=False)
+        )
     eng = _CAPABILITY_SCORE_ENGINE
     from tasks_rv32i import get_task_level
 
@@ -649,7 +655,11 @@ def ensure_champion_trace(engine, program: list[int] | None = None) -> dict:
         raise ValueError("ensure_champion_trace: no champion program")
     trace = getattr(engine, "champion_trace", None)
     champ = getattr(engine, "champion", None)
-    if trace is not None and champ is not None and tuple(int(x) for x in prog) == tuple(int(x) for x in champ):
+    if (
+        trace is not None
+        and champ is not None
+        and tuple(int(x) for x in prog) == tuple(int(x) for x in champ)
+    ):
         return trace
     trace = engine._evaluate(prog)
     if champ is not None and tuple(int(x) for x in prog) == tuple(int(x) for x in champ):
@@ -691,7 +701,10 @@ def end_of_cycle_champion_fitness(
     champion_verify: float,
 ) -> float:
     """Metrics/champion_fitness at cycle end — prom_raw at scan floor, reporting elsewhere."""
-    from evolution.terminal_stagnation import terminal_efficiency_at_scan_floor, terminal_verify_promote_active
+    from evolution.terminal_stagnation import (
+        terminal_efficiency_at_scan_floor,
+        terminal_verify_promote_active,
+    )
 
     if (
         terminal_verify_promote_active()
@@ -1175,7 +1188,9 @@ def batch_blend_novelty_qd(
     freshness_fv = 0.5
     if qd_w > 0.0 and qd is not None and qdf is not None:
         try:
-            illum_ds = qd.get_illumination_diversity().get("overall_diversity_score", engine._qd_coverage)
+            illum_ds = qd.get_illumination_diversity().get(
+                "overall_diversity_score", engine._qd_coverage
+            )
         except (KeyError, TypeError, ValueError):
             illum_ds = engine._qd_coverage
         try:

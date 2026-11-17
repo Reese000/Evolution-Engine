@@ -300,7 +300,9 @@ class StrategyArchive:
                 records, strat_indices, n_records, level, window
             )
         else:
-            n, total_weight, weighted_success = self._score_unfiltered(records, strat_indices, n_records, window)
+            n, total_weight, weighted_success = self._score_unfiltered(
+                records, strat_indices, n_records, window
+            )
 
         if total_weight <= 0:
             self._query_cache[cache_key] = 0.0
@@ -763,12 +765,7 @@ class StrategyArchive:
             if not indices:
                 continue
             for i in indices:
-                if (
-                    i < len(records)
-                    and records[i]["level"] == level
-                    and records[i]["success"]
-                    and rng_local.random() > factor
-                ):
+                if i < len(records) and records[i]["level"] == level and records[i]["success"] and rng_local.random() > factor:
                     records[i]["success"] = False
                     modified += 1
         return modified

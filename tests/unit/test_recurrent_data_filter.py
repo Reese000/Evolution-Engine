@@ -34,7 +34,9 @@ def _make_entries(archive: ChampionArchive, specs: list[dict]) -> None:
 
 def _read_jsonl(path: str) -> list[dict]:
     """Read a JSONL file and return list of parsed dicts."""
-    with open(path) as f:
+    # UTF-8 pinned; no errors= on purpose: a decode failure in a test fixture
+    # must fail the test loudly rather than degrade to U+FFFD and pass.
+    with open(path, encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
 
 

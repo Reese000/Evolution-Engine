@@ -1,5 +1,4 @@
 """L30 certified metrics gate."""
-
 import json
 import os
 
@@ -162,7 +161,9 @@ def test_apply_l30_certified_metrics_restores_compact_capability_regression(tmp_
     assert metrics["promotion_raw_fitness"] == 321.645
 
 
-def test_apply_l30_certified_metrics_keeps_prom_raw_scale_when_not_degraded(tmp_path, monkeypatch):
+def test_apply_l30_certified_metrics_keeps_prom_raw_scale_when_not_degraded(
+    tmp_path, monkeypatch
+):
     from evolution.champion_rollback import apply_l30_certified_metrics_if_degraded
 
     row = {

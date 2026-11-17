@@ -18,7 +18,11 @@ def test_diversity_injection_uses_category_threshold(monkeypatch):
 
 
 def test_scan_floor_topup_raises_diversity(monkeypatch):
-    eng = EvolutionEngine(config=EvolutionConfig(max_level=30, diversity_threshold=0.55, diversity_inject_ratio=0.55))
+    eng = EvolutionEngine(
+        config=EvolutionConfig(
+            max_level=30, diversity_threshold=0.55, diversity_inject_ratio=0.55
+        )
+    )
     eng.champion_level = 30
     eng.champion = [0x00000013] * 59 + [0x00100073]
     eng.rng.seed(0)

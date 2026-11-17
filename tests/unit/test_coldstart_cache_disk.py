@@ -205,7 +205,9 @@ def test_projection_seeds_hydrate_after_restart(monkeypatch):
         lambda prog: prom.get(tuple(prog), 325.6),
     )
 
-    first = collect_growth_material_projection_seeds(champ, max_seeds=2, cycle_no=3, gate=gate)
+    first = collect_growth_material_projection_seeds(
+        champ, max_seeds=2, cycle_no=3, gate=gate
+    )
     assert len(first) == 2
     assert builds["n"] >= 1
     built = builds["n"]
@@ -214,16 +216,22 @@ def test_projection_seeds_hydrate_after_restart(monkeypatch):
     # (mutation_helpers.py:3808) while the cold build returns it prom-ranked.
     # That asymmetry pre-dates disk hydration, so the contract a restart must
     # reproduce is the warm process's answer — not the cold build's order.
-    warm = collect_growth_material_projection_seeds(champ, max_seeds=2, cycle_no=3, gate=gate)
+    warm = collect_growth_material_projection_seeds(
+        champ, max_seeds=2, cycle_no=3, gate=gate
+    )
     assert builds["n"] == built, "warm in-process call must not rebuild"
     assert warm == first[1:] + first[:1], "cycle_no=3 rotates the 2 stored seeds"
 
     # simulated restart: in-process dict gone, disk file remains -> hydrate
     _projection_seeds_cache.clear()
-    again = collect_growth_material_projection_seeds(champ, max_seeds=2, cycle_no=3, gate=gate)
+    again = collect_growth_material_projection_seeds(
+        champ, max_seeds=2, cycle_no=3, gate=gate
+    )
     assert builds["n"] == built, "disk hydration must skip the rebuild after restart"
     assert again == warm, "hydrated post-restart result must equal the warm result"
-    assert set(map(tuple, again)) == set(map(tuple, first)), "hydration must not change the seed set, only the rotation"
+    assert set(map(tuple, again)) == set(map(tuple, first)), (
+        "hydration must not change the seed set, only the rotation"
+    )
 
 
 def test_bootstrap_disk_hydration_is_anchor_isolated(tmp_path, monkeypatch):
@@ -339,3 +347,175 @@ def test_conftest_isolates_coldstart_paths(tmp_path):
     # production defaults resolve under .agents/ when the fixture is absent
     default = os.path.join(".agents", "scan_floor_l10_lift_eq_bootstrap_cache.json")
     assert default.endswith("scan_floor_l10_lift_eq_bootstrap_cache.json")
+    assert mh.scan_floor_growth_pool_cache_path().startswith(str(tmp_path))
+
+
+def test_growth_pool_cache_keeps_every_plateau(tmp_path, monkeypatch):
+    """A transient growth-champion save must not orphan the stable pool.
+
+    The production file held ONE payload: after a 60-word growth champion
+    saved, the 27-word champion's disk load missed and the first
+    post-restart cycle rebuilt the crossover pool inside generation 0
+    (observed 2026-09-30: cold gen0 676.6s vs warm 113.8s, t_5610b3e5).
+    """
+    import json
+
+    from evolution import mutation_helpers as mh
+
+    cache_path = tmp_path / "scan_floor_growth_pool_cache.json"
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_growth_pool_cache_path",
+        lambda: str(cache_path),
+    )
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_anchor_program",
+        lambda c: list(c),
+    )
+    monkeypatch.setattr(
+        "evolution.mutation_helpers._eq_refine_plateau_key",
+        lambda c: (round(100.0 + len(c), 4), len(c)),
+    )
+
+    stable = list(range(1, 28))  # 27-word champion
+    growth = list(range(1000, 1060))  # 60-word growth champion
+
+    mh.save_scan_floor_growth_pool_cache(
+        stable, [[7, 7, 7]], cross_keys={tuple([1, 2])}, cycle=10
+    )
+    mh.save_scan_floor_growth_pool_cache(
+        growth, [[9, 9, 9]], cross_keys=set(), cycle=11
+    )
+
+    hit_stable = mh.load_scan_floor_growth_pool_cache(stable)
+    hit_growth = mh.load_scan_floor_growth_pool_cache(growth)
+
+    assert hit_stable is not None, "stable champion pool orphaned by growth save"
+    assert [list(p) for p in hit_stable[1]] == [[7, 7, 7]]
+    assert hit_stable[2] == frozenset({(1, 2)})
+    assert hit_growth is not None
+    assert [list(p) for p in hit_growth[1]] == [[9, 9, 9]]
+
+    # a re-save for the same plateau replaces its entry instead of stacking
+    mh.save_scan_floor_growth_pool_cache(stable, [[8, 8, 8]], cycle=12)
+    hit_again = mh.load_scan_floor_growth_pool_cache(stable)
+    assert hit_again is not None
+    assert [list(p) for p in hit_again[1]] == [[8, 8, 8]]
+    entries = json.loads(cache_path.read_text(encoding="utf-8"))["entries"]
+    assert len(entries) == 2
+
+
+def test_growth_pool_cache_reads_legacy_single_payload(tmp_path, monkeypatch):
+    """Pre-fix files (one top-level payload) must still hydrate."""
+    import json
+
+    from evolution import mutation_helpers as mh
+
+    cache_path = tmp_path / "scan_floor_growth_pool_cache.json"
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_growth_pool_cache_path",
+        lambda: str(cache_path),
+    )
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_anchor_program",
+        lambda c: list(c),
+    )
+    monkeypatch.setattr(
+        "evolution.mutation_helpers._eq_refine_plateau_key",
+        lambda c: (round(100.0 + len(c), 4), len(c)),
+    )
+
+    stable = list(range(1, 28))
+    cache_path.write_text(
+        json.dumps(
+            {
+                "plateau_key": [127.0, 27],
+                "anchor": stable,
+                "cycle": 7596,
+                "pool": [[5, 5, 5]],
+                "cross_keys": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    hit = mh.load_scan_floor_growth_pool_cache(stable)
+    assert hit is not None
+    assert [list(p) for p in hit[1]] == [[5, 5, 5]]
+
+
+def test_growth_pool_cache_keys_by_anchor_not_raw_champion(tmp_path, monkeypatch):
+    """Save/prime must use scan_floor_anchor_program(champion), not the raw program.
+
+    Production maps a grown 60-word live champion to the certified 27-word
+    anchor; keying the cache by the raw champion is what orphaned the payload.
+    """
+    import json
+
+    from evolution import mutation_helpers as mh
+
+    cache_path = tmp_path / "scan_floor_growth_pool_cache.json"
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_growth_pool_cache_path",
+        lambda: str(cache_path),
+    )
+    anchor = list(range(1, 28))  # certified anchor, any input maps to it
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_anchor_program",
+        lambda c: list(anchor),
+    )
+    monkeypatch.setattr(
+        "evolution.mutation_helpers._eq_refine_plateau_key",
+        lambda c: (round(100.0 + len(c), 4), len(c)),
+    )
+
+    grown = list(range(1000, 1060))  # 60-word live champion
+    mh.save_scan_floor_growth_pool_cache(grown, [[3, 3, 3]], cycle=1)
+
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert payload["entries"][0]["anchor"] == anchor, "saved under raw champion"
+
+    primed = mh.prime_scan_floor_growth_pool_cache(grown, None)
+    assert primed is not None, "prime missed the entry it just helped store"
+    assert [list(p) for p in primed[1]] == [[3, 3, 3]]
+
+
+def test_growth_pool_cache_cap_pins_the_entry_being_written(tmp_path, monkeypatch):
+    """A cycle-1 save must not evict itself from an 8-entry file."""
+    import json
+
+    from evolution import mutation_helpers as mh
+
+    cache_path = tmp_path / "scan_floor_growth_pool_cache.json"
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_growth_pool_cache_path",
+        lambda: str(cache_path),
+    )
+    monkeypatch.setattr(
+        "evolution.mutation_helpers.scan_floor_anchor_program",
+        lambda c: list(c),
+    )
+    monkeypatch.setattr(
+        "evolution.mutation_helpers._eq_refine_plateau_key",
+        lambda c: (round(100.0 + len(c), 4), len(c)),
+    )
+
+    # eight distinct plateaus (distinct lengths), cycles 9..2
+    for i, length in enumerate(range(5, 13)):
+        prog = list(range(500 + length, 500 + length * 2))
+        assert len(prog) == length
+        mh.save_scan_floor_growth_pool_cache(
+            prog, [[length, length]], cycle=9 - i
+        )
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert len(payload["entries"]) == 8
+
+    # ninth save, meta_controller-style cycle=1, distinct plateau
+    late = list(range(300, 314))  # 14 words
+    mh.save_scan_floor_growth_pool_cache(late, [[14, 14]], cycle=1)
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert len(payload["entries"]) == 8, "cap must still bound the file"
+    assert any(e["anchor"] == late for e in payload["entries"]), (
+        "the entry just written was evicted by its own cap"
+    )
+    hit = mh.load_scan_floor_growth_pool_cache(late)
+    assert hit is not None
+    assert [list(p) for p in hit[1]] == [[14, 14]]

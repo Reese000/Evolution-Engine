@@ -16,11 +16,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import random
 from dataclasses import asdict, dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# One WARNING per (path, skipped-count) per process. merge_archive_to_recurrent
+# rebuilds a ChampionArchive every cycle and the rows counted here stay on disk
+# after this fix, so an unconditional warning would repeat the same line every
+# cycle of a long run -- the project treats read-path log spam as a defect (see
+# the "read path runs every cycle: no spam" test in
+# tests/unit/test_progress_state_durability.py). The count is part of the key,
+# so a file that gains NEW damage warns again.
+_SKIP_WARNING_SEEN: set[tuple[str, int]] = set()
+# Dedup for the mid-read OSError warning: one line per path per process,
+# under the same no-spam rule as _SKIP_WARNING_SEEN (a locked archive would
+# otherwise warn once every cycle of a long run).
+_IO_FAILURE_WARNED: set[str] = set()
 
 # ──────────────────────────────────────────────────────────────────────
 # Tier constants for preventing catastrophic forgetting / mode collapse
@@ -60,6 +76,32 @@ class ChampionEntry:
     @classmethod
     def from_dict(cls, d: dict) -> ChampionEntry:
         return cls(**{k: d[k] for k in cls.__dataclass_fields__ if k in d})
+
+
+def _entry_loadable(entry: ChampionEntry) -> bool:
+    """True when a parsed archive row carries field types the rest of the class can use.
+
+    Such a row parses as JSON but would blow up after _load returned: a null/string
+    fitness breaks _update_tiers' fitness sort, a null cycle breaks
+    sample_training_batch's max-over-cycles, a non-numeric level breaks _evict's
+    ordering, an unhashable sha256 or level breaks the dedup set and the
+    FOUNDATIONAL_LEVELS membership test, and a non-list or non-int program breaks
+    _hamming_distance. generation and instructions_count are type-checked for
+    consistency with the stats and export helpers that read them.
+    """
+    if not isinstance(entry.sha256, str):
+        return False
+    if not isinstance(entry.program, list):
+        return False
+    if not all(isinstance(word, int) and not isinstance(word, bool) for word in entry.program):
+        return False
+    if not isinstance(entry.program_hex, list):
+        return False
+    for field in ("level", "fitness", "cycle", "generation", "instructions_count"):
+        value = getattr(entry, field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+    return True
 
 
 def _hash_program(program: list[int]) -> str:
@@ -112,25 +154,115 @@ class ChampionArchive:
         self._update_tiers()
 
     def _load(self) -> None:
-        """Load existing archive from disk."""
+        """Load existing archive from disk.
+
+        A line that cannot become a usable ChampionEntry is skipped on its own so
+        one corrupt row never aborts the load of the remaining entries. Rows the
+        per-line guard rejects are counted in ``self._load_skipped`` **and their
+        raw text is kept verbatim in ``self._skipped_rows``**, so ``save()``
+        re-emits them at their original file position instead of deleting them:
+        a row the loader cannot use is not a row the archive may destroy. A
+        heavily damaged file still shows up as a non-zero count instead of a
+        silent empty load.
+        Rows lost to an I/O failure (see the OSError handler) are not counted: the
+        loader never reaches them, so their number is unknowable.
+
+        Bookkeeping consumed by ``save()``: ``self._rows_seen`` is how many
+        non-empty rows were read (every position below it came from disk), each
+        loaded entry remembers its own row as the ``_load_position`` attribute
+        (it dies with the object, so an evicted-then-re-added program cannot
+        inherit a dead row's slot), and ``self._skipped_rows`` holds
+        ``(position, raw text)`` for each rejected row. ``_load`` runs only from
+        ``__init__``, so none of these accumulate across two reads.
+        """
+        self._load_skipped = 0
+        self._skipped_rows: list[tuple[int, str]] = []
+        self._rows_seen = 0
         if not os.path.isfile(self.path):
             return
         try:
-            with open(self.path) as f:
+            # utf-8-sig: strip the BOM an editor leaves behind when the archive is
+            # re-saved as "UTF-8 with BOM" (Notepad/PowerShell) -- with plain utf-8 that
+            # BOM sits inside the first row, json.loads rejects it and the row is lost.
+            # Without a BOM utf-8-sig decodes byte-for-byte identically, so this is a
+            # strict superset of the old behaviour.
+            # errors="replace": a non-UTF8 byte must not raise UnicodeDecodeError out
+            # of this loop. The damaged line then either fails json.loads below (and is
+            # skipped) or, when the stray byte sat inside a JSON string, loads with
+            # U+FFFD replacement characters instead of crashing the engine.
+            with open(self.path, encoding="utf-8-sig", errors="replace") as f:
                 for line in f:
-                    line = line.strip()
+                    # raw = the line's content exactly as it was on disk. Only the
+                    # terminator was already normalized (universal-newline read;
+                    # save() writes the platform newline for every row, skipped or
+                    # not). Rejected rows are stashed as raw, not as line: strip()
+                    # would silently drop surrounding whitespace and the contract
+                    # is "verbatim".
+                    raw = line.removesuffix("\n")
+                    line = raw.strip()
                     if not line:
                         continue
+                    position = self._rows_seen
+                    self._rows_seen += 1
                     try:
-                        d = json.loads(line)
-                        entry = ChampionEntry.from_dict(d)
+                        entry = ChampionEntry.from_dict(json.loads(line))
+                        if not _entry_loadable(entry):
+                            self._load_skipped += 1
+                            self._skipped_rows.append((position, raw))
+                            continue
                         if entry.sha256 not in self._seen_hashes:
+                            # Position rides on the loaded object itself: if this
+                            # entry is evicted and its program re-added, the new
+                            # object carries no position and sorts to the tail
+                            # instead of inheriting this row's slot.
+                            entry._load_position = position
                             self.entries.append(entry)
                             self._seen_hashes.add(entry.sha256)
-                    except (json.JSONDecodeError, KeyError):
+                    except (json.JSONDecodeError, KeyError, TypeError, ValueError, RecursionError):
+                        # Unparseable or unusable row: skip this line only, keep loading.
+                        # Its raw text still goes into _skipped_rows: save() re-emits it.
+                        self._load_skipped += 1
+                        self._skipped_rows.append((position, raw))
                         continue
-        except OSError:  # Intentional: file may not exist yet or be corrupted; skip gracefully
-            pass
+        except OSError as e:
+            # Intentional: an I/O failure (unreadable/locked file, read aborted
+            # mid-file) must not crash ChampionArchive.__init__. Rows already parsed
+            # are kept; rows that never got read are dropped. No archive at all is a
+            # normal cold start, so an absent/unreadable file starts empty.
+            # How many rows were lost is unknowable, but the event is not: a later
+            # save() would persist only what was read, so report it once per path.
+            # Those rows never reached the counter in _load_skipped - they were
+            # never read, so they were never "skipped" - hence _rows_seen here.
+            if self.path not in _IO_FAILURE_WARNED:
+                _IO_FAILURE_WARNED.add(self.path)
+                logger.warning(
+                    "champion archive %s: read aborted after %d row(s): %s; "
+                    "a later save() will persist only what was read",
+                    self.path,
+                    self._rows_seen,
+                    e,
+                )
+        if self._load_skipped:
+            self._warn_load_skipped()
+
+    def _warn_load_skipped(self) -> None:
+        """Report unusable rows once per (path, count) per process.
+
+        The count used to be reachable only as ``_load_skipped``, i.e. nothing
+        outside the test suite ever learned that rows had been rejected. The
+        dedup key includes the count, so newly accumulated damage still warns.
+        """
+        key = (self.path, self._load_skipped)
+        if key in _SKIP_WARNING_SEEN:
+            return
+        _SKIP_WARNING_SEEN.add(key)
+        logger.warning(
+            "champion archive %s: %d of %d row(s) rejected as unusable by _load "
+            "(ChampionArchive.load_skipped); save() re-emits their raw text verbatim",
+            self.path,
+            self._load_skipped,
+            self._rows_seen,
+        )
 
     def add(
         self,
@@ -461,10 +593,47 @@ class ChampionArchive:
         return result
 
     def save(self) -> None:
-        """Persist archive to disk (JSONL)."""
+        """Persist archive to disk (JSONL).
+
+        Rows ``_load`` could not use are written back verbatim, at the file
+        position they were read from (see ``_rows_to_write``), so a save never
+        turns "unusable row" into "deleted row": a corruption-tolerant loader
+        paired with a rewriting writer would otherwise make the tolerance
+        pointless, because the corruption would come back as permanent data loss
+        on the first save. The only rows still dropped on purpose are duplicates
+        (one copy of a program is kept: that is the documented dedup contract)
+        and entries an eviction/prune removed from ``self.entries``.
+        """
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-        with open(self.path, "w") as f:
-            f.writelines(json.dumps(entry.to_dict()) + "\n" for entry in self.entries)
+        # encoding="utf-8", never the platform default: _load() and cron_run_10.py
+        # both read this file as UTF-8, so the writer has to agree with them on a
+        # cp1252/locale-default platform (the latent half of the asymmetry).
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.writelines(text + "\n" for _, text in self._rows_to_write())
+
+    def _rows_to_write(self) -> list[tuple[int, str]]:
+        """Every line save() emits as ``(position, text)``, ordered by file position.
+
+        Entries read from disk keep the position of the row they came from, so a
+        no-op save of an untouched archive reproduces the file in its original
+        order. Entries added after the load (or read from a file that did not
+        exist yet) sort after everything that came from disk, in insertion order,
+        which is the order the old "entries in list order" write produced for
+        them. Positions are unique: rows loaded from disk own 0.._rows_seen-1,
+        new entries start at _rows_seen, and a row consumed by the sha256 dedup
+        leaves its gap rather than reusing it.
+        """
+        rows: list[tuple[int, str]] = []
+        appended = 0
+        for entry in self.entries:
+            position = getattr(entry, "_load_position", None)
+            if position is None:  # added after _load: newest rows go last
+                position = self._rows_seen + appended
+                appended += 1
+            rows.append((position, json.dumps(entry.to_dict())))
+        rows.extend(self._skipped_rows)
+        rows.sort(key=lambda row: row[0])
+        return rows
 
     def _select_recurrent_entries(self, eligible: list[ChampionEntry], max_entries: int) -> list[ChampionEntry]:
         """Select entries using weighted mix: 50% top, 30% recent, 20% diverse."""
@@ -507,7 +676,16 @@ class ChampionArchive:
     def _write_recurrent_entries(self, output_path: str, selected: list[ChampionEntry]) -> int:
         """Write selected entries as JSONL."""
         count = 0
-        with open(output_path, "w") as f:
+        # UTF-8, matching save(). Every run_multi_cycle.py touch point of the
+        # file this writes -- merge_archive_to_recurrent's dedup load and its
+        # append, _validate_retrain_eligibility's counter and the MemGen reader
+        # -- pins UTF-8 too since t_bd0760ea, so the writer/reader asymmetry
+        # this comment used to track is closed within run_multi_cycle.py.
+        # Other modules that read/write milestone1/recurrent_data.jsonl
+        # (milestone1/data/loading.py, evolution/recurrent_mixin.py,
+        # milestone1/build_recurrent_dataset.py) are still on the locale
+        # default and are tracked as a separate follow-up.
+        with open(output_path, "w", encoding="utf-8") as f:
             for entry in selected:
                 example = {
                     "level": entry.level,
@@ -691,6 +869,17 @@ class ChampionArchive:
     def size(self) -> int:
         return len(self.entries)
 
+    @property
+    def load_skipped(self) -> int:
+        """Rows ``_load`` rejected as unusable (0 for a healthy archive).
+
+        Public because the count was otherwise only reachable as the private
+        ``_load_skipped``, so no caller outside the test suite could see that
+        rows had been refused. ``_load`` logs it as a WARNING once per
+        (path, count) per process, and ``save()`` preserves the rows themselves.
+        """
+        return self._load_skipped
+
     def stats(self) -> dict[str, Any]:
         """Return summary statistics."""
         if not self.entries:
@@ -747,7 +936,6 @@ class ChampionArchive:
 
         # Separate foundational entries (never pruned)
         non_foundational = [(s, e) for s, e in scored if e.level not in FOUNDATIONAL_LEVELS]
-        [(s, e) for s, e in scored if e.level in FOUNDATIONAL_LEVELS]
 
         # Sort non-foundational by quality score (ascending = worst first)
         non_foundational.sort(key=lambda x: x[0])

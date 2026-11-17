@@ -276,7 +276,10 @@ def test_carry_equal_length_higher_fitness_updates(tmp_path, monkeypatch):
 
 
 def test_persist_prefers_l10_when_l30_tied(tmp_path):
-    from evolution.terminal_stagnation import l30_l10_prefix_load_variant, l30_order_sensitive_variant
+    from evolution.terminal_stagnation import (
+        l30_l10_prefix_load_variant,
+        l30_order_sensitive_variant,
+    )
     from mutation_proposer import EBREAK, make_rv32i
 
     overfit = [

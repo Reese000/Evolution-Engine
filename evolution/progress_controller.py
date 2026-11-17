@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
 
+from evolution import progress_state_io
 from evolution.curriculum_advance import (
     curriculum_fitness_gate,
     curriculum_verify_threshold,
@@ -77,42 +78,59 @@ class ProgressController:
 
     def _load(self) -> None:
         path = self._state_path()
-        if not os.path.isfile(path):
+        data, err = progress_state_io.read_state(path)
+        if err is None and not data:
+            # Absent (fresh install) or an empty object — nothing to restore.
             return
         try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            self.state.level = int(data.get("level", 0))
-            self.state.cycles_at_level = int(data.get("cycles_at_level", 0))
-            self.state.verify_score = float(data.get("verify_score", 0))
-            self.state.raw_fitness = float(data.get("raw_fitness", 0))
-        except (json.JSONDecodeError, OSError, TypeError, ValueError):
-            pass
+            if err is None:
+                self.state.level = int(data.get("level", 0))
+                self.state.cycles_at_level = int(data.get("cycles_at_level", 0))
+                self.state.verify_score = float(data.get("verify_score", 0))
+                self.state.raw_fitness = float(data.get("raw_fitness", 0))
+                return
+        except (TypeError, ValueError) as exc:
+            err = exc
+        # File present but torn / not a JSON object / bad field types: keep the
+        # defaults, but say so — silently reloading a stale level as 0 is how
+        # the curriculum quietly restarts.
+        logging.getLogger(progress_state_io.LOGGER_NAME).warning(
+            "progress-controller state unreadable at %s: %s (keeping defaults)",
+            path,
+            err,
+        )
 
     def save(self) -> None:
         agents = os.path.join(self.project_root, ".agents")
         os.makedirs(agents, exist_ok=True)
         path = self._state_path()
-        merged: dict[str, Any] = {}
-        if os.path.isfile(path):
-            try:
-                with open(path, encoding="utf-8") as f:
-                    merged = json.load(f)
-            except (json.JSONDecodeError, OSError, TypeError, ValueError):
-                merged = {}
-        merged.update(
+        # Locked read-merge-atomic-write (progress_state_io.STATE_LOCK for
+        # threads of this process, plus a bounded advisory *.lock file for
+        # writers in other processes): same durability as
+        # terminal_stagnation._patch_progress_state, which persists the other
+        # half of this file's keys. A truncate-write here used to tear — or
+        # drop — the keys that writer had just committed.
+        _written, err = progress_state_io.update_state(
+            path,
             {
                 "level": self.state.level,
                 "cycles_at_level": self.state.cycles_at_level,
                 "verify_score": self.state.verify_score,
                 "raw_fitness": self.state.raw_fitness,
                 "generations_stalled": self.state.generations_stalled,
-            }
+            },
         )
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(merged, f, indent=2)
+        if err is not None:
+            logging.getLogger(progress_state_io.LOGGER_NAME).warning(
+                "progress-controller state unreadable at %s during merge: %s "
+                "(pre-existing keys were not preserved)",
+                path,
+                err,
+            )
 
-    def reconcile_from_cycle_result(self, final_level: int, verify: float, fitness: float) -> None:
+    def reconcile_from_cycle_result(
+        self, final_level: int, verify: float, fitness: float
+    ) -> None:
         """Persist completed cycle level — repairs stale writes from collapse recovery."""
         lvl = int(final_level)
         if lvl != self.state.level:
@@ -189,9 +207,7 @@ class ProgressController:
         self.state.raw_fitness = raw
         self.state.champion_fitness = fitness
 
-    def on_generation_end(
-        self, generations_stalled: int, level: int, verify: float, raw: float, fitness: float
-    ) -> ActionPlan:
+    def on_generation_end(self, generations_stalled: int, level: int, verify: float, raw: float, fitness: float) -> ActionPlan:
         """Within-cycle: decide per-generation anti-plateau actions."""
         self.sync_generation(generations_stalled, level, verify, raw, fitness)
         plan = ActionPlan(verify_threshold=self.verify_threshold(level))
@@ -213,9 +229,7 @@ class ProgressController:
 
     def on_run_end(self, level: int, verify: float, raw: float, fitness: float) -> ActionPlan:
         """End of evolution run: quality-gated chain advance (max 3 steps)."""
-        self.sync_generation(
-            max(self.state.generations_stalled, self.state.stall_threshold), level, verify, raw, fitness
-        )
+        self.sync_generation(max(self.state.generations_stalled, self.state.stall_threshold), level, verify, raw, fitness)
         plan = ActionPlan()
         min_fitness = float(os.environ.get("EE_END_RUN_MIN_FITNESS", "80"))
         max_steps = int(os.environ.get("EE_END_RUN_MAX_ADVANCE", "3"))
@@ -223,9 +237,7 @@ class ProgressController:
         cur_level = level
         cur_verify, cur_raw, cur_fit = verify, raw, fitness
         for step in range(max_steps):
-            if not curriculum_fitness_gate(
-                cur_level, self.state.generations_stalled, cur_raw, self.state.stall_threshold
-            ):
+            if not curriculum_fitness_gate(cur_level, self.state.generations_stalled, cur_raw, self.state.stall_threshold):
                 break
             if not self.passes_certify_verify(cur_level, cur_verify):
                 plan.log_lines.append(

@@ -26,8 +26,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SUPERVISOR_LOG = os.path.join(SCRIPT_DIR, "supervisor.log")
@@ -41,7 +40,7 @@ REQUIRED_CUDA_VERSION = "12.1"
 
 def log(msg: str) -> None:
     """Log to both supervisor.log and stdout."""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] {msg}"
     print(line, flush=True)
     try:
@@ -169,6 +168,7 @@ def verify_torch_env(python_path: str) -> bool:
             capture_output=True,
             text=True,
             timeout=15,
+            check=False,
         )
         output = result.stdout.strip()
         log(f"  Torch env: {output}")
@@ -226,6 +226,7 @@ def run_evolution_batch(
             text=True,
             timeout=7200,  # 2 hour hard timeout per batch
             env=env,
+            check=False,
         )
         elapsed = time.time() - start
         combined = (result.stdout or "") + "\n" + (result.stderr or "")
@@ -407,6 +408,7 @@ def check_vram_free(min_gb: float = 9.0) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             free_mb, total_mb = [int(x.strip()) for x in result.stdout.strip().split(",")]
@@ -439,14 +441,17 @@ def kill_ee_subtree() -> int:
                 "powershell.exe",
                 "-NoProfile",
                 "-Command",
-                ('Get-CimInstance Win32_Process -Filter "'
-                "CommandLine LIKE '%run_multi_cycle%' OR "
-                "CommandLine LIKE '%augmentation_subprocess%'"
-                '" | Select-Object -ExpandProperty ProcessId'),
+                (
+                    'Get-CimInstance Win32_Process -Filter "'
+                    "CommandLine LIKE '%run_multi_cycle%' OR "
+                    "CommandLine LIKE '%augmentation_subprocess%'"
+                    '" | Select-Object -ExpandProperty ProcessId'
+                ),
             ],
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             for pid_str in result.stdout.strip().split():
@@ -454,7 +459,7 @@ def kill_ee_subtree() -> int:
                     pid = int(pid_str.strip())
                     if pid in skip_pids:
                         continue
-                    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=5)
+                    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=5, check=False)
                     log(f"  Killed orphaned EE process PID {pid}")
                     killed += 1
                 except (ValueError, subprocess.TimeoutExpired):

@@ -1,5 +1,9 @@
 # Evolution Engine
 
+[![CI](https://github.com/Reese000/Evolution-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Reese000/Evolution-Engine/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen)](https://github.com/Reese000/Evolution-Engine/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-9000+-blue)](https://github.com/Reese000/Evolution-Engine/actions/workflows/ci.yml)
+
 A self-evolving machine-code AI that continuously improves its ability to generate correct RISC-V RV32I programs through a closed feedback loop: evolve, retrain, evolve.
 
 The system combines an evolutionary algorithm with a transformer-based code generator. A champion program is maintained and iteratively improved through mutation and selection. A transformer model learns from champion traces to generate increasingly complex programs across a 31-level curriculum. A meta-controller orchestrates the entire process, tuning hyperparameters in real-time and detecting stagnation or regression.

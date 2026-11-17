@@ -9,7 +9,9 @@ This conftest provides pytest fixtures and reusable factory functions.
 from __future__ import annotations
 
 import collections
+import os
 import random
+import tempfile
 
 import pytest
 
@@ -17,6 +19,23 @@ import pytest
 from paths import ensure_project_on_path
 
 ensure_project_on_path()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase-timing log isolation (EE-W7, t_526975b3)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# `evolution.phase_timing.default_log_path()` falls back to the project root,
+# so every test that drives `EvolutionEngine.run()` appends its own cycles
+# (1 / 99999) to the production `generation_phase_timing.jsonl`.  Redirect the
+# rolling log to a throwaway temp file for the whole pytest session so test
+# traffic can never reach the production log.  An operator-supplied
+# EE_GEN_TIMING_LOG still wins (setdefault), and the directory is only created
+# if a test actually emits a record.
+_PHASE_TIMING_TMPDIR = os.path.join(tempfile.gettempdir(), f"ee-gen-timing-{os.getpid()}")
+os.environ.setdefault(
+    "EE_GEN_TIMING_LOG",
+    os.path.join(_PHASE_TIMING_TMPDIR, "generation_phase_timing.jsonl"),
+)
 
 from evolution_engine import EvolutionConfig, EvolutionEngine, HallOfFame, compute_qd_axes
 from meta_controller import MetaController, TelemetrySnapshot

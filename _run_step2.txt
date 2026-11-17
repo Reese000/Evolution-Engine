@@ -1,0 +1,6 @@
+Streaming results (regex extract)...
+  Parsed 2647 cycle rows
+  Wrote C:\Users\reese\Projects\Evolution Engine\.agents\progress_trajectory.jsonl
+  Wrote C:\Users\reese\Projects\Evolution Engine\.agents\progress_trajectory_summary.json
+  Wrote C:\Users\reese\.cursor\projects\c-Users-reese-Projects-Evolution-Engine\canvases\evolution-progress-trajectory.canvas.tsx
+  EPI: 39.34 -> 51.93 (level 19)

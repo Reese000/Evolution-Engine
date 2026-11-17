@@ -2,7 +2,11 @@
 
 import pytest
 
-from evolution.fitness_helpers import _terminal_length_efficiency_bonus, reporting_champion_fitness, selection_fitness
+from evolution.fitness_helpers import (
+    _terminal_length_efficiency_bonus,
+    reporting_champion_fitness,
+    selection_fitness,
+)
 from evolution_engine import EvolutionConfig, EvolutionEngine
 
 
@@ -46,7 +50,9 @@ def test_align_scan_floor_persisted_metrics_overwrites_reporting(monkeypatch, tm
     assert metrics["verified_fitness"] == pytest.approx(324.236)
 
 
-def test_end_of_cycle_champion_fitness_uses_prom_raw_at_scan_floor(monkeypatch, tmp_path):
+def test_end_of_cycle_champion_fitness_uses_prom_raw_at_scan_floor(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("EE_TERMINAL_VERIFY_PROMOTE", "1")
     agents = tmp_path / ".agents"
     agents.mkdir()

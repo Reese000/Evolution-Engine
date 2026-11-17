@@ -13,6 +13,10 @@ Thumbs.db
 venv/
 .venv/
 .venv-win/
+.venv-win2/
+.venv_linux/
+.coverage
+.foundry_manager/
 
 # Python
 __pycache__/
@@ -75,3 +79,14 @@ multi_cycle_summary.json
 # Test-generated scratch artifacts left behind by local test runs
 test_atomic_state.json
 .venv_linux/
+
+# Agent worktrees (best-of-n / dispatch copies — not source of truth)
+.worktrees/
+
+# Live loop runtime (keep only tracked agent status)
+.agents/*
+!.agents/status/
+!.agents/status/agent-evolution.json
+
+# Bad env expansion artifact
+%SystemDrive%/

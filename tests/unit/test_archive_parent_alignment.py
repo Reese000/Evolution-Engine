@@ -1,6 +1,9 @@
 """Near-length jsonl archive parent alignment for scan-floor crossover."""
 
-from evolution.champion_rollback import align_archive_parent_to_champion, collect_jsonl_archive_parents
+from evolution.champion_rollback import (
+    align_archive_parent_to_champion,
+    collect_jsonl_archive_parents,
+)
 
 
 def test_align_shorter_parent_extends_champion_tail():
@@ -53,8 +56,12 @@ def test_collect_jsonl_archive_parents_word_tolerance(tmp_path):
                 )
                 + "\n"
             )
-    same = collect_jsonl_archive_parents(str(results), champion, 30, max_parents=8, word_tolerance=0)
-    near_len = collect_jsonl_archive_parents(str(results), champion, 30, max_parents=8, word_tolerance=2)
+    same = collect_jsonl_archive_parents(
+        str(results), champion, 30, max_parents=8, word_tolerance=0
+    )
+    near_len = collect_jsonl_archive_parents(
+        str(results), champion, 30, max_parents=8, word_tolerance=2
+    )
     assert same == []
     assert len(near_len) == 1
     assert len(near_len[0]) == len(champion)
@@ -91,7 +98,9 @@ def test_collect_jsonl_archive_parents_rank_by_promotion_raw(tmp_path, monkeypat
                 )
                 + "\n"
             )
-    recent = collect_jsonl_archive_parents(str(results), champion, 30, max_parents=8, word_tolerance=0)
+    recent = collect_jsonl_archive_parents(
+        str(results), champion, 30, max_parents=8, word_tolerance=0
+    )
     ranked = collect_jsonl_archive_parents(
         str(results),
         champion,

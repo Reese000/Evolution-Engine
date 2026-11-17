@@ -26,95 +26,59 @@ from paths import ensure_project_on_path
 ensure_project_on_path()
 
 
-def train(
-    resume_path: str | None = None,
-    recurrent_data_path: str | None = None,
-    lr_override: float | None = None,
-    freeze_layers: int = 0,
-    adaptive_freeze: bool = False,
-    batch_size: int = 8,
-    weight_decay: float = 0.01,
-    patience: int = 3,
-    grad_clip: float | None = None,
-    max_epochs: int = 12,
-    val_split: float = 0.15,
-    max_per_level: int | None = None,
-    model_size: str = "large",
-    amp: bool = True,
-    compile_mode: str | None = None,
-    swa_start: int | None = None,
-    swa_lr: float | None = None,
-    grad_accum_steps: int = 1,
-    augmentation_k: int = 8,
-    rebuild_dataset: bool = False,
-    reset_checkpoint: bool = False,
-    migrate: bool = False,
-    use_grad_checkpointing: bool = False,
-    output_path: str | None = None,
-    **kwargs: Any,
-) -> None:
-    """Train the RV32ITransformer on champion program traces."""
-    from data.augmentation import inject_reference_solutions, inject_synthetic_data, register_rename_augment
-    from data.loading import apply_level_cap, load_champion_traces
-    from data.packing import pad_or_pack_sequences
-    from rv32i_mask import decode as rv32i_decode
-    from rv32i_model import RV32IFieldTokenizer
-
-    from training.checkpoint import find_existing_checkpoint, save_training_checkpoint
-    from training.model_factory import load_or_create_model
-    from training.schedule import adjust_dropout, build_optimizer_and_schedulers
-
-    # ── Checkpoint directory ───────────────────────────────────────
-    checkpoint_dir = os.path.join(BASE_DIR, "checkpoints")
+def _prepare_train_checkpoint(
+    resume_path: str | None,
+    checkpoint_dir: str,
+    reset_checkpoint: bool,
+) -> str | None:
     os.makedirs(checkpoint_dir, exist_ok=True)
-
-    # ── Load checkpoint path ───────────────────────────────────────
     ckpt_path = resume_path
     if not ckpt_path or not os.path.isfile(ckpt_path):
+        from training.checkpoint import find_existing_checkpoint
+
         found = find_existing_checkpoint(checkpoint_dir)
         if found:
             ckpt_path = found
-
-    # ── Handle reset/migrate flags ─────────────────────────────────
     if reset_checkpoint and ckpt_path and os.path.isfile(ckpt_path):
-        from training.checkpoint import save_training_checkpoint
-
         print(f"[Train] --reset-checkpoint: deleting {os.path.basename(ckpt_path)}")
         os.remove(ckpt_path)
-        # Also clear any sibling checkpoints
         for name in ("checkpoint_best.pt", "checkpoint_current.pt", "model_final.pt"):
             p = os.path.join(checkpoint_dir, name)
             if os.path.isfile(p) and p != ckpt_path:
                 os.remove(p)
                 print(f"[Train] --reset-checkpoint: deleted {name}")
         ckpt_path = None
+    return ckpt_path
 
-    # ── Device ─────────────────────────────────────────────────────
-    # ── Device ─────────────────────────────────────────────────────
-    # EE_TRAIN_DEVICE overrides training device (for crash mitigation).
-    # "cuda" (default) or "cpu".
+
+def _resolve_train_device() -> torch.device:
     train_device_str = os.environ.get("EE_TRAIN_DEVICE", "cuda")
     if train_device_str == "cpu" or not torch.cuda.is_available():
-        device = torch.device("cpu")
-    else:
-        device = torch.device("cuda")
+        return torch.device("cpu")
+    return torch.device("cuda")
 
-    # ── Load or create model ───────────────────────────────────────
+
+def _load_compiled_train_model(
+    ckpt_path: str | None,
+    model_size: str,
+    device: torch.device,
+    migrate: bool,
+    use_grad_checkpointing: bool,
+    compile_mode: str | None,
+) -> Any:
+    from training.model_factory import load_or_create_model
+
     model, _ckpt_config = load_or_create_model(
         ckpt_path,
         model_size=model_size,
         device=device,
         allow_mismatch=migrate,
     )
-
-    # ── Gradient checkpointing for larger models ──────────────────
     if use_grad_checkpointing:
         model.use_checkpointing = True
         print(
             f"[Train] Gradient checkpointing enabled (saves ~{sum(p.numel() for p in model.parameters()) // 1000}K params worth of activation memory)"
         )
-
-    # ── torch.compile for faster training ──────────────────────────
     if device.type == "cuda" and compile_mode:
         try:
             import triton
@@ -123,10 +87,23 @@ def train(
             print(f"[Train] torch.compile enabled (mode={compile_mode})")
         except ImportError:
             print("[Train] Triton not available — skipping torch.compile")
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError) as e:
             print(f"[Train] torch.compile failed (falling back to eager): {e}")
+    return model
 
-    # ── Load champion traces ───────────────────────────────────────
+
+def _build_training_datasets(
+    recurrent_data_path: str | None,
+    augmentation_k: int,
+    val_split: float,
+    device: torch.device,
+) -> dict[str, Any] | None:
+    from data.augmentation import inject_reference_solutions, inject_synthetic_data, register_rename_augment
+    from data.loading import apply_level_cap, load_champion_traces, rebalance_level_weights
+    from data.packing import pad_or_pack_sequences
+    from rv32i_mask import decode as rv32i_decode
+    from rv32i_model import RV32IFieldTokenizer
+
     data_path = recurrent_data_path or os.path.join(BASE_DIR, "recurrent_data.jsonl")
     tokenizer = RV32IFieldTokenizer()
     sequences, sample_weights, raw_dicts_for_augment, entry_levels = load_champion_traces(
@@ -134,16 +111,14 @@ def train(
         tokenizer,
         rv32i_decode=rv32i_decode,
     )
-
     if not sequences:
         print("[Train] No usable sequences -- skipping retrain")
-        return
+        return None
 
     _cap_before = len(sequences)
     apply_level_cap(sequences, sample_weights, raw_dicts_for_augment, entry_levels)
     print(f"[Train] Per-level cap: {_cap_before} -> {len(sequences)} sequences")
 
-    # ── Register renaming augmentation ─────────────────────────────
     aug_count = 0
     augmented_seqs: list = []
     augmented_weights: list[float] = []
@@ -162,10 +137,6 @@ def train(
         print(f"[Train] Register renaming augmentation: +{aug_count} sequences")
     del raw_dicts_for_augment, augmented_seqs, augmented_weights
 
-    # ── R51: Augmentation in isolated subprocess ────────────────────
-    # Synthetic data generation + reference solutions run in a fresh
-    # interpreter with no CUDA context, preventing ACCESS_VIOLATION
-    # crashes when the parent process has corrupted CUDA state.
     import json as _json
     import subprocess as _subprocess
 
@@ -189,6 +160,7 @@ def train(
                 text=True,
                 timeout=120,
                 cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                check=False,
             )
             if _aug_result.returncode == 0 and _aug_result.stdout.strip():
                 _aug_data = _json.loads(_aug_result.stdout)
@@ -203,24 +175,18 @@ def train(
                         _aug_count += 1
                 print(f"[Train] R51 subprocess augmentation: +{_aug_count} sequences")
             else:
-                # Fallback to in-process if subprocess fails
                 print(f"[Train] R51 subprocess failed (rc={_aug_result.returncode}), falling back to in-process")
                 print(f"[Train] stderr: {_aug_result.stderr[:200]}")
                 inject_synthetic_data(sequences, sample_weights, seed=42)
                 inject_reference_solutions(tokenizer, sequences, sample_weights, rv32i_decode=rv32i_decode)
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             print(f"[Train] R51 subprocess error: {e}, falling back to in-process")
             inject_synthetic_data(sequences, sample_weights, seed=42)
             inject_reference_solutions(tokenizer, sequences, sample_weights, rv32i_decode=rv32i_decode)
     else:
-        # Fallback if subprocess script doesn't exist
         inject_synthetic_data(sequences, sample_weights, seed=42)
         inject_reference_solutions(tokenizer, sequences, sample_weights, rv32i_decode=rv32i_decode)
 
-    # ── Rebalance level weights (AFTER injection so all sequences get balanced) ──
-    from data.loading import rebalance_level_weights
-
-    # Reconstruct entry_levels for the full dataset (injected sequences get level 0)
     full_entry_levels = entry_levels + [0] * (len(sequences) - len(entry_levels))
     rebalance_level_weights(sample_weights, full_entry_levels)
 
@@ -232,60 +198,55 @@ def train(
         val_split=val_split,
         device=device,
     )
-    train_data = split["train_data"]
-    val_data = split["val_data"]
-    train_loss_mask = split["train_loss_mask"]
-    val_loss_mask = split["val_loss_mask"]
-    train_weights = split["train_weights"]
-    val_weights = split["val_weights"]
+    return {
+        "train_data": split["train_data"],
+        "val_data": split["val_data"],
+        "train_loss_mask": split["train_loss_mask"],
+        "val_loss_mask": split["val_loss_mask"],
+        "train_weights": split["train_weights"],
+        "val_weights": split["val_weights"],
+        "sequences_count": len(sequences),
+    }
 
-    # ── Training setup ─────────────────────────────────────────────
-    actual_epochs = max_epochs
-    lr = lr_override or 3e-5
-    n_train_batches = max(1, len(train_data) // batch_size)
 
-    sched = build_optimizer_and_schedulers(
-        model,
-        lr,
-        weight_decay,
-        actual_epochs,
-        n_train_batches,
-        swa_start=swa_start,
-        swa_lr=swa_lr,
-    )
-    optimizer = sched["optimizer"]
-    scheduler = sched["scheduler"]
-    use_swa = sched["use_swa"]
-    swa_model = sched["swa_model"]
-    swa_scheduler = sched["swa_scheduler"]
-
-    # AMP (mixed precision)
-    use_amp = amp and device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda") if use_amp else None
-
-    # Enable TF32 for faster matmul on Ampere+ GPUs
-    if device.type == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
-
+def _run_training_epochs(
+    model: Any,
+    train_data: Any,
+    val_data: Any,
+    train_loss_mask: Any,
+    val_loss_mask: Any,
+    train_weights: Any,
+    val_weights: Any,
+    actual_epochs: int,
+    batch_size: int,
+    patience: int,
+    grad_accum_steps: int,
+    use_amp: bool,
+    scaler: Any,
+    optimizer: Any,
+    scheduler: Any,
+    use_swa: bool,
+    swa_model: Any,
+    swa_scheduler: Any,
+    swa_start: int | None,
+) -> dict[str, Any]:
     from rv32i_model import compute_loss as weighted_compute_loss
     from rv32i_model import compute_loss_with_scheduled_sampling
+
+    from training.schedule import adjust_dropout
 
     best_val_loss = float("inf")
     best_epoch = 0
     best_state = None
     no_improve = 0
     step_count = 0
+    last_epoch = 0
 
     for epoch in range(actual_epochs):
-        current_drop = adjust_dropout(model, epoch, actual_epochs)
-
-        # Phase 3: Scheduled sampling
+        last_epoch = epoch
+        adjust_dropout(model, epoch, actual_epochs)
         teacher_prob = max(0.3, 1.0 - (epoch / actual_epochs) * 0.7)
-        # Phase 4: Embedding noise
         noise_std = 0.02 * max(0.0, 1.0 - epoch / actual_epochs)
-        # Label smoothing (constant)
         label_smooth = 0.05
 
         model.train()
@@ -330,14 +291,11 @@ def train(
             n_batches += 1
             step_count += 1
 
-        # Update SWA model after swa_start epoch
-        if use_swa and swa_model is not None and epoch >= swa_start:
+        if use_swa and swa_model is not None and swa_start is not None and epoch >= swa_start:
             swa_model.update_parameters(model)
             swa_scheduler.step()
 
         avg_loss = total_loss / max(1, n_batches)
-
-        # Validation
         val_loss = avg_loss
         if val_data is not None and len(val_data) > 0:
             model.eval()
@@ -364,40 +322,181 @@ def train(
             no_improve += 1
 
         print(
-            f"[Train] Epoch {epoch + 1}/{actual_epochs}: train={avg_loss:.4f} val={val_loss:.4f} (best={best_val_loss:.4f} @ ep{best_epoch + 1})"
+            f"[Train] Epoch {epoch + 1}/{actual_epochs}: train={avg_loss:.4f} val={val_loss:.4f} "
+            f"(best={best_val_loss:.4f} @ ep{best_epoch + 1})"
         )
 
-        # Early stopping
         if no_improve >= patience:
             print(f"[Train] Early stopping at epoch {epoch + 1} -- no improvement for {patience} epochs")
             break
 
-    # Finalize SWA
+    return {
+        "best_val_loss": best_val_loss,
+        "best_epoch": best_epoch,
+        "last_epoch": last_epoch,
+        "best_state": best_state,
+    }
+
+
+def _finalize_training_run(
+    model: Any,
+    best_state: Any,
+    best_epoch: int,
+    best_val_loss: float,
+    last_epoch: int,
+    sequences_count: int,
+    checkpoint_dir: str,
+    model_size: str,
+    output_path: str | None,
+    use_swa: bool,
+    swa_model: Any,
+    train_data: Any,
+    device: torch.device,
+    optimizer: Any,
+) -> None:
+    from training.checkpoint import save_training_checkpoint
+
     if use_swa and swa_model is not None:
         torch.optim.swa_utils.update_bn(train_data, swa_model, device=device)
         model = swa_model.module
 
-    # Restore best model weights
     if best_state is not None:
         model.load_state_dict(best_state)
         print(f"[Train] Restored best model from epoch {best_epoch + 1} (val_loss={best_val_loss:.4f})")
 
-    # ── Save checkpoint ────────────────────────────────────────────
     save_training_checkpoint(
         model,
         best_val_loss,
         best_epoch,
-        epoch,
-        len(sequences),
+        last_epoch,
+        sequences_count,
         checkpoint_dir,
         config_name=model_size,
         output_path=output_path,
     )
 
-    # Cleanup
     del model, optimizer
     if swa_model is not None:
         del swa_model
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+def train(
+    resume_path: str | None = None,
+    recurrent_data_path: str | None = None,
+    lr_override: float | None = None,
+    freeze_layers: int = 0,
+    adaptive_freeze: bool = False,
+    batch_size: int = 8,
+    weight_decay: float = 0.01,
+    patience: int = 3,
+    grad_clip: float | None = None,
+    max_epochs: int = 12,
+    val_split: float = 0.15,
+    max_per_level: int | None = None,
+    model_size: str = "large",
+    amp: bool = True,
+    compile_mode: str | None = None,
+    swa_start: int | None = None,
+    swa_lr: float | None = None,
+    grad_accum_steps: int = 1,
+    augmentation_k: int = 8,
+    rebuild_dataset: bool = False,
+    reset_checkpoint: bool = False,
+    migrate: bool = False,
+    use_grad_checkpointing: bool = False,
+    output_path: str | None = None,
+    **kwargs: Any,
+) -> None:
+    """Train the RV32ITransformer on champion program traces."""
+    from training.schedule import build_optimizer_and_schedulers
+
+    checkpoint_dir = os.path.join(BASE_DIR, "checkpoints")
+    ckpt_path = _prepare_train_checkpoint(resume_path, checkpoint_dir, reset_checkpoint)
+    device = _resolve_train_device()
+    model = _load_compiled_train_model(
+        ckpt_path, model_size, device, migrate, use_grad_checkpointing, compile_mode
+    )
+
+    datasets = _build_training_datasets(recurrent_data_path, augmentation_k, val_split, device)
+    if datasets is None:
+        return
+
+    train_data = datasets["train_data"]
+    val_data = datasets["val_data"]
+    train_loss_mask = datasets["train_loss_mask"]
+    val_loss_mask = datasets["val_loss_mask"]
+    train_weights = datasets["train_weights"]
+    val_weights = datasets["val_weights"]
+    sequences_count = datasets["sequences_count"]
+
+    # ── Training setup ─────────────────────────────────────────────
+    actual_epochs = max_epochs
+    lr = lr_override or 3e-5
+    n_train_batches = max(1, len(train_data) // batch_size)
+
+    sched = build_optimizer_and_schedulers(
+        model,
+        lr,
+        weight_decay,
+        actual_epochs,
+        n_train_batches,
+        swa_start=swa_start,
+        swa_lr=swa_lr,
+    )
+    optimizer = sched["optimizer"]
+    scheduler = sched["scheduler"]
+    use_swa = sched["use_swa"]
+    swa_model = sched["swa_model"]
+    swa_scheduler = sched["swa_scheduler"]
+
+    # AMP (mixed precision)
+    use_amp = amp and device.type == "cuda"
+    scaler = torch.amp.GradScaler("cuda") if use_amp else None
+
+    # Enable TF32 for faster matmul on Ampere+ GPUs
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+
+    loop_result = _run_training_epochs(
+        model,
+        train_data,
+        val_data,
+        train_loss_mask,
+        val_loss_mask,
+        train_weights,
+        val_weights,
+        actual_epochs,
+        batch_size,
+        patience,
+        grad_accum_steps,
+        use_amp,
+        scaler,
+        optimizer,
+        scheduler,
+        use_swa,
+        swa_model,
+        swa_scheduler,
+        swa_start,
+    )
+
+    _finalize_training_run(
+        model,
+        loop_result["best_state"],
+        loop_result["best_epoch"],
+        loop_result["best_val_loss"],
+        loop_result["last_epoch"],
+        sequences_count,
+        checkpoint_dir,
+        model_size,
+        output_path,
+        use_swa,
+        swa_model,
+        train_data,
+        device,
+        optimizer,
+    )

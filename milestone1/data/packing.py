@@ -79,10 +79,12 @@ def pack_sequences(
     for pack in packs:
         t = torch.cat(pack)
         if len(t) < max_seq_len:
-            t = torch.cat([
-                t,
-                torch.zeros(max_seq_len - len(t), dtype=torch.long),
-            ])
+            t = torch.cat(
+                [
+                    t,
+                    torch.zeros(max_seq_len - len(t), dtype=torch.long),
+                ]
+            )
         packed_list.append(t)
 
     packed = torch.stack(packed_list)
@@ -110,7 +112,6 @@ def pad_or_pack_sequences(
         n_packs, waste_pct:        Stats for logging.
         max_len:                   Max sequence length (padding fallback only).
     """
-    packed = False
     loss_mask = None
 
     try:
@@ -119,9 +120,10 @@ def pad_or_pack_sequences(
         n_total_tokens = int(packed_tensors.numel())
         n_effective = sum(sum(pl) for pl in pack_lengths)
         waste_pct = 100.0 * (1.0 - n_effective / max(1, n_total_tokens))
-        print(f"[Train] Sequence packing: {n_packs} packs from {len(sequences)} sequences, "
-              f"padding waste={waste_pct:.1f}%")
-        packed = True
+        print(
+            f"[Train] Sequence packing: {n_packs} packs from {len(sequences)} sequences, "
+            f"padding waste={waste_pct:.1f}%"
+        )
         padded = packed_tensors
 
         # Build loss mask for packed sequences.
@@ -131,30 +133,34 @@ def pad_or_pack_sequences(
             offset = 0
             for j, slen in enumerate(lengths):
                 if j == 0:
-                    loss_mask[p, offset:offset + slen] = True
+                    loss_mask[p, offset : offset + slen] = True
                 else:
-                    loss_mask[p, offset + 1:offset + slen] = True
+                    loss_mask[p, offset + 1 : offset + slen] = True
                 offset += slen
 
-        result = {"packed": True, "padded": padded, "loss_mask": loss_mask,
-                      "n_packs": n_packs, "waste_pct": waste_pct, "max_len": None}
+        result = {
+            "packed": True,
+            "padded": padded,
+            "loss_mask": loss_mask,
+            "n_packs": n_packs,
+            "waste_pct": waste_pct,
+            "max_len": None,
+        }
 
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError) as exc:
         print(f"[Train] Sequence packing failed ({exc}), falling back to padding")
-        result = {"packed": False, "padded": None, "loss_mask": None,
-                      "n_packs": 0, "waste_pct": 0.0, "max_len": None}
+        result = {"packed": False, "padded": None, "loss_mask": None, "n_packs": 0, "waste_pct": 0.0, "max_len": None}
 
     if not result["packed"]:
         # Fallback: simple longest-padding.
         max_len = max(len(s) for s in sequences)
-        padded = torch.stack([
-            torch.cat([s, torch.zeros(max_len - len(s), dtype=torch.long)])
-            for s in sequences
-        ])
+        padded = torch.stack([torch.cat([s, torch.zeros(max_len - len(s), dtype=torch.long)]) for s in sequences])
         loss_mask = padded != 0
         waste_pct = 100.0 * (1.0 - sum(len(s) for s in sequences) / padded.numel())
-        print(f"[Train] Padding fallback: {len(sequences)} sequences, max_len={max_len}, "
-              f"padding waste={waste_pct:.1f}%")
+        print(
+            f"[Train] Padding fallback: {len(sequences)} sequences, max_len={max_len}, "
+            f"padding waste={waste_pct:.1f}%"
+        )
         result["padded"] = padded
         result["loss_mask"] = loss_mask
         result["waste_pct"] = waste_pct
@@ -164,6 +170,7 @@ def pad_or_pack_sequences(
     padded = result["padded"]
     lmask = result["loss_mask"]
     import random as _rng
+
     _idx = list(range(len(padded)))
     _rng.seed(42)
     _rng.shuffle(_idx)
@@ -179,11 +186,12 @@ def pad_or_pack_sequences(
 
     # Phase 5: split sample_weights alongside train/val
     result["train_weights"] = torch.tensor(
-        [sample_weights[i] for i in _train_idx], dtype=torch.float, device=_dev,
+        [sample_weights[i] for i in _train_idx],
+        dtype=torch.float,
+        device=_dev,
     )
     result["val_weights"] = (
-        torch.tensor([sample_weights[i] for i in _val_idx], dtype=torch.float, device=_dev)
-        if _n_val > 0 else None
+        torch.tensor([sample_weights[i] for i in _val_idx], dtype=torch.float, device=_dev) if _n_val > 0 else None
     )
 
     return result

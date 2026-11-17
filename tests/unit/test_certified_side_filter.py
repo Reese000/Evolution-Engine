@@ -1,6 +1,5 @@
 """Certified champion rows must pass CPU side/held-out floors."""
 
-import json
 import os
 
 os.environ.setdefault("EE_USE_GPU", "0")
@@ -8,10 +7,10 @@ os.environ.setdefault("EE_USE_GPU", "0")
 
 def test_compact_l30_certified_row_valid_rejects_side_regression():
     from evolution.champion_rollback import compact_l30_certified_row_valid, find_best_certified_champion
+    from tests.live_results import live_result_rows
 
     rows = {}
-    for line in open("multi_cycle_results.jsonl"):
-        d = json.loads(line)
+    for d in live_result_rows():
         if d["cycle"] in (7448, 7452):
             rows[d["cycle"]] = d
     if 7448 not in rows or 7452 not in rows:
@@ -34,23 +33,31 @@ def test_growth_material_load_prunes_side_regression():
     from pathlib import Path
 
     from evolution.champion_rollback import _load_growth_material_entries
+    from tests.live_results import live_result_rows
 
-    row = json.loads(Path("multi_cycle_results.jsonl").read_text().splitlines()[-1])
-    champ = [int(x, 16) if isinstance(x, str) else int(x) for x in row["champion_program"]]
+    row = list(live_result_rows())[-1]
+    champ = [
+        int(x, 16) if isinstance(x, str) else int(x) for x in row["champion_program"]
+    ]
     material_path = Path(".agents/scan_floor_growth_material.json")
     if not material_path.exists():
         return
     before = json.loads(material_path.read_text())
     _anchor, entries = _load_growth_material_entries(champ)
     assert entries
-    assert all(len(e.get("program") or []) <= len(champ) + 25 for e in entries)
+    assert all(
+        len(e.get("program") or []) <= len(champ) + 25 for e in entries
+    )
     after = json.loads(material_path.read_text())
     # Prune should drop the highest-prom side-broken rows from the live bucket.
     assert sum(len(v) for v in after.values()) <= sum(len(v) for v in before.values())
 
 
 def test_growth_material_record_rejects_side_regression(monkeypatch):
-    from evolution.champion_rollback import _growth_material_capability_qualifies, record_scan_floor_growth_material
+    from evolution.champion_rollback import (
+        _growth_material_capability_qualifies,
+        record_scan_floor_growth_material,
+    )
 
     champ = [1, 2, 3, 0x00100073]
     good = champ + [4, 5]
@@ -77,7 +84,10 @@ def test_growth_material_record_rejects_side_regression(monkeypatch):
 
 
 def test_ranked_growth_fills_reject_side_regression(monkeypatch):
-    from evolution.terminal_stagnation import _ranked_scan_floor_growth_fills_cached, ranked_scan_floor_growth_fills
+    from evolution.terminal_stagnation import (
+        _ranked_scan_floor_growth_fills_cached,
+        ranked_scan_floor_growth_fills,
+    )
 
     champ = [1, 2, 3, 0x00100073]
     good = champ + [4, 5, 6]
@@ -104,13 +114,11 @@ def test_ranked_growth_fills_reject_side_regression(monkeypatch):
 
 
 def test_growth_completion_rejects_side_regression_at_length():
-    import json
-
     from evolution.mutation_helpers import scan_floor_growth_completion_qualifies
+    from tests.live_results import live_result_rows
 
     rows = {}
-    for line in open("multi_cycle_results.jsonl"):
-        d = json.loads(line)
+    for d in live_result_rows():
         if d["cycle"] in (7448, 7450):
             rows[d["cycle"]] = d
     if 7448 not in rows or 7450 not in rows:

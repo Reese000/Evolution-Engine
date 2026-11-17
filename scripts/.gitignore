@@ -1,0 +1,16 @@
+# scripts/ split rule (t_c954f119): production runtime tooling IS tracked
+# (daemon, prune, restart, deploy/monitor/verify scripts); only one-off
+# scratch is kept out of git here.
+#
+# Scratch conventions in this directory:
+#   _*.py            — one-off probes / ad-hoc diagnostics (_probe_*, _verify_*, ...)
+#   *.bak-*          — timestamped backup copies of scripts we superseded
+#   <empty>          — zero-byte leftovers that were never filled in
+_*.py
+*.bak-*
+deploy_epi_fixes.py
+patch_streak_bonus.py
+# reads the excluded _verify_epi_momentum_goal_body.py (stale payload:
+# running it would revert scripts/verify_epi_momentum_goal.py to a
+# pre-growth-gate version) - one-shot, superseded (t_c954f119 review)
+patch_verifier_projection.py

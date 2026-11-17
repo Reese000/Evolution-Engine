@@ -165,7 +165,9 @@ class MAPElitesArchive:
             unique_count = len(set(history))
             diversity_ratio = unique_count / len(history)
         diversity_discount = 0.05 * diversity_ratio
-        effective_incumbent = self._grid[idx]["fitness"] * freshness_factor * (1.0 - diversity_discount)
+        effective_incumbent = (
+            self._grid[idx]["fitness"] * freshness_factor * (1.0 - diversity_discount)
+        )
         min_margin = 0.03 * (1.0 - staleness_score)
         return effective_incumbent, min_margin
 
@@ -778,7 +780,9 @@ class MAPElitesArchive:
         quality_weighted_uniformity = self._compute_quality_weighted_uniformity(qw_densities)
         quality_weighted_diversity = coverage_ratio * quality_weighted_uniformity
         quality_weighted_shannon_entropy = self._compute_quality_weighted_shannon_entropy()
-        quality_weighted_illumination_diversity = coverage_ratio * quality_weighted_shannon_entropy
+        quality_weighted_illumination_diversity = (
+            coverage_ratio * quality_weighted_shannon_entropy
+        )
         result = {
             "coverage_ratio": coverage_ratio,
             "centroid_distance": centroid_distance,

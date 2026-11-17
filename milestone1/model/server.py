@@ -22,22 +22,17 @@ import os
 import sys
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
-import torch.nn.functional as F
 
 # ---------------------------------------------------------------------------
 # Ensure milestone1 is importable
 # ---------------------------------------------------------------------------
-_milestone1 = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
+_milestone1 = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _milestone1 not in sys.path:
     sys.path.insert(0, _milestone1)
 
-from rv32i_mask import decode as rv_decode
-from rv32i_mask import encode as rv_encode
 from rv32i_model import RV32IFieldTokenizer, RV32ITransformer, RV32IVocab
 
 logger = logging.getLogger(__name__)
@@ -46,6 +41,7 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 #  SERVER CONFIG
 # =====================================================================
+
 
 @dataclasses.dataclass
 class ServerConfig:
@@ -77,6 +73,7 @@ class ServerConfig:
 #  RESULT CACHE
 # =====================================================================
 
+
 class ResultCache:
     """Thread-safe LRU cache with per-entry TTL eviction.
 
@@ -90,9 +87,9 @@ class ResultCache:
         self.default_ttl = default_ttl
 
         self._lock = threading.Lock()
-        self._cache: dict[str, Any] = {}          # key -> value
-        self._expiry: dict[str, float] = {}        # key -> timestamp
-        self._access_order: list[str] = []          # LRU order (most recent at end)
+        self._cache: dict[str, Any] = {}  # key -> value
+        self._expiry: dict[str, float] = {}  # key -> timestamp
+        self._access_order: list[str] = []  # LRU order (most recent at end)
 
         # Statistics
         self._hits = 0
@@ -232,6 +229,7 @@ class ResultCache:
 #  DEDUPLICATION TRACKER
 # =====================================================================
 
+
 class DeduplicationTracker:
     """Tracks in-flight requests so identical prompts share one GPU run.
 
@@ -245,9 +243,7 @@ class DeduplicationTracker:
         self._lock = threading.Lock()
         self._inflight: dict[str, list[_PendingRequest]] = {}
 
-    def register(
-        self, dedup_key: str, request: "_PendingRequest"
-    ) -> list["_PendingRequest"] | None:
+    def register(self, dedup_key: str, request: "_PendingRequest") -> list["_PendingRequest"] | None:
         """Register a new request.
 
         Args:
@@ -283,6 +279,7 @@ class DeduplicationTracker:
 #  PENDING REQUEST
 # =====================================================================
 
+
 @dataclasses.dataclass
 class _PendingRequest:
     """A single inference request waiting to be batched and executed."""
@@ -301,6 +298,7 @@ class _PendingRequest:
 # =====================================================================
 #  BATCH COLLECTOR
 # =====================================================================
+
 
 class BatchCollector:
     """Collects individual inference requests into GPU-efficient batches.
@@ -345,9 +343,7 @@ class BatchCollector:
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(
-            target=self._collect_loop, daemon=True, name="BatchCollector"
-        )
+        self._thread = threading.Thread(target=self._collect_loop, daemon=True, name="BatchCollector")
         self._thread.start()
         print("[Server] BatchCollector background thread started")
 
@@ -460,10 +456,7 @@ class BatchCollector:
         try:
             self._execute_batch(batch)
         except torch.cuda.OutOfMemoryError:
-            print(
-                f"[Server] CUDA OOM with batch size {len(batch)}, "
-                f"splitting and retrying"
-            )
+            print(f"[Server] CUDA OOM with batch size {len(batch)}, " f"splitting and retrying")
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
@@ -473,7 +466,7 @@ class BatchCollector:
                 self._run_batch(batch[mid:])
             else:
                 self._signal_error(batch[0], RuntimeError("CUDA OOM on single request"))
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError) as e:
             print(f"[Server] Batch execution error: {e}")
             if len(batch) > 1:
                 # Fallback: run each request individually
@@ -488,7 +481,7 @@ class BatchCollector:
         Pads all prompts to the same length, runs a single forward pass,
         then slices the generated tokens for each request.
         """
-        batch_size = len(batch)
+        len(batch)
 
         # Determine max prompt length in the batch
         max_prompt_len = max(len(r.prompt_tokens) for r in batch)
@@ -497,13 +490,9 @@ class BatchCollector:
         padded: list[list[int]] = []
         for req in batch:
             pad_len = max_prompt_len - len(req.prompt_tokens)
-            padded.append(
-                [RV32IVocab.PAD] * pad_len + req.prompt_tokens
-            )
+            padded.append([RV32IVocab.PAD] * pad_len + req.prompt_tokens)
 
-        input_ids = torch.tensor(
-            padded, dtype=torch.long, device=self.device
-        )
+        input_ids = torch.tensor(padded, dtype=torch.long, device=self.device)
 
         # All requests in a batch must share the same generation parameters
         # for a single model.generate() call.  We use the parameters from
@@ -557,9 +546,7 @@ class BatchCollector:
     def _run_single_fallback(self, req: _PendingRequest) -> None:
         """Run a single request outside of batching as a fallback."""
         try:
-            input_ids = torch.tensor(
-                [req.prompt_tokens], dtype=torch.long, device=self.device
-            )
+            input_ids = torch.tensor([req.prompt_tokens], dtype=torch.long, device=self.device)
 
             with torch.no_grad():
                 self.model.eval()
@@ -590,7 +577,7 @@ class BatchCollector:
                 self.cache.set(cache_key, generated)
 
             req.event.set()
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError) as e:
             self._signal_error(req, e)
 
     @staticmethod
@@ -603,6 +590,7 @@ class BatchCollector:
 # =====================================================================
 #  MODEL SERVER
 # =====================================================================
+
 
 class ModelServer:
     """Main server integrating cache, deduplication, and batched inference.
@@ -627,9 +615,7 @@ class ModelServer:
 
         # Resolve device
         if config.device == "auto":
-            self.device = torch.device(
-                "cuda" if torch.cuda.is_available() else "cpu"
-            )
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(config.device)
 
@@ -669,28 +655,18 @@ class ModelServer:
         """Load model from checkpoint with architecture migration."""
         # Reuse PrefixGenerator's loading logic inline to avoid a circular
         # dependency.  This imports the helper functions.
-        _dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+        _dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if _dir not in sys.path:
             sys.path.insert(0, _dir)
 
         try:
-            from prefix_generator import (
-                _build_key_map,
-                _infer_model_dims,
-            )
+            from prefix_generator import _build_key_map, _infer_model_dims
 
             if not os.path.isfile(checkpoint_path):
-                logger.warning(
-                    f"Checkpoint not found: {checkpoint_path}, "
-                    f"creating fresh model"
-                )
+                logger.warning(f"Checkpoint not found: {checkpoint_path}, " f"creating fresh model")
                 return self._create_fresh_model()
 
-            ckpt = torch.load(
-                checkpoint_path, map_location="cpu", weights_only=False
-            )
+            ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
             state_dict = ckpt.get("model_state_dict", ckpt)
 
             dims = _infer_model_dims(state_dict)
@@ -742,10 +718,7 @@ class ModelServer:
             return model
 
         except ImportError:
-            logger.warning(
-                "prefix_generator helpers not importable, "
-                "creating fresh model"
-            )
+            logger.warning("prefix_generator helpers not importable, " "creating fresh model")
             return self._create_fresh_model()
 
     def _create_fresh_model(self) -> RV32ITransformer:
@@ -820,13 +793,15 @@ class ModelServer:
             Generated token sequence (list of int, including prompt).
         """
         if not self._running:
-            raise RuntimeError(
-                "ModelServer is not running.  Call start() first."
-            )
+            raise RuntimeError("ModelServer is not running.  Call start() first.")
 
         # 1. Check cache
         cache_key = ResultCache.make_key(
-            prompt_tokens, max_new_tokens, temperature, top_k, top_p,
+            prompt_tokens,
+            max_new_tokens,
+            temperature,
+            top_k,
+            top_p,
             repetition_penalty,
         )
         cached = self.cache.get(cache_key)
@@ -946,15 +921,9 @@ class ModelServer:
 
         if torch.cuda.is_available():
             info["gpu"] = {
-                "allocated_mb": round(
-                    torch.cuda.memory_allocated(self.device) / 1024**2, 2
-                ),
-                "reserved_mb": round(
-                    torch.cuda.memory_reserved(self.device) / 1024**2, 2
-                ),
-                "max_allocated_mb": round(
-                    torch.cuda.max_memory_allocated(self.device) / 1024**2, 2
-                ),
+                "allocated_mb": round(torch.cuda.memory_allocated(self.device) / 1024**2, 2),
+                "reserved_mb": round(torch.cuda.memory_reserved(self.device) / 1024**2, 2),
+                "max_allocated_mb": round(torch.cuda.max_memory_allocated(self.device) / 1024**2, 2),
                 "device_name": torch.cuda.get_device_name(self.device),
             }
         else:

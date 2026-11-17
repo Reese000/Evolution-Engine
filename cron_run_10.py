@@ -106,19 +106,15 @@ def _load_models_from_checkpoint(checkpoint_path):
     }
     new_config_dict = {"d_model": 512, "n_layers": 14, "n_heads": 8, "d_ff": 2048}
     old_cfg = RV32IConfig(
-        d_model=old_config_dict["d_model"],
-        n_layers=old_config_dict["n_layers"],
-        n_heads=old_config_dict["n_heads"],
-        d_ff=old_config_dict["d_ff"],
+        d_model=old_config_dict["d_model"], n_layers=old_config_dict["n_layers"],
+        n_heads=old_config_dict["n_heads"], d_ff=old_config_dict["d_ff"],
     )
     old_model = RV32IModel(old_cfg)
     old_model.load_state_dict(ckpt["model_state_dict"])
     old_model.eval()
     new_cfg = RV32IConfig(
-        d_model=new_config_dict["d_model"],
-        n_layers=new_config_dict["n_layers"],
-        n_heads=new_config_dict["n_heads"],
-        d_ff=new_config_dict["d_ff"],
+        d_model=new_config_dict["d_model"], n_layers=new_config_dict["n_layers"],
+        n_heads=new_config_dict["n_heads"], d_ff=new_config_dict["d_ff"],
     )
     new_model = RV32IModel(new_cfg)
     new_model.eval()
@@ -282,15 +278,7 @@ def _update_meta_controller(meta_controller, cycle, evo_metrics, val_loss, retra
     meta_controller.save_state(META_CONTROLLER_STATE)
 
 
-def _print_final_summary(
-    completed_cycles,
-    archive_size,
-    saturation_triggered,
-    last_checkpoint,
-    fitness_history,
-    level_history,
-    val_loss_history,
-):
+def _print_final_summary(completed_cycles, archive_size, saturation_triggered, last_checkpoint, fitness_history, level_history, val_loss_history):
     """Print final summary and save summary JSON."""
     clog(f"\n{'=' * 60}")
     clog("FINAL SUMMARY")
@@ -335,7 +323,6 @@ def _init_meta_controller():
     if not _HAS_META_CONTROLLER:
         return None
     from meta_controller import MetaController
-
     mc = MetaController(
         checkpoint_dir=M1_CHECKPOINTS,
         log_file=os.path.join(PROJECT_ROOT, "meta_controller.log"),
@@ -375,6 +362,30 @@ def _check_and_log_saturation(archive_size, fitness_history, val_loss_history, l
     return False
 
 
+def _count_archive_lines(archive_path: str, default: int = 0) -> int:
+    """Count the non-empty lines of the champion archive.
+
+    Every read of this file must survive damage: a single non-UTF8 byte would
+    otherwise raise UnicodeDecodeError straight out of ``main`` and kill the
+    whole cron run (errors="replace" turns it into U+FFFD, so the line still
+    counts). An I/O failure is logged and reported as ``default`` instead of
+    raising: archive_size is a scale-out decision input, not just a log line --
+    _check_and_log_saturation hands it to check_saturation, where
+    archive_size >= 200 is one of the four criteria behind should_scale. So on
+    a locked archive the caller's last known value is kept (the initial read
+    still starts at 0 when there is no archive yet, exactly as before the fix)
+    instead of crashing the run or silently flipping the scale-out decision.
+    """
+    if not os.path.isfile(archive_path):
+        return default
+    try:
+        with open(archive_path, encoding="utf-8", errors="replace") as f:
+            return sum(1 for line in f if line.strip())
+    except OSError as exc:
+        clog(f"  WARNING: could not count archive lines ({exc}); archive size kept at {default}")
+        return default
+
+
 def main():
     NUM_CYCLES = 10
     NUM_GENS = 100
@@ -387,10 +398,7 @@ def main():
     level_history = []
 
     archive_path = os.path.join(PROJECT_ROOT, "champions", "archive.jsonl")
-    archive_size = 0
-    if os.path.isfile(archive_path):
-        with open(archive_path) as f:
-            archive_size = sum(1 for line in f if line.strip())
+    archive_size = _count_archive_lines(archive_path)
     clog(f"Starting archive size: {archive_size}")
 
     meta_controller = _init_meta_controller()
@@ -414,9 +422,7 @@ def main():
             val_loss = result.get("val_loss", None)
             if val_loss is not None:
                 val_loss_history.append(val_loss)
-            if os.path.isfile(archive_path):
-                with open(archive_path) as f:
-                    archive_size = sum(1 for line in f if line.strip())
+            archive_size = _count_archive_lines(archive_path, default=archive_size)
             _log_cycle_complete(cycle, evo_metrics, val_loss, result, archive_size)
             if meta_controller and val_loss is not None:
                 _update_meta_controller(meta_controller, cycle, evo_metrics, val_loss, result["retrained"])
@@ -428,15 +434,7 @@ def main():
             traceback.print_exc()
             continue
 
-    _print_final_summary(
-        completed_cycles,
-        archive_size,
-        saturation_triggered,
-        last_checkpoint,
-        fitness_history,
-        level_history,
-        val_loss_history,
-    )
+    _print_final_summary(completed_cycles, archive_size, saturation_triggered, last_checkpoint, fitness_history, level_history, val_loss_history)
 
 
 if __name__ == "__main__":

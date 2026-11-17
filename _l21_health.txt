@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-08T01:03:36.516785Z",
+  "ok": false,
+  "issues": [
+    "evolution_daemon: pid 33608 not running",
+    "trajectory_watcher: pid 3052 not running"
+  ],
+  "actions": [],
+  "components": {
+    "wake_loop": "wake_loop: pid 27584 ok (hb 1213s)",
+    "evolution_daemon": "evolution_daemon: pid 33608 not running",
+    "trajectory_watcher": "trajectory_watcher: pid 3052 not running",
+    "flatline_guard": "flatline_guard import ok"
+  }
+}

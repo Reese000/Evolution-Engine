@@ -3,7 +3,6 @@
 Per-step micro-timer: instruments a single training epoch to measure
 where time goes within each step (data fetch, forward, backward, optim).
 """
-import gc
 import os
 import sys
 import time
@@ -17,15 +16,12 @@ if SCRIPT_DIR not in sys.path:
 if M1_DIR not in sys.path:
     sys.path.insert(0, M1_DIR)
 
-import json as _json
 
 from data.loading import apply_level_cap, load_champion_traces, rebalance_level_weights
 from data.packing import pad_or_pack_sequences
 from rv32i_mask import decode as rv32i_decode
 from rv32i_model import RV32IFieldTokenizer, compute_loss
-from training.checkpoint import find_existing_checkpoint
 from training.model_factory import load_or_create_model
-from training.schedule import build_optimizer_and_schedulers
 
 
 def main():

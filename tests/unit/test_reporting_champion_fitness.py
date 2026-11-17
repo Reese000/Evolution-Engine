@@ -1,9 +1,9 @@
 """Tests for end-of-cycle reporting fitness."""
-
-import json
 import os
 
 import pytest
+
+from tests.live_results import live_result_rows
 
 os.environ.setdefault("EE_USE_GPU", "0")
 
@@ -11,7 +11,7 @@ os.environ.setdefault("EE_USE_GPU", "0")
 @pytest.fixture
 def l30_verified_champion():
     path = os.path.join(os.path.dirname(__file__), "..", "..", "multi_cycle_results.jsonl")
-    rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
+    rows = list(live_result_rows(path))
     row = next(
         (r for r in reversed(rows) if float(r.get("champion_verify_score", 0)) >= 1.0 - 1e-6),
         None,
@@ -23,9 +23,12 @@ def l30_verified_champion():
 
 def test_reporting_fitness_for_verified_champion(l30_verified_champion):
     from evolution.fitness_helpers import reporting_champion_fitness
-    from evolution_engine import EvolutionConfig, EvolutionEngine
+    from evolution_engine import EvolutionEngine, EvolutionConfig
 
-    prog = [int(x, 16) if isinstance(x, str) else int(x) for x in l30_verified_champion["champion_program"]]
+    prog = [
+        int(x, 16) if isinstance(x, str) else int(x)
+        for x in l30_verified_champion["champion_program"]
+    ]
     level = int(l30_verified_champion["final_level"])
     eng = EvolutionEngine(EvolutionConfig(curriculum_level=level))
     eng.champion_level = level

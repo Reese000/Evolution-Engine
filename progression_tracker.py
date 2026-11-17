@@ -104,12 +104,7 @@ class ProgressionTracker:
                         continue
                     d = json.loads(line)
                     self.history.append(CycleMetrics(**d))
-        except (
-            OSError,
-            json.JSONDecodeError,
-            ValueError,
-            KeyError,
-        ):  # Intentional: history file may be corrupted; skip
+        except (OSError, json.JSONDecodeError, ValueError, KeyError):  # Intentional: history file may be corrupted; skip
             pass
 
     def record(self, metrics: CycleMetrics) -> None:
@@ -613,7 +608,9 @@ class TuningPolicy:
             )
         ]
 
-    def _rule_val_loss_increasing(self, vt: float, current_config: dict[str, Any]) -> list[TuningAdjustment]:
+    def _rule_val_loss_increasing(
+        self, vt: float, current_config: dict[str, Any]
+    ) -> list[TuningAdjustment]:
         """Rule 2: val_loss increasing adjustment."""
         if vt <= 0.001:
             return []
@@ -628,7 +625,9 @@ class TuningPolicy:
             )
         ]
 
-    def _rule_val_loss_decreasing(self, vt: float, current_config: dict[str, Any]) -> list[TuningAdjustment]:
+    def _rule_val_loss_decreasing(
+        self, vt: float, current_config: dict[str, Any]
+    ) -> list[TuningAdjustment]:
         """Rule 3: val_loss decreasing well adjustment."""
         if vt >= -0.01:
             return []

@@ -10,25 +10,10 @@ from evolution.terminal_stagnation import (
     terminal_diversity_boost_params,
     terminal_diversity_boost_tier,
     terminal_efficiency_eval_budget,
-    terminal_probe_escalation_ratio,
     terminal_retrain_interval,
+    terminal_probe_escalation_ratio,
 )
-
-
-def _live_60w_champion():
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        import pytest
-
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    return [int(x, 16) for x in row["champion_program"]]
+from tests.live_results import live_champion_program, live_result_rows
 
 
 def test_verify_promote_at_zero_fitness_plateau(monkeypatch):
@@ -100,9 +85,7 @@ def test_terminal_verify_selection_bonus_active(monkeypatch, tmp_path):
 
 def test_terminal_efficiency_variants_strips_nops():
     import random
-
-    from evolution.terminal_stagnation import _EBREAK, _NOP, terminal_efficiency_variants
-
+    from evolution.terminal_stagnation import terminal_efficiency_variants, _NOP, _EBREAK
     prog = [_NOP, _NOP, 0x123, _EBREAK]
     variants = terminal_efficiency_variants(prog, random.Random(0), max_evals=8)
     assert variants
@@ -112,8 +95,7 @@ def test_terminal_efficiency_variants_strips_nops():
 
 def test_terminal_efficiency_variants_deletes_instruction_without_nops():
     import random
-
-    from evolution.terminal_stagnation import _EBREAK, terminal_efficiency_variants
+    from evolution.terminal_stagnation import terminal_efficiency_variants, _EBREAK
 
     prog = [0x00100093, 0x00200113, 0x00300193, 0x00400213, _EBREAK]
     variants = terminal_efficiency_variants(prog, random.Random(0), max_evals=8)
@@ -124,8 +106,7 @@ def test_terminal_efficiency_variants_deletes_instruction_without_nops():
 
 def test_maybe_drop_interior_instruction():
     import random
-
-    from evolution.terminal_stagnation import _EBREAK, maybe_drop_interior_instruction
+    from evolution.terminal_stagnation import maybe_drop_interior_instruction, _EBREAK
 
     prog = [0x00100093, 0x00200113, 0x00300193, 0x00400213, _EBREAK]
     same = maybe_drop_interior_instruction(prog, random.Random(0), p=0.0)
@@ -148,17 +129,21 @@ def test_terminal_length_drop_params_vs_cap():
 
 def test_efficiency_drop_span_one_when_under_cap():
     import random
-
-    from evolution.terminal_stagnation import _EBREAK, terminal_efficiency_drop_span, terminal_efficiency_variants
+    from evolution.terminal_stagnation import (
+        terminal_efficiency_drop_span,
+        terminal_efficiency_variants,
+        _EBREAK,
+    )
 
     assert terminal_efficiency_drop_span(80, 76) == 3
     assert terminal_efficiency_drop_span(70, 76) == 2
     assert terminal_efficiency_drop_span(58, 76) == 1
     prog = [0x00100093, 0x00200113, 0x00300193, 0x00400213, 0x00500293, _EBREAK]
-    variants = terminal_efficiency_variants(prog, random.Random(0), max_evals=16, max_drop_span=1)
+    variants = terminal_efficiency_variants(
+        prog, random.Random(0), max_evals=16, max_drop_span=1
+    )
     assert variants
     assert all(len(v) >= len(prog) - 1 for v in variants)
-
 
 def test_terminal_branch_flip_variants_change_program():
     import random
@@ -192,20 +177,20 @@ def test_terminal_verify_probe_filters_regressions():
     def score_fn(candidate: list[int]) -> float:
         return 0.58 if len(candidate) > len(prog) + 8 else 0.52
 
-    variants = terminal_verify_probe_variants(prog, 30, random.Random(1), 3, score_fn=score_fn, min_verify=0.579)
+    variants = terminal_verify_probe_variants(
+        prog, 30, random.Random(1), 3, score_fn=score_fn, min_verify=0.579
+    )
     assert all(score_fn(v) >= 0.579 - 1e-6 for v in variants)
 
 
 def test_straight_line_probe_finds_l30_gain():
-    import json
-    import os
     import random
 
     os.environ.setdefault("EE_USE_GPU", "0")
+    from evolution_engine import EvolutionEngine, EvolutionConfig
     from evolution.terminal_stagnation import terminal_verify_probe_variants
-    from evolution_engine import EvolutionConfig, EvolutionEngine
 
-    rows = [json.loads(line) for line in open("multi_cycle_results.jsonl") if line.strip()]
+    rows = list(live_result_rows())
     prog = [int(x, 16) if isinstance(x, str) else int(x) for x in rows[-1]["champion_program"]]
     engine = EvolutionEngine(EvolutionConfig(curriculum_level=30))
     engine.champion_level = 30
@@ -286,7 +271,10 @@ def test_terminal_retrain_interval_scales_with_tier():
 
 
 def test_terminal_efficiency_promote_quiescent_after_stable(tmp_path, monkeypatch):
-    from evolution.terminal_stagnation import record_terminal_efficiency_stable, terminal_efficiency_promote_quiescent
+    from evolution.terminal_stagnation import (
+        record_terminal_efficiency_stable,
+        terminal_efficiency_promote_quiescent,
+    )
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -302,8 +290,6 @@ def test_terminal_efficiency_promote_quiescent_after_stable(tmp_path, monkeypatc
 
 
 def test_scan_floor_skips_batch_shrink_probes(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import (
@@ -314,17 +300,7 @@ def test_scan_floor_skips_batch_shrink_probes(tmp_path, monkeypatch):
         terminal_efficiency_variants,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -371,8 +347,6 @@ def test_progress_state_read_uses_mtime_cache(tmp_path, monkeypatch):
 
 
 def test_scan_floor_probe_qualifies_rejects_branch_flips_at_side_sat(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import (
@@ -382,17 +356,7 @@ def test_scan_floor_probe_qualifies_rejects_branch_flips_at_side_sat(tmp_path, m
         terminal_equal_length_refine_variants,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -415,23 +379,11 @@ def test_scan_floor_probe_qualifies_rejects_branch_flips_at_side_sat(tmp_path, m
 
 
 def test_overlay_keep_length_variants_same_size(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import terminal_overlay_keep_length_variants
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
     variants = terminal_overlay_keep_length_variants(prog, 30, random.Random(7), max_evals=16)
     assert variants
     assert all(len(v) == len(prog) for v in variants)
@@ -439,23 +391,14 @@ def test_overlay_keep_length_variants_same_size(tmp_path, monkeypatch):
 
 
 def test_scan_floor_equal_length_probes_only(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
-    from evolution.terminal_stagnation import record_terminal_efficiency_scan_floor, select_terminal_probes_for_batch
+    from evolution.terminal_stagnation import (
+        record_terminal_efficiency_scan_floor,
+        select_terminal_probes_for_batch,
+    )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -471,8 +414,6 @@ def test_scan_floor_equal_length_probes_only(tmp_path, monkeypatch):
 
 
 def test_scan_floor_instr_swap_and_chained_imm_probes(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import (
@@ -482,17 +423,7 @@ def test_scan_floor_instr_swap_and_chained_imm_probes(tmp_path, monkeypatch):
         terminal_instr_swap_probe_variants,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -503,7 +434,9 @@ def test_scan_floor_instr_swap_and_chained_imm_probes(tmp_path, monkeypatch):
     record_terminal_efficiency_scan_floor(100, 60, 1.0)
 
     swaps = terminal_instr_swap_probe_variants(prog, random.Random(3), max_evals=8)
-    chained = terminal_chained_imm_perturb_probe_variants(prog, random.Random(4), chain_steps=2, max_evals=8)
+    chained = terminal_chained_imm_perturb_probe_variants(
+        prog, random.Random(4), chain_steps=2, max_evals=8
+    )
     assert swaps or chained
     for variant in swaps + chained:
         assert len(variant) == len(prog)
@@ -512,8 +445,6 @@ def test_scan_floor_instr_swap_and_chained_imm_probes(tmp_path, monkeypatch):
 
 
 def test_scan_floor_probe_cap_matches_escalation_ratio(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import (
@@ -522,17 +453,7 @@ def test_scan_floor_probe_cap_matches_escalation_ratio(tmp_path, monkeypatch):
         terminal_probe_escalation_ratio,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -561,14 +482,14 @@ def test_scan_floor_probe_cap_matches_escalation_ratio(tmp_path, monkeypatch):
         int(os.environ.get("EE_SCAN_FLOOR_PROBE_POOL", max(expected_cap * 4, 32))),
     )
     assert expected_cap > pop_size // 4
-    probes = select_terminal_probes_for_batch(prog, 30, random.Random(0), expected_cap, pop_size=pop_size)
+    probes = select_terminal_probes_for_batch(
+        prog, 30, random.Random(0), expected_cap, pop_size=pop_size
+    )
     assert probes
     assert len(probes) <= pool_limit
 
 
 def test_scan_floor_chained_reorder_imm_probe_variants(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import (
@@ -577,17 +498,7 @@ def test_scan_floor_chained_reorder_imm_probe_variants(tmp_path, monkeypatch):
         terminal_chained_reorder_imm_probe_variants,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -606,8 +517,6 @@ def test_scan_floor_chained_reorder_imm_probe_variants(tmp_path, monkeypatch):
 
 
 def test_scan_floor_block_reorder_probe_variants(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import (
@@ -616,17 +525,7 @@ def test_scan_floor_block_reorder_probe_variants(tmp_path, monkeypatch):
         terminal_block_reorder_probe_variants,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -645,8 +544,6 @@ def test_scan_floor_block_reorder_probe_variants(tmp_path, monkeypatch):
 
 
 def test_scan_floor_triple_chain_imm_probe_variants(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import (
@@ -655,17 +552,7 @@ def test_scan_floor_triple_chain_imm_probe_variants(tmp_path, monkeypatch):
         terminal_chained_imm_perturb_probe_variants,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -675,7 +562,9 @@ def test_scan_floor_triple_chain_imm_probe_variants(tmp_path, monkeypatch):
     )
     record_terminal_efficiency_scan_floor(100, 60, 1.0)
 
-    chained = terminal_chained_imm_perturb_probe_variants(prog, random.Random(11), chain_steps=3, max_evals=8)
+    chained = terminal_chained_imm_perturb_probe_variants(
+        prog, random.Random(11), chain_steps=3, max_evals=8
+    )
     assert chained
     for variant in chained:
         assert len(variant) == len(prog)
@@ -685,8 +574,6 @@ def test_scan_floor_triple_chain_imm_probe_variants(tmp_path, monkeypatch):
 
 def test_scan_floor_wide_imm_probe_variants(tmp_path, monkeypatch):
     import hashlib
-    import json
-    import os
     import random
     import struct
 
@@ -699,13 +586,15 @@ def test_scan_floor_wide_imm_probe_variants(tmp_path, monkeypatch):
     )
     from evolution_engine import EvolutionConfig, EvolutionEngine
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    rows = [json.loads(line) for line in open("multi_cycle_results.jsonl", encoding="utf-8") if line.strip()]
+    rows = list(live_result_rows())
     row = next((r for r in rows if r.get("cycle") == 5963), None)
     if row is None:
         row = next(
-            (r for r in reversed(rows) if r.get("champion_words") == 60 and r.get("final_level") == 30),
+            (
+                r
+                for r in reversed(rows)
+                if r.get("champion_words") == 60 and r.get("final_level") == 30
+            ),
             None,
         )
     assert row is not None
@@ -719,7 +608,9 @@ def test_scan_floor_wide_imm_probe_variants(tmp_path, monkeypatch):
     )
     record_terminal_efficiency_scan_floor(100, 60, 1.0)
 
-    wide = terminal_wide_imm_perturb_probe_variants(prog, random.Random(0), max_evals=64, max_attempts=5000)
+    wide = terminal_wide_imm_perturb_probe_variants(
+        prog, random.Random(0), max_evals=64, max_attempts=5000
+    )
     assert wide
     for variant in wide:
         assert len(variant) == len(prog)
@@ -755,8 +646,6 @@ def test_scan_floor_wide_imm_probe_variants(tmp_path, monkeypatch):
 
 
 def test_scan_floor_crossover_probe_variants(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import (
@@ -767,17 +656,7 @@ def test_scan_floor_crossover_probe_variants(tmp_path, monkeypatch):
         terminal_imm_perturb_probe_variants,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -788,8 +667,12 @@ def test_scan_floor_crossover_probe_variants(tmp_path, monkeypatch):
     record_terminal_efficiency_scan_floor(100, 60, 1.0)
 
     gate = ScanFloorGateBaseline(prog)
-    parents = terminal_imm_perturb_probe_variants(prog, random.Random(5), max_evals=8, gate=gate)
-    crossed = terminal_crossover_probe_variants(prog, parents, random.Random(6), max_evals=8, gate=gate)
+    parents = terminal_imm_perturb_probe_variants(
+        prog, random.Random(5), max_evals=8, gate=gate
+    )
+    crossed = terminal_crossover_probe_variants(
+        prog, parents, random.Random(6), max_evals=8, gate=gate
+    )
     assert crossed or len(parents) < 2
     for variant in crossed:
         assert len(variant) == len(prog)
@@ -798,8 +681,6 @@ def test_scan_floor_crossover_probe_variants(tmp_path, monkeypatch):
 
 
 def test_scan_floor_gate_qualify_cache(tmp_path, monkeypatch):
-    import json
-    import os
     import random
 
     from evolution.terminal_stagnation import (
@@ -808,17 +689,7 @@ def test_scan_floor_gate_qualify_cache(tmp_path, monkeypatch):
         terminal_imm_perturb_probe_variants,
     )
 
-    if not os.path.isfile("multi_cycle_results.jsonl"):
-        pytest.skip("needs live results jsonl")
-    row = None
-    for line in open("multi_cycle_results.jsonl", encoding="utf-8"):
-        if not line.strip():
-            continue
-        candidate = json.loads(line)
-        if candidate.get("champion_words") == 60 and candidate.get("final_level") == 30:
-            row = candidate
-    assert row is not None
-    prog = [int(x, 16) for x in row["champion_program"]]
+    prog = live_champion_program(60)
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -829,7 +700,9 @@ def test_scan_floor_gate_qualify_cache(tmp_path, monkeypatch):
     record_terminal_efficiency_scan_floor(100, 60, 1.0)
 
     gate = ScanFloorGateBaseline(prog)
-    variants = terminal_imm_perturb_probe_variants(prog, random.Random(0), max_evals=4, gate=gate)
+    variants = terminal_imm_perturb_probe_variants(
+        prog, random.Random(0), max_evals=4, gate=gate
+    )
     assert variants
     for variant in variants:
         assert gate.qualifies(variant)
@@ -861,7 +734,10 @@ def test_scan_floor_extends_rescan_interval(tmp_path, monkeypatch):
 
 
 def test_terminal_efficiency_promote_cycle_persist(tmp_path, monkeypatch):
-    from evolution.terminal_stagnation import record_terminal_efficiency_promote, terminal_efficiency_last_promote_cycle
+    from evolution.terminal_stagnation import (
+        record_terminal_efficiency_promote,
+        terminal_efficiency_last_promote_cycle,
+    )
 
     agents = tmp_path / ".agents"
     agents.mkdir()
@@ -910,9 +786,9 @@ def test_terminal_diversity_boost_params_increase_with_tier():
 
 def test_l30_easy_fill_beats_partial_champion():
     from evolution.terminal_stagnation import l30_easy_fill_variants
-    from gpu_vm_farm import _execute_vm
     from mutation_proposer import EBREAK, make_rv32i
     from tasks_rv32i import LEVELS
+    from gpu_vm_farm import _execute_vm
 
     prog = [
         make_rv32i("ADDI", rd=3, rs1=1, imm=0),
@@ -995,7 +871,7 @@ def test_l30_gap_fill_raises_heldout_past_737():
 
 def test_l30_x24_fill_reaches_heldout_one():
     from evolution.terminal_stagnation import heldout_l30_verify_mean, l30_easy_fill_variants
-    from mutation_proposer import EBREAK, DirectedMutator, make_rv32i
+    from mutation_proposer import DirectedMutator, EBREAK, make_rv32i
 
     skeleton = [
         make_rv32i("ADDI", rd=3, rs1=1, imm=0),
@@ -1076,7 +952,10 @@ def test_l30_order_sensitive_fill_hits_heldout_32():
     assert loaded is not None
     assert heldout_l30_verify_mean(loaded, n_seeds=32) >= 0.99
     assert curriculum_verify_mean(loaded, 10) > curriculum_verify_mean(ordered, 10) + 0.04
-    from evolution.terminal_stagnation import compact_curriculum_side_score, l30_l8_mem_add_variant
+    from evolution.terminal_stagnation import (
+        compact_curriculum_side_score,
+        l30_l8_mem_add_variant,
+    )
 
     l8 = l30_l8_mem_add_variant(loaded)
     assert l8 is not None
@@ -1132,7 +1011,8 @@ def test_l30_order_sensitive_fill_hits_heldout_32():
     if stripped is None:
         stripped = l30_strip_dead_l30_stores(prog)
     assert stripped is None or (
-        len(stripped) < len(ordered or prog) and heldout_l30_verify_mean(stripped, n_seeds=32) >= 0.99
+        len(stripped) < len(ordered or prog)
+        and heldout_l30_verify_mean(stripped, n_seeds=32) >= 0.99
     )
 
 
@@ -1181,7 +1061,9 @@ def test_l11_fib_gate_tighten_skips_l30_x1_ge_13():
     tightened = l30_l11_fib_gate_tighten_variant(gated16)
     assert tightened is not None
     assert _l11_fib_gate_imm(tightened) == 13
-    assert heldout_l30_verify_mean(tightened, n_seeds=32) + 1e-6 >= heldout_l30_verify_mean(gated16, n_seeds=32)
+    assert heldout_l30_verify_mean(tightened, n_seeds=32) + 1e-6 >= heldout_l30_verify_mean(
+        gated16, n_seeds=32
+    )
     assert curriculum_verify_mean(tightened, 11) >= 0.99
     assert any(_l11_fib_gate_imm(fill) == 13 for fill in l30_easy_fill_variants(gated16))
 
@@ -1205,7 +1087,7 @@ def test_l15_short_predicate_keeps_l15_l16_l30():
     ]
     import json
 
-    live = _live_60w_champion()
+    live = live_champion_program(60)
     short = l30_l15_short_variant(live)
     if short is None:
         from evolution.terminal_stagnation import _l15_short_pred_seq
@@ -1225,8 +1107,6 @@ def test_l15_short_predicate_keeps_l15_l16_l30():
 
 
 def test_l12_l14_x9_fold_keeps_side_and_l30():
-    import json
-
     from evolution.terminal_stagnation import (
         best_compact_l30_fill,
         compact_curriculum_side_score,
@@ -1234,8 +1114,9 @@ def test_l12_l14_x9_fold_keeps_side_and_l30():
         heldout_l30_verify_mean,
         l30_l12_l14_x9_fold_variant,
     )
+    import json
 
-    live = _live_60w_champion()
+    live = live_champion_program(60)
     folded = l30_l12_l14_x9_fold_variant(live)
     if folded is None:
         from evolution.terminal_stagnation import _l12_l14_x9_seq
@@ -1253,8 +1134,6 @@ def test_l12_l14_x9_fold_keeps_side_and_l30():
 
 
 def test_drop_loop_zero_inits_keeps_l9_l10_l30():
-    import json
-
     from evolution.terminal_stagnation import (
         best_compact_l30_fill,
         compact_curriculum_side_score,
@@ -1262,13 +1141,13 @@ def test_drop_loop_zero_inits_keeps_l9_l10_l30():
         heldout_l30_verify_mean,
         l30_drop_loop_zero_inits,
     )
+    import json
 
-    live = _live_60w_champion()
+    live = live_champion_program(60)
     dropped = l30_drop_loop_zero_inits(live)
     if dropped is None:
-        import pytest
-
         from evolution.terminal_stagnation import _l30_bounded_sum_max_loop_body
+        import pytest
 
         body = _l30_bounded_sum_max_loop_body()
         if not any(live[i : i + len(body)] == body for i in range(len(live) - len(body) + 1)):
@@ -1302,7 +1181,9 @@ def test_heldout_l30_detects_li_collapse():
     from evolution.terminal_stagnation import select_terminal_probes_for_batch
 
     prog = [0x00000013] * 60 + [0x00100073]
-    picked = select_terminal_probes_for_batch(prog, 30, random.Random(0), n_probe=20, pop_size=16)
+    picked = select_terminal_probes_for_batch(
+        prog, 30, random.Random(0), n_probe=20, pop_size=16
+    )
     assert picked
     assert len(picked) <= 4  # 16 // 4
     assert all(tuple(v) != tuple(prog) for v in picked)

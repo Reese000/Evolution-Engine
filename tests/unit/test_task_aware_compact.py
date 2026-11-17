@@ -2,12 +2,12 @@
 
 import random
 
-from mutation_proposer import EBREAK, DirectedMutator
+from mutation_proposer import DirectedMutator, EBREAK
 
 
 def test_overlay_keeps_length():
     prog = [0x00100093, 0x00200113, 0x00300193, 0x00400213, EBREAK]
-    seq = [0x00A28293, 0x00B30313]
+    seq = [0x00a28293, 0x00b30313]
     out = DirectedMutator.overlay_seq_keep_length(prog, seq, random.Random(0))
     assert len(out) == len(prog)
     assert out[-1] == EBREAK

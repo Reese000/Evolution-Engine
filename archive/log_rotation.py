@@ -215,7 +215,7 @@ def setup_production_logging(
 
     # The "errors" logger should also capture from root for ERROR+
     # We add a filter-free handler so root ERROR messages also go to errors.log
-    errors_logger = logging.getLogger("ee.errors")
+    logging.getLogger("ee.errors")
 
     logger = logging.getLogger("ee.log_rotation")
     logger.info(f"Production logging initialized: dir={log_dir}, " f"max_bytes={max_bytes}, backups={backup_count}")

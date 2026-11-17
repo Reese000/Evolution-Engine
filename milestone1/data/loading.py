@@ -53,7 +53,14 @@ def load_champion_traces(
     if not os.path.isfile(data_path):
         return sequences, sample_weights, raw_dicts_for_augment, entry_levels
 
-    with open(data_path) as f:
+    # UTF-8 + errors="replace": this is the CANONICAL training reader for
+    # milestone1/recurrent_data.jsonl (training/loop.py -> load_champion_traces)
+    # and nothing here catches UnicodeDecodeError. A torn byte degrades to
+    # U+FFFD and malformed JSON to a skipped row, rather than an uncaught
+    # decode error out of the retrain -- the same contract as run_multi_cycle's
+    # dedup load (t_bd0760ea). Residual (pre-existing): a hex word mangled
+    # by that replacement still raises ValueError at int(hw, 16) further below.
+    with open(data_path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line:

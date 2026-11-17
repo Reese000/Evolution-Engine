@@ -3,16 +3,15 @@
 Manages the active theme state and provides convenience accessors
 for semantic colors mapped to the Design System token palette.
 """
+
 from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
-from typing import Optional
 
-from .ansi import ansi_bg, ansi_color, colorize
-from .tokens import LIGHT_OVERRIDES, TOKENS, get_token
+from .ansi import ansi_color, colorize
+from .tokens import LIGHT_OVERRIDES, TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +26,11 @@ _CONFIG_FILE = _CONFIG_DIR / "theme.json"
 
 # Default (dark theme) mapping
 _LEVEL_TOKENS_DARK = {
-    "DEBUG":    "code_info",       # Cyan — debug/reference
-    "INFO":     "code_success",    # Green — success/running
-    "WARNING":  "code_warning",    # Amber — warning/caution
-    "ERROR":    "code_danger",     # Red — error/destructive
-    "CRITICAL": "code_accent",     # Purple — critical/accent
+    "DEBUG": "code_info",  # Cyan — debug/reference
+    "INFO": "code_success",  # Green — success/running
+    "WARNING": "code_warning",  # Amber — warning/caution
+    "ERROR": "code_danger",  # Red — error/destructive
+    "CRITICAL": "code_accent",  # Purple — critical/accent
 }
 
 # Light theme mapping (same tokens, different base values)
@@ -99,7 +98,7 @@ class ThemeManager:
             _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
             data = {"theme": "dark" if self._dark else "light"}
             _CONFIG_FILE.write_text(json.dumps(data, indent=2))
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             logger.debug("Failed to save theme preference: %s", exc)
 
     def _load_preference(self) -> None:
@@ -108,6 +107,6 @@ class ThemeManager:
             if _CONFIG_FILE.exists():
                 data = json.loads(_CONFIG_FILE.read_text())
                 self._dark = data.get("theme", "dark") == "dark"
-        except Exception as exc:
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
             logger.debug("Failed to load theme preference: %s", exc)
             self._dark = True  # Default to dark
